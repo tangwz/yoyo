@@ -14,12 +14,22 @@ export function registerContextMenus(): void {
 
 export function onTranslatePageMenuClick(
   handler: (tabId: number) => Promise<void>,
+  onError: (error: unknown, tabId: number) => void = (error, tabId) => {
+    console.error("[yoyo] failed to handle translate page menu click", {
+      tabId,
+      error,
+    });
+  },
 ): void {
   browser.contextMenus.onClicked.addListener((info, tab) => {
     if (info.menuItemId !== translatePageMenuId || tab?.id === undefined) {
       return;
     }
 
-    void handler(tab.id);
+    const tabId = tab.id;
+
+    void handler(tabId).catch((error: unknown) => {
+      onError(error, tabId);
+    });
   });
 }
