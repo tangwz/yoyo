@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/vue";
+import { fireEvent, render, screen } from "@testing-library/vue";
 import "@testing-library/jest-dom/vitest";
 import { describe, expect, it } from "vitest";
 
@@ -15,6 +15,14 @@ describe("options app", () => {
 
     expect(
       screen.getByText("API Key 保存在浏览器扩展本地存储，不跨设备同步。"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Page text is extracted only when you manually start translation."),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "Extracted text is sent to your configured model provider during translation.",
+      ),
     ).toBeVisible();
   });
 
@@ -38,5 +46,17 @@ describe("options app", () => {
       "0.1",
     );
     expect(screen.getByRole("spinbutton", { name: "Max Tokens" })).toHaveValue(4096);
+  });
+
+  it("fills provider fields from the selected preset", async () => {
+    render(OptionsApp);
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "Preset" }), "deepseek");
+
+    expect(screen.getByRole("textbox", { name: "Display Name" })).toHaveValue("DeepSeek");
+    expect(screen.getByRole("textbox", { name: "Base URL" })).toHaveValue(
+      "https://api.deepseek.com/v1",
+    );
+    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue("deepseek-chat");
   });
 });

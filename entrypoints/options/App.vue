@@ -152,8 +152,8 @@ function applySelectedPreset() {
       </h2>
 
       <ul class="privacy-list">
-        <li>Only manual trigger extracts page text</li>
-        <li>Extracted text sent to configured model provider</li>
+        <li>Page text is extracted only when you manually start translation.</li>
+        <li>Extracted text is sent to your configured model provider during translation.</li>
         <li>API key does not enter content script or page</li>
         <li>First version has no persistent translation cache</li>
       </ul>
