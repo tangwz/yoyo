@@ -6,6 +6,7 @@ import { SessionTranslationCache } from "@/translation/cache";
 import { createCacheKey } from "@/translation/hash";
 import { parseTranslationBatchResult } from "@/translation/jsonResult";
 import { buildTranslationPrompt, translationPromptVersion } from "@/translation/prompt";
+import { isTerminalTaskState } from "@/translation/types";
 import type {
   CancelReason,
   PageSegment,
@@ -160,7 +161,7 @@ export class TranslationTaskOrchestrator {
 
   private cancelTasksForTab(tabId: number, reason: CancelReason): void {
     for (const task of this.tasks.values()) {
-      if (task.tabId === tabId && task.progress.state !== "cancelled") {
+      if (task.tabId === tabId && !isTerminalTaskState(task.progress.state)) {
         this.cancelTask(task.progress.taskId, reason);
       }
     }
@@ -230,21 +231,21 @@ export class TranslationTaskOrchestrator {
 
       const expectedSegmentIds = input.segments.map((segment) => segment.id);
       const parsed = parseTranslationBatchResult(response.text, expectedSegmentIds);
-      const itemsBySegmentId = new Map(
-        parsed.items.map((item) => [item.segmentId, item]),
-      );
 
-      for (const segment of input.segments) {
-        const item = itemsBySegmentId.get(segment.id);
-        if (!item) {
-          continue;
-        }
-
-        this.cache.set(await this.cacheKeyForSegment(segment, input), item);
+      if (this.isTaskCancelled(input.task)) {
+        return;
       }
 
       if (parsed.items.length > 0) {
-        await this.applyTranslations(input.task, parsed.items);
+        const applied = await this.applyTranslations(input.task, parsed.items);
+
+        if (applied) {
+          await this.cacheAppliedItems(input, parsed.items);
+        }
+      }
+
+      if (this.isTaskCancelled(input.task)) {
+        return;
       }
 
       this.incrementProgress(input.task, {
@@ -264,16 +265,59 @@ export class TranslationTaskOrchestrator {
   private async applyTranslations(
     task: RunningTask,
     items: TranslationResultItem[],
-  ): Promise<void> {
+  ): Promise<boolean> {
+    if (this.isTaskCancelled(task)) {
+      return false;
+    }
+
     try {
-      await this.dependencies.sendToContent(task.tabId, {
+      const response = await this.dependencies.sendToContent(task.tabId, {
         type: "applyTranslations",
         taskId: task.progress.taskId,
         items,
       });
-      this.incrementProgress(task, { translated: items.length });
+
+      if (this.isTaskCancelled(task)) {
+        return false;
+      }
+
+      if (response.type === "contentActionResult" && response.success) {
+        this.incrementProgress(task, { translated: items.length });
+        return true;
+      }
+
+      this.incrementProgress(task, {
+        failed: items.length,
+      });
+      return false;
     } catch {
+      if (this.isTaskCancelled(task)) {
+        return false;
+      }
+
       this.incrementProgress(task, { failed: items.length });
+      return false;
+    }
+  }
+
+  private async cacheAppliedItems(
+    input: {
+      segments: PageSegment[];
+      profile: ProviderProfile;
+      sourceLanguage: string;
+      targetLanguage: string;
+    },
+    items: TranslationResultItem[],
+  ): Promise<void> {
+    const itemsBySegmentId = new Map(items.map((item) => [item.segmentId, item]));
+
+    for (const segment of input.segments) {
+      const item = itemsBySegmentId.get(segment.id);
+      if (!item) {
+        continue;
+      }
+
+      this.cache.set(await this.cacheKeyForSegment(segment, input), item);
     }
   }
 

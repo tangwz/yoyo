@@ -117,6 +117,8 @@ export default defineBackground(() => {
         case "openOptions":
           await openOptionsPage();
           return { type: "backgroundActionResult", success: true };
+        default:
+          return { type: "backgroundError", message: "Unknown background message." };
       }
     },
     { createErrorResponse },
