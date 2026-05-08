@@ -5,6 +5,7 @@
 - [ ] Run `pnpm lint`.
 - [ ] Run `pnpm test`.
 - [ ] Run `pnpm build`.
+- [ ] Run `pnpm verify:extension`.
 - [ ] Load `.output/chrome-mv3` in Chrome extension developer mode.
 - [ ] Load the same build in Edge extension developer mode.
 
