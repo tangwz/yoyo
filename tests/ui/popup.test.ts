@@ -128,6 +128,83 @@ describe("popup app", () => {
     expect(screen.queryByText("翻译失败，请稍后重试。")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  it("shows completed UI with failed count for completedWithErrors progress", async () => {
+    browserMock.runtimeSendMessage.mockResolvedValueOnce({
+      type: "taskProgress",
+      progress: {
+        taskId: "task-1",
+        state: "completedWithErrors",
+        total: 32,
+        translated: 29,
+        failed: 3,
+      },
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+
+    expect(await screen.findByRole("button", { name: "重新翻译" })).toBeVisible();
+    expect(screen.getByLabelText("Task progress")).toBeVisible();
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+    expect(screen.getByText("29")).toBeVisible();
+    expect(screen.getByText("Total")).toBeInTheDocument();
+    expect(screen.getByText("32")).toBeVisible();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeVisible();
+  });
+
+  it("shows failed progress as an error without completed UI", async () => {
+    browserMock.runtimeSendMessage.mockResolvedValueOnce({
+      type: "taskProgress",
+      progress: {
+        taskId: "task-1",
+        state: "failed",
+        total: 32,
+        translated: 11,
+        failed: 1,
+        errorMessage: "Translation provider is unavailable.",
+      },
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Translation provider is unavailable.",
+    );
+    expect(screen.getByRole("button", { name: "翻译当前页面" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "重新翻译" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Task progress")).not.toBeInTheDocument();
+    expect(screen.queryByText("Completed")).not.toBeInTheDocument();
+  });
+
+  it("shows background error responses from translate requests", async () => {
+    browserMock.runtimeSendMessage.mockResolvedValueOnce({
+      type: "backgroundError",
+      message: "No provider is configured.",
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("No provider is configured.");
+  });
 });
 
 describe("language selector", () => {
