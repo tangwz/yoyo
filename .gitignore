@@ -1,2 +1,5 @@
 .superpowers/
 .playwright-mcp/
+node_modules/
+.wxt/
+.output/
