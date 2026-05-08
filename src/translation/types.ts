@@ -51,7 +51,7 @@ export type TranslationProgress = {
   errorMessage?: string;
 };
 
-const terminalStates = new Set<TranslationTaskState>([
+export const terminalStates = new Set<TranslationTaskState>([
   "completed",
   "completedWithErrors",
   "cancelled",

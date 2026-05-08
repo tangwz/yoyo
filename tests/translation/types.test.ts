@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isTerminalTaskState } from "@/translation/types";
+import { isTerminalTaskState, terminalStates } from "@/translation/types";
 
 describe("translation task types", () => {
   it("classifies terminal task states", () => {
@@ -9,5 +9,14 @@ describe("translation task types", () => {
     expect(isTerminalTaskState("failed")).toBe(true);
     expect(isTerminalTaskState("collecting")).toBe(false);
     expect(isTerminalTaskState("translating")).toBe(false);
+  });
+
+  it("exports the shared terminal task state contract", () => {
+    expect([...terminalStates]).toEqual([
+      "completed",
+      "completedWithErrors",
+      "cancelled",
+      "failed",
+    ]);
   });
 });
