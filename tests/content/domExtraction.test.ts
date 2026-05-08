@@ -111,6 +111,43 @@ describe("collectPageSegments", () => {
       "Child paragraph should win.",
     ]);
   });
+
+  it("does not extract a generic parent from skipped subtree text", async () => {
+    const skippedLongText =
+      "This skipped subtree contains enough text to pass the generic block extraction threshold, but it must not create a parent segment.";
+    document.body.innerHTML = `
+      <article>
+        <table><tr><td>${skippedLongText}</td></tr></table>
+        <code>${skippedLongText}</code>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments).toEqual([]);
+  });
+
+  it("does not include hidden or extension-owned text in generic source text", async () => {
+    const visibleText =
+      "This visible generic block text is long enough to be translated without relying on skipped descendant content.";
+    const skippedLongText =
+      "This hidden extension translation text is much longer and should never appear in extracted source text.";
+    document.body.innerHTML = `
+      <article>
+        <section>
+          ${visibleText}
+          <span hidden>${skippedLongText}</span>
+          <span data-yoyo-translation>${skippedLongText}</span>
+        </section>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      visibleText,
+    ]);
+  });
 });
 
 describe("isPageUrlSupported", () => {

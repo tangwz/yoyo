@@ -11,6 +11,8 @@ export type SegmentCollection = {
 const leafReadableTags = new Set(["P", "LI", "BLOCKQUOTE"]);
 const headingTags = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
 const genericMinimumTextLength = 80;
+const textNodeType = 3;
+const elementNodeType = 1;
 
 function chooseRoot(): Element {
   return (
@@ -41,15 +43,32 @@ function hasReadableChildCandidate(element: Element): boolean {
   return false;
 }
 
+function collectExtractableText(element: Element): string {
+  const parts: string[] = [];
+
+  for (const child of [...element.childNodes]) {
+    if (child.nodeType === textNodeType) {
+      parts.push(child.textContent ?? "");
+      continue;
+    }
+
+    if (child.nodeType !== elementNodeType) continue;
+
+    const childElement = child as Element;
+    if (isElementSkippable(childElement)) continue;
+
+    parts.push(collectExtractableText(childElement));
+  }
+
+  return normalizeSourceText(parts.join(" "));
+}
+
 function shouldExtractElement(element: Element): boolean {
   if (isElementSkippable(element)) return false;
   if (isDirectReadableCandidate(element)) return true;
   if (hasReadableChildCandidate(element)) return false;
 
-  return (
-    normalizeSourceText(element.textContent ?? "").length >=
-    genericMinimumTextLength
-  );
+  return collectExtractableText(element).length >= genericMinimumTextLength;
 }
 
 function pathHintFor(element: Element): string {
@@ -78,7 +97,7 @@ export async function collectPageSegments(
     if (isElementSkippable(element)) return;
 
     if (shouldExtractElement(element)) {
-      const sourceText = normalizeSourceText(element.textContent ?? "");
+      const sourceText = collectExtractableText(element);
       if (sourceText.length === 0) return;
 
       const segmentId = `seg_${order}`;
