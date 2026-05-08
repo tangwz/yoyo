@@ -1,17 +1,138 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { browser } from "wxt/browser";
 
 import {
   sourceLanguageOptions,
   targetLanguageOptions,
 } from "@/i18n/languages";
+import type {
+  BackgroundRequest,
+  BackgroundResponse,
+  ContentRequest,
+  ContentResponse,
+} from "@/messaging/contracts";
+import ErrorSummary from "@/ui/components/ErrorSummary.vue";
 import LanguageSelector from "@/ui/components/LanguageSelector.vue";
 import PopupFooter from "@/ui/components/PopupFooter.vue";
 import ProviderCard from "@/ui/components/ProviderCard.vue";
+import TaskProgress from "@/ui/components/TaskProgress.vue";
 
 const sourceLanguage = ref("auto");
 const targetLanguage = ref("zh-CN");
 const providerLabel = ref("OpenAI Compatible / api.example.com");
+const tabId = ref<number>();
+const state = ref<"idle" | "translating" | "completed" | "error">("idle");
+const translated = ref(0);
+const total = ref(0);
+const failed = ref(0);
+const errorMessage = ref("");
+const activeTaskId = ref<string>();
+
+const primaryLabel = computed(() => {
+  if (state.value === "translating") {
+    return "取消翻译";
+  }
+
+  if (state.value === "completed") {
+    return "重新翻译";
+  }
+
+  return "翻译当前页面";
+});
+
+function applyProgress(response: BackgroundResponse): void {
+  if (response.type === "backgroundError") {
+    state.value = "error";
+    errorMessage.value = response.message;
+    return;
+  }
+
+  if (response.type !== "taskProgress") {
+    return;
+  }
+
+  const { progress } = response;
+  activeTaskId.value = progress.taskId;
+  translated.value = progress.translated;
+  total.value = progress.total;
+  failed.value = progress.failed;
+  errorMessage.value = progress.errorMessage ?? "";
+
+  if (progress.state === "completed" || progress.state === "completedWithErrors") {
+    state.value = "completed";
+    return;
+  }
+
+  if (progress.state === "failed" || progress.state === "cancelled") {
+    state.value = "error";
+    errorMessage.value ||= "翻译失败，请稍后重试。";
+    return;
+  }
+
+  state.value = "translating";
+}
+
+onMounted(async () => {
+  try {
+    const [activeTab] = await browser.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+
+    if (activeTab?.id === undefined) {
+      return;
+    }
+
+    tabId.value = activeTab.id;
+
+    const response = (await browser.tabs.sendMessage(activeTab.id, {
+      type: "estimatePage",
+    } satisfies ContentRequest)) as ContentResponse;
+
+    if (response.type === "estimatePageResult") {
+      total.value = response.estimate.estimatedSegments;
+      return;
+    }
+
+    if (response.type === "contentError") {
+      errorMessage.value = response.message;
+    }
+  } catch (error: unknown) {
+    errorMessage.value = error instanceof Error ? error.message : "无法读取当前页面。";
+  }
+});
+
+async function onPrimaryAction(): Promise<void> {
+  if (state.value === "translating") {
+    return;
+  }
+
+  if (tabId.value === undefined) {
+    state.value = "error";
+    errorMessage.value = "无法获取当前标签页。";
+    return;
+  }
+
+  state.value = "translating";
+  errorMessage.value = "";
+  translated.value = 0;
+  failed.value = 0;
+
+  try {
+    const response = (await browser.runtime.sendMessage({
+      type: "translatePage",
+      tabId: tabId.value,
+      sourceLanguage: sourceLanguage.value,
+      targetLanguage: targetLanguage.value,
+    } satisfies BackgroundRequest)) as BackgroundResponse;
+
+    applyProgress(response);
+  } catch (error: unknown) {
+    state.value = "error";
+    errorMessage.value = error instanceof Error ? error.message : "翻译请求失败。";
+  }
+}
 </script>
 
 <template>
@@ -33,9 +154,19 @@ const providerLabel = ref("OpenAI Compatible / api.example.com");
       <button
         class="primary-action"
         type="button"
+        @click="onPrimaryAction"
       >
-        翻译当前页面
+        {{ primaryLabel }}
       </button>
+
+      <TaskProgress
+        v-if="state === 'translating' || state === 'completed'"
+        :completed="translated"
+        :total="total"
+        :failed="failed"
+      />
+
+      <ErrorSummary :message="errorMessage" />
     </section>
 
     <PopupFooter
