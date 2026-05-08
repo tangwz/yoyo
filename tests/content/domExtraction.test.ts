@@ -110,6 +110,29 @@ describe("collectPageSegments", () => {
     expect(result.anchors.get("seg_1")?.sourceNode.tagName).toBe("LI");
   });
 
+  it("does not duplicate nested list parent text wrapped in a readable child", async () => {
+    document.body.innerHTML = `
+      <article>
+        <ul>
+          <li>
+            <p>Parent paragraph.</p>
+            <ul>
+              <li>Nested child item.</li>
+            </ul>
+          </li>
+        </ul>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Parent paragraph.",
+      "Nested child item.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode.tagName).toBe("LI");
+  });
+
   it("skips non-readable and extension-owned nodes", async () => {
     document.body.innerHTML = `
       <article>

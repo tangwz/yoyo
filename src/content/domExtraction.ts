@@ -137,7 +137,9 @@ export async function collectPageSegments(
         await addSegment(element, sourceText);
       }
 
-      for (const child of [...element.children]) {
+      for (const child of [...element.children].filter((child) =>
+        listTags.has(child.tagName),
+      )) {
         await walk(child);
       }
       return;
