@@ -2,6 +2,8 @@
 import { ref } from "vue";
 
 import { providerPresets } from "@/provider/presets";
+import type { ProviderProfile } from "@/provider/types";
+import { createStorageRepositories } from "@/storage/repositories";
 
 const defaultPreset = providerPresets[0];
 
@@ -15,6 +17,7 @@ const targetLanguage = ref("zh-CN");
 const timeoutMs = ref(30000);
 const temperature = ref(0.3);
 const maxTokens = ref(4096);
+const saveState = ref<"idle" | "saved" | "error">("idle");
 
 function applySelectedPreset() {
   const preset = providerPresets.find((item) => item.id === selectedPresetId.value);
@@ -26,6 +29,36 @@ function applySelectedPreset() {
   displayName.value = preset.name;
   baseUrl.value = preset.defaultBaseUrl;
   textModel.value = preset.defaultTextModel ?? "";
+}
+
+async function saveProviderProfile() {
+  saveState.value = "idle";
+
+  try {
+    const storage = createStorageRepositories();
+    const profileId = selectedPresetId.value;
+    const profile: ProviderProfile = {
+      id: profileId,
+      displayName: displayName.value,
+      presetId: selectedPresetId.value,
+      type: "openai-compatible",
+      baseURL: baseUrl.value,
+      apiKey: apiKey.value,
+      textModel: textModel.value,
+      visionModel: visionModel.value || undefined,
+      requestParams: {
+        timeoutMs: timeoutMs.value,
+        temperature: temperature.value,
+        maxTokens: maxTokens.value,
+      },
+    };
+
+    await storage.providers.saveProfile(profile);
+    await storage.providers.setActiveProviderId(profileId);
+    saveState.value = "saved";
+  } catch {
+    saveState.value = "error";
+  }
 }
 </script>
 
@@ -109,12 +142,36 @@ function applySelectedPreset() {
         </label>
       </div>
 
-      <button
-        class="secondary-button"
-        type="button"
+      <div class="button-row">
+        <button
+          class="primary-button"
+          type="button"
+          @click="saveProviderProfile"
+        >
+          保存翻译服务
+        </button>
+        <button
+          class="secondary-button"
+          type="button"
+        >
+          测试连接
+        </button>
+      </div>
+
+      <p
+        v-if="saveState === 'saved'"
+        class="save-feedback success"
+        role="status"
       >
-        测试连接
-      </button>
+        已保存翻译服务。
+      </p>
+      <p
+        v-else-if="saveState === 'error'"
+        class="save-feedback error"
+        role="alert"
+      >
+        保存失败，请稍后重试。
+      </p>
     </section>
 
     <section
@@ -288,16 +345,46 @@ function applySelectedPreset() {
   line-height: 1.5;
 }
 
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.primary-button,
 .secondary-button {
   min-height: 40px;
   padding: 8px 14px;
-  margin-top: 16px;
-  color: #172033;
   font: inherit;
   font-weight: 600;
+  border-radius: 6px;
+}
+
+.primary-button {
+  color: #ffffff;
+  background: #1f5fbf;
+  border: 1px solid #1f5fbf;
+}
+
+.secondary-button {
+  color: #172033;
   background: #ffffff;
   border: 1px solid #aab3c5;
-  border-radius: 6px;
+}
+
+.save-feedback {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.save-feedback.success {
+  color: #17663a;
+}
+
+.save-feedback.error {
+  color: #b3261e;
 }
 
 .privacy-list {

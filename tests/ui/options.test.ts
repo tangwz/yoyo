@@ -1,10 +1,38 @@
 import { fireEvent, render, screen } from "@testing-library/vue";
 import "@testing-library/jest-dom/vitest";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import OptionsApp from "../../entrypoints/options/App.vue";
+import { createStorageRepositories } from "@/storage/repositories";
+
+vi.mock("@/storage/repositories", () => ({
+  createStorageRepositories: vi.fn(),
+}));
+
+const saveProfile = vi.fn();
+const setActiveProviderId = vi.fn();
+
+function mockStorageRepositories() {
+  vi.mocked(createStorageRepositories).mockReturnValue({
+    providers: {
+      listProfiles: vi.fn(),
+      saveProfile,
+      getActiveProviderId: vi.fn(),
+      setActiveProviderId,
+    },
+    uiPreferences: {
+      get: vi.fn(),
+      save: vi.fn(),
+    },
+  });
+}
 
 describe("options app", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockStorageRepositories();
+  });
+
   it("renders provider, translation, privacy, and advanced settings", () => {
     render(OptionsApp);
 
@@ -58,5 +86,39 @@ describe("options app", () => {
       "https://api.deepseek.com/v1",
     );
     expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue("deepseek-chat");
+  });
+
+  it("saves the selected provider profile and activates it", async () => {
+    render(OptionsApp);
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "Preset" }), "deepseek");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Display Name" }), "DeepSeek Work");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Base URL" }), "https://api.example.com/v1");
+    await fireEvent.update(screen.getByLabelText("API Key"), "secret-key");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "deepseek-chat");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Vision Model" }), "");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "Timeout" }), "45000");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "Temperature" }), "0.7");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "Max Tokens" }), "2048");
+
+    await fireEvent.click(screen.getByRole("button", { name: "保存翻译服务" }));
+
+    expect(saveProfile).toHaveBeenCalledWith({
+      id: "deepseek",
+      displayName: "DeepSeek Work",
+      presetId: "deepseek",
+      type: "openai-compatible",
+      baseURL: "https://api.example.com/v1",
+      apiKey: "secret-key",
+      textModel: "deepseek-chat",
+      visionModel: undefined,
+      requestParams: {
+        timeoutMs: 45000,
+        temperature: 0.7,
+        maxTokens: 2048,
+      },
+    });
+    expect(setActiveProviderId).toHaveBeenCalledWith("deepseek");
+    expect(await screen.findByText("已保存翻译服务。")).toBeVisible();
   });
 });

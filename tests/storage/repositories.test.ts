@@ -46,6 +46,19 @@ describe("storage repositories", () => {
     expect(await local.get("yoyo.uiPreferences")).toEqual({});
   });
 
+  it("stores active provider id in local storage", async () => {
+    const local = createInMemoryStorageArea();
+    const sync = createInMemoryStorageArea();
+    const repository = providerProfileRepository({ privateStorage: local });
+
+    await repository.setActiveProviderId("provider-1");
+
+    expect(await local.get("yoyo.activeProviderId")).toEqual({
+      "yoyo.activeProviderId": "provider-1",
+    });
+    expect(await sync.get("yoyo.activeProviderId")).toEqual({});
+  });
+
   it("does not mutate stored profiles when a returned profile list changes", async () => {
     const local = createInMemoryStorageArea();
     const repository = providerProfileRepository({ privateStorage: local });
