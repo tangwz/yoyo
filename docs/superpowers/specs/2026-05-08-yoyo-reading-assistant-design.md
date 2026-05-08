@@ -213,7 +213,7 @@ walker 规则：
 - `chrome-extension://`
 - `file://`，除非后续用户显式授权
 
-译文注入不改写原文，只在原节点后插入统一包裹结构：
+译文注入不改写原文，只在原节点后插入统一包裹结构。注入节点不复制原节点的 class list，避免触发站点样式或脚本的副作用；但会在注入时读取原节点的 computed style，并将关键排版属性写入译文节点的 CSS variables 或 inline style，使译文尽量保持与原段落一致的视觉设计。
 
 ```html
 <div
@@ -227,16 +227,20 @@ walker 规则：
 </div>
 ```
 
-默认样式轻量跟随：
+默认样式遵循 source-compatible 原则：
 
 - 译文位于原文下方。
-- 字号略小。
-- 颜色弱化。
-- 间距克制。
-- 使用 `white-space: pre-wrap`。
+- 译文默认复用原节点的关键 computed style，包括 `font-family`、`font-size`、`font-weight`、`font-style`、`line-height`、`letter-spacing`、`color`、`text-align` 和 `writing-mode`。
+- 当原节点有非透明背景色、边框圆角或 padding 时，译文节点可以镜像这些计算值，以适配深色背景、彩色块、引用块等复杂阅读环境。
+- 不使用扩展自己的品牌色作为网页内译文颜色。
+- 不默认降低 opacity，避免在深色背景或低对比页面上损害可读性。
+- 间距只做最小必要调整，优先基于原节点行高和 margin 计算。
+- 使用 `white-space: pre-wrap`，保留模型返回中的换行。
 - 不使用明显竖杠。
 - 不使用大色块、卡片化、fixed 悬浮或强边框。
 - 隐藏状态通过 `data-yoyo-hidden="true"` 控制。
+
+扩展的视觉风格只用于 popup 和 options page；网页内译文应融入原页面阅读环境，而不是展示扩展品牌。
 
 content script 内部运行态：
 
@@ -496,7 +500,7 @@ API key 旁边必须明确说明：保存在浏览器扩展本地存储，不跨
 
 - 源语言自动检测。
 - 目标语言默认中文。
-- 显示方式：原文下方显示译文。
+- 显示方式：原文下方显示译文，并尽量保持与原段落一致的排版样式。
 - `translationStyle = "default"`，用于 cache key 和后续扩展。
 
 #### Privacy
@@ -561,6 +565,8 @@ Privacy 区域提供 site blacklist 管理。site whitelist auto-translate 只�
 - parent/child duplicate extraction prevention
 - segment order stability
 - translation node injection structure
+- source-compatible style mirroring, including dark background and custom article style fixtures
+- injected translation does not use extension brand color inside webpage content
 - hide/show/remove semantics
 - repeated translate removes old nodes before new collect
 
@@ -644,6 +650,7 @@ Privacy 区域提供 site blacklist 管理。site whitelist auto-translate 只�
 
 - MV3 service worker 可能中止长任务；MVP 通过小 batch、进度消息和会话级状态降低风险，但不承诺重启恢复。
 - DOM 提取对复杂 SPA 和非文章页面不保证完美；默认模式优先稳定可撤销。
+- source-compatible 样式镜像无法覆盖所有站点 CSS 和动态主题变化；MVP 只镜像关键 computed style，不复制站点 class，不承诺像原站原生内容一样参与所有响应式规则。
 - OpenAI-compatible 不代表所有 provider 行为一致；通过标准化错误、JSON 容错和 batch 降级缓解。
 - LLM 可能误译或返回不完整结构；第一版做工程容错，不承诺翻译质量完全一致。
 - `storage.local` 不等同于系统级密钥保险箱；第一版只承诺本地保存和不跨设备同步。
@@ -658,6 +665,7 @@ Privacy 区域提供 site blacklist 管理。site whitelist auto-translate 只�
 - provider timeout 有明确状态，不会静默卡死。
 - 用户取消能中断进行中的 provider 请求。
 - 翻译完成后，hide/show/remove/retranslate 都可用。
+- 网页内译文不使用扩展品牌色，能在普通浅色文章、深色文章和彩色内容块中保持与原段落接近的排版和对比度。
 - 代码块、表格、表单和隐藏内容不被翻译。
 - API key 只存 local，且不进入 content script。
 - 右键菜单能发起翻译；失败时有 notification。
