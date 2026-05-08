@@ -19,6 +19,66 @@ const temperature = ref(0.3);
 const maxTokens = ref(4096);
 const saveState = ref<"idle" | "saved" | "error">("idle");
 
+function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  return undefined;
+}
+
+function normalizePositiveNumber(value: unknown, defaultValue: number): number {
+  const parsed = toFiniteNumber(value);
+
+  return parsed !== undefined && parsed > 0 ? parsed : defaultValue;
+}
+
+function normalizeTemperature(value: unknown): number {
+  const parsed = toFiniteNumber(value);
+
+  if (parsed === undefined) {
+    return 0.3;
+  }
+
+  return Math.min(2, Math.max(0, parsed));
+}
+
+function normalizePositiveInteger(value: unknown, defaultValue: number): number {
+  const parsed = toFiniteNumber(value);
+
+  if (parsed === undefined || parsed < 1) {
+    return defaultValue;
+  }
+
+  return Math.trunc(parsed);
+}
+
+function buildProviderProfile(): ProviderProfile {
+  const profileId = selectedPresetId.value;
+
+  return {
+    id: profileId,
+    displayName: displayName.value,
+    presetId: selectedPresetId.value,
+    type: "openai-compatible",
+    baseURL: baseUrl.value,
+    apiKey: apiKey.value,
+    textModel: textModel.value,
+    visionModel: visionModel.value || undefined,
+    requestParams: {
+      timeoutMs: normalizePositiveNumber(timeoutMs.value, 30000),
+      temperature: normalizeTemperature(temperature.value),
+      maxTokens: normalizePositiveInteger(maxTokens.value, 4096),
+    },
+  };
+}
+
 function applySelectedPreset() {
   const preset = providerPresets.find((item) => item.id === selectedPresetId.value);
 
@@ -36,25 +96,10 @@ async function saveProviderProfile() {
 
   try {
     const storage = createStorageRepositories();
-    const profileId = selectedPresetId.value;
-    const profile: ProviderProfile = {
-      id: profileId,
-      displayName: displayName.value,
-      presetId: selectedPresetId.value,
-      type: "openai-compatible",
-      baseURL: baseUrl.value,
-      apiKey: apiKey.value,
-      textModel: textModel.value,
-      visionModel: visionModel.value || undefined,
-      requestParams: {
-        timeoutMs: timeoutMs.value,
-        temperature: temperature.value,
-        maxTokens: maxTokens.value,
-      },
-    };
+    const profile = buildProviderProfile();
 
     await storage.providers.saveProfile(profile);
-    await storage.providers.setActiveProviderId(profileId);
+    await storage.providers.setActiveProviderId(profile.id);
     saveState.value = "saved";
   } catch {
     saveState.value = "error";

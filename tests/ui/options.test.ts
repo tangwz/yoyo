@@ -121,4 +121,35 @@ describe("options app", () => {
     expect(setActiveProviderId).toHaveBeenCalledWith("deepseek");
     expect(await screen.findByText("已保存翻译服务。")).toBeVisible();
   });
+
+  it("normalizes blank numeric request params before saving", async () => {
+    render(OptionsApp);
+
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "Timeout" }), "");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "Temperature" }), "");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "Max Tokens" }), "");
+
+    await fireEvent.click(screen.getByRole("button", { name: "保存翻译服务" }));
+
+    expect(saveProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestParams: {
+          timeoutMs: 30000,
+          temperature: 0.3,
+          maxTokens: 4096,
+        },
+      }),
+    );
+  });
+
+  it("shows error feedback when saving a provider profile fails", async () => {
+    saveProfile.mockRejectedValueOnce(new Error("storage failed"));
+    render(OptionsApp);
+
+    await fireEvent.click(screen.getByRole("button", { name: "保存翻译服务" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("保存失败，请稍后重试。");
+    expect(screen.queryByText("已保存翻译服务。")).not.toBeInTheDocument();
+    expect(setActiveProviderId).not.toHaveBeenCalled();
+  });
 });
