@@ -12,6 +12,10 @@ export function applyTranslations(
     if (!anchor || anchor.taskId !== taskId) continue;
 
     anchor.insertedNode?.remove();
+    if (!anchor.sourceNode.isConnected || !anchor.sourceNode.parentElement) {
+      anchor.insertedNode = undefined;
+      continue;
+    }
 
     const wrapper = document.createElement("div");
     wrapper.dataset.yoyoTranslation = "true";

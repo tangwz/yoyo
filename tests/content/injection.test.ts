@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AnchorRegistry } from "@/content/anchors";
 import {
   applyTranslations,
@@ -131,5 +131,45 @@ describe("translation injection", () => {
     ) as HTMLElement;
     expect(inner.textContent).toBe("<img src=x onerror=alert(1)>");
     expect(inner.querySelector("img")).toBeNull();
+  });
+
+  it("skips stale anchors without blocking the rest of the batch", () => {
+    document.body.innerHTML = `
+      <article>
+        <p id="valid-source">Valid source</p>
+      </article>
+    `;
+    const staleSource = document.createElement("p");
+    staleSource.textContent = "Stale source";
+    const staleInsert = vi
+      .spyOn(staleSource, "insertAdjacentElement")
+      .mockImplementation(() => {
+        throw new Error("stale source should not be used for insertion");
+      });
+    const validSource = document.querySelector("#valid-source") as HTMLElement;
+    const anchors = new AnchorRegistry();
+    anchors.set({
+      segmentId: "seg_1",
+      sourceNode: staleSource,
+      taskId: "task-1",
+    });
+    anchors.set({
+      segmentId: "seg_2",
+      sourceNode: validSource,
+      taskId: "task-1",
+    });
+
+    expect(() => {
+      applyTranslations(anchors, "task-1", [
+        { segmentId: "seg_1", translatedText: "Skipped" },
+        { segmentId: "seg_2", translatedText: "Injected" },
+      ]);
+    }).not.toThrow();
+
+    const injected = document.querySelectorAll("[data-yoyo-translation]");
+    expect(staleInsert).not.toHaveBeenCalled();
+    expect(injected).toHaveLength(1);
+    expect(injected[0].textContent).toBe("Injected");
+    expect(injected[0].previousElementSibling).toBe(validSource);
   });
 });

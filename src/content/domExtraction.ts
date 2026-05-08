@@ -24,6 +24,7 @@ function chooseRoot(): Element {
 }
 
 function isDirectReadableCandidate(element: Element): boolean {
+  if (element.tagName === "LI" && hasNestedList(element)) return false;
   return leafReadableTags.has(element.tagName) || headingTags.has(element.tagName);
 }
 
@@ -43,6 +44,10 @@ function hasReadableChildCandidate(element: Element): boolean {
   return false;
 }
 
+function hasNestedList(element: Element): boolean {
+  return element.querySelector(":scope > ul, :scope > ol") !== null;
+}
+
 function collectExtractableText(element: Element): string {
   const parts: string[] = [];
 
@@ -60,7 +65,7 @@ function collectExtractableText(element: Element): string {
     parts.push(collectExtractableText(childElement));
   }
 
-  return normalizeSourceText(parts.join(" "));
+  return normalizeSourceText(parts.join(""));
 }
 
 function shouldExtractElement(element: Element): boolean {

@@ -66,6 +66,43 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("preserves inline child punctuation spacing", async () => {
+    document.body.innerHTML = `
+      <article>
+        <p>Hello <strong>world</strong>.</p>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Hello world.",
+    ]);
+  });
+
+  it("does not merge nested list items into a parent list item segment", async () => {
+    document.body.innerHTML = `
+      <article>
+        <ul>
+          <li>
+            Parent item
+            <ul>
+              <li>Nested child item.</li>
+            </ul>
+          </li>
+          <li>Sibling item.</li>
+        </ul>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Nested child item.",
+      "Sibling item.",
+    ]);
+  });
+
   it("skips non-readable and extension-owned nodes", async () => {
     document.body.innerHTML = `
       <article>
