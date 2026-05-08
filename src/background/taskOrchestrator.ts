@@ -17,12 +17,14 @@ import type {
 
 const maxCharsPerBatch = 6000;
 const maxSegmentsPerBatch = 12;
+const maxBatchAttempts = 2;
 const translationStyle = "default";
 
 export type TranslationTaskOrchestratorDependencies = {
   getActiveProfile: () => Promise<ProviderProfile | undefined>;
   provider: Pick<OpenAiCompatibleProvider, "generateText">;
   sendToContent: (tabId: number, message: ContentRequest) => Promise<ContentResponse>;
+  emitProgress?: (progress: TranslationProgress) => void | Promise<void>;
   now: () => number;
   createTaskId: () => string;
 };
@@ -48,20 +50,36 @@ export class TranslationTaskOrchestrator {
   constructor(private readonly dependencies: TranslationTaskOrchestratorDependencies) {}
 
   async translatePage(input: TranslatePageInput): Promise<TranslationProgress> {
+    const task = this.createTranslatePageTask(input);
+    return this.executeTranslatePage(task, input);
+  }
+
+  startTranslatePage(input: TranslatePageInput): TranslationProgress {
+    const task = this.createTranslatePageTask(input);
+    void this.executeTranslatePage(task, input);
+    return this.cloneProgress(task.progress);
+  }
+
+  private createTranslatePageTask(input: TranslatePageInput): RunningTask {
     this.cancelTasksForTab(input.tabId, "superseded");
 
     const taskId = this.dependencies.createTaskId();
-    const task = this.createTask(taskId, input.tabId);
+    return this.createTask(taskId, input.tabId);
+  }
 
+  private async executeTranslatePage(
+    task: RunningTask,
+    input: TranslatePageInput,
+  ): Promise<TranslationProgress> {
     try {
       const collectResponse = await this.dependencies.sendToContent(input.tabId, {
         type: "collectSegments",
-        taskId,
+        taskId: task.progress.taskId,
       });
 
       if (
         collectResponse.type !== "collectSegmentsResult" ||
-        collectResponse.taskId !== taskId
+        collectResponse.taskId !== task.progress.taskId
       ) {
         return this.failTask(task, "Content script did not return page segments.");
       }
@@ -96,7 +114,7 @@ export class TranslationTaskOrchestrator {
       return this.cloneProgress(task.progress);
     } catch (error) {
       if (task.controller.signal.aborted || task.progress.state === "cancelled") {
-        return this.cancelTask(taskId, "userCancelled");
+        return this.cancelTask(task.progress.taskId, "userCancelled");
       }
 
       return this.failTask(
@@ -214,60 +232,123 @@ export class TranslationTaskOrchestrator {
     sourceLanguage: string;
     targetLanguage: string;
   }): Promise<void> {
+    await this.translateBatchWithFallback(input, 0);
+  }
+
+  private async translateBatchWithFallback(
+    input: {
+      task: RunningTask;
+      segments: PageSegment[];
+      profile: ProviderProfile;
+      sourceLanguage: string;
+      targetLanguage: string;
+    },
+    attempt: number,
+  ): Promise<void> {
     try {
-      const response = await this.dependencies.provider.generateText({
-        profile: input.profile,
-        prompt: buildTranslationPrompt({
-          sourceLanguage: input.sourceLanguage,
-          targetLanguage: input.targetLanguage,
-          segments: input.segments,
-        }),
-        abortSignal: input.task.controller.signal,
-      });
+      const missingSegments = await this.requestAndApplyBatch(input);
 
       if (this.isTaskCancelled(input.task)) {
         return;
       }
 
-      const expectedSegmentIds = input.segments.map((segment) => segment.id);
-      const parsed = parseTranslationBatchResult(response.text, expectedSegmentIds);
-
-      if (this.isTaskCancelled(input.task)) {
+      if (missingSegments.length === 0) {
         return;
       }
 
-      if (parsed.items.length > 0) {
-        const applied = await this.applyTranslations(input.task, parsed.items);
-
-        if (applied) {
-          await this.cacheAppliedItems(input, parsed.items);
-        }
-      }
-
-      if (this.isTaskCancelled(input.task)) {
-        return;
-      }
-
-      this.incrementProgress(input.task, {
-        failed: parsed.missingSegmentIds.length,
-      });
+      await this.retryOrDegradeBatch({ ...input, segments: missingSegments }, attempt);
     } catch {
       if (this.isTaskCancelled(input.task)) {
         return;
       }
 
+      await this.retryOrDegradeBatch(input, attempt);
+    }
+  }
+
+  private async requestAndApplyBatch(input: {
+    task: RunningTask;
+    segments: PageSegment[];
+    profile: ProviderProfile;
+    sourceLanguage: string;
+    targetLanguage: string;
+  }): Promise<PageSegment[]> {
+    const response = await this.dependencies.provider.generateText({
+      profile: input.profile,
+      prompt: buildTranslationPrompt({
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        segments: input.segments,
+      }),
+      abortSignal: input.task.controller.signal,
+    });
+
+    if (this.isTaskCancelled(input.task)) {
+      return [];
+    }
+
+    const expectedSegmentIds = input.segments.map((segment) => segment.id);
+    const parsed = parseTranslationBatchResult(response.text, expectedSegmentIds);
+
+    if (this.isTaskCancelled(input.task)) {
+      return [];
+    }
+
+    if (parsed.items.length > 0) {
+      const appliedItems = await this.applyTranslations(input.task, parsed.items);
+
+      if (appliedItems.length > 0) {
+        await this.cacheAppliedItems(input, appliedItems);
+      }
+    }
+
+    const missingIds = new Set(parsed.missingSegmentIds);
+    return input.segments.filter((segment) => missingIds.has(segment.id));
+  }
+
+  private async retryOrDegradeBatch(
+    input: {
+      task: RunningTask;
+      segments: PageSegment[];
+      profile: ProviderProfile;
+      sourceLanguage: string;
+      targetLanguage: string;
+    },
+    attempt: number,
+  ): Promise<void> {
+    if (this.isTaskCancelled(input.task) || input.segments.length === 0) {
+      return;
+    }
+
+    if (attempt + 1 < maxBatchAttempts) {
+      await this.translateBatchWithFallback(input, attempt + 1);
+      return;
+    }
+
+    if (input.segments.length === 1) {
       this.incrementProgress(input.task, {
-        failed: input.segments.length,
+        failed: 1,
       });
+      return;
+    }
+
+    const midpoint = Math.ceil(input.segments.length / 2);
+    const batches = [
+      input.segments.slice(0, midpoint),
+      input.segments.slice(midpoint),
+    ];
+
+    for (const segments of batches) {
+      await this.translateBatchWithFallback({ ...input, segments }, 0);
     }
   }
 
   private async applyTranslations(
     task: RunningTask,
     items: TranslationResultItem[],
-  ): Promise<boolean> {
+  ): Promise<TranslationResultItem[]> {
     if (this.isTaskCancelled(task)) {
-      return false;
+      return [];
     }
 
     try {
@@ -278,25 +359,41 @@ export class TranslationTaskOrchestrator {
       });
 
       if (this.isTaskCancelled(task)) {
-        return false;
+        return [];
       }
 
-      if (response.type === "contentActionResult" && response.success) {
-        this.incrementProgress(task, { translated: items.length });
-        return true;
+      if (response.type === "contentActionResult") {
+        const appliedIds = new Set(
+          response.appliedSegmentIds ??
+            (response.success ? items.map((item) => item.segmentId) : []),
+        );
+        const failedIds = new Set(response.failedSegmentIds ?? []);
+        const appliedItems = items.filter((item) => appliedIds.has(item.segmentId));
+        const explicitFailures = items.filter((item) => failedIds.has(item.segmentId));
+        const implicitFailures = response.success
+          ? []
+          : items.filter(
+              (item) => !appliedIds.has(item.segmentId) && !failedIds.has(item.segmentId),
+            );
+
+        this.incrementProgress(task, {
+          translated: appliedItems.length,
+          failed: explicitFailures.length + implicitFailures.length,
+        });
+        return appliedItems;
       }
 
       this.incrementProgress(task, {
         failed: items.length,
       });
-      return false;
+      return [];
     } catch {
       if (this.isTaskCancelled(task)) {
-        return false;
+        return [];
       }
 
       this.incrementProgress(task, { failed: items.length });
-      return false;
+      return [];
     }
   }
 
@@ -362,6 +459,7 @@ export class TranslationTaskOrchestrator {
       ...progress,
     };
     task.updatedAt = this.dependencies.now();
+    void this.dependencies.emitProgress?.(this.cloneProgress(task.progress));
   }
 
   private incrementProgress(

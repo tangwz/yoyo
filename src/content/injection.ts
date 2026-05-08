@@ -2,35 +2,55 @@ import type { AnchorRegistry } from "@/content/anchors";
 import { applyMirroredStyle } from "@/content/styleMirror";
 import type { TranslationResultItem } from "@/translation/types";
 
+export type ApplyTranslationsResult = {
+  appliedSegmentIds: string[];
+  failedSegmentIds: string[];
+};
+
 export function applyTranslations(
   anchors: AnchorRegistry,
   taskId: string,
   items: TranslationResultItem[],
-): void {
+): ApplyTranslationsResult {
+  const appliedSegmentIds: string[] = [];
+  const failedSegmentIds: string[] = [];
+
   for (const item of items) {
     const anchor = anchors.get(item.segmentId);
-    if (!anchor || anchor.taskId !== taskId) continue;
+    if (!anchor || anchor.taskId !== taskId) {
+      failedSegmentIds.push(item.segmentId);
+      continue;
+    }
 
     anchor.insertedNode?.remove();
     if (!anchor.sourceNode.isConnected || !anchor.sourceNode.parentElement) {
       anchor.insertedNode = undefined;
+      failedSegmentIds.push(item.segmentId);
       continue;
     }
 
-    const wrapper = document.createElement("div");
-    wrapper.dataset.yoyoTranslation = "true";
-    wrapper.dataset.yoyoSegmentId = item.segmentId;
-    wrapper.dataset.yoyoTaskId = taskId;
+    try {
+      const wrapper = document.createElement("div");
+      wrapper.dataset.yoyoTranslation = "true";
+      wrapper.dataset.yoyoSegmentId = item.segmentId;
+      wrapper.dataset.yoyoTaskId = taskId;
 
-    const inner = document.createElement("div");
-    inner.dataset.yoyoTranslationInner = "true";
-    inner.textContent = item.translatedText;
-    applyMirroredStyle(inner, anchor.sourceNode);
+      const inner = document.createElement("div");
+      inner.dataset.yoyoTranslationInner = "true";
+      inner.textContent = item.translatedText;
+      applyMirroredStyle(inner, anchor.sourceNode);
 
-    wrapper.append(inner);
-    anchor.sourceNode.insertAdjacentElement("afterend", wrapper);
-    anchor.insertedNode = wrapper;
+      wrapper.append(inner);
+      anchor.sourceNode.insertAdjacentElement("afterend", wrapper);
+      anchor.insertedNode = wrapper;
+      appliedSegmentIds.push(item.segmentId);
+    } catch {
+      anchor.insertedNode = undefined;
+      failedSegmentIds.push(item.segmentId);
+    }
   }
+
+  return { appliedSegmentIds, failedSegmentIds };
 }
 
 export function hideTranslations(taskId?: string): void {

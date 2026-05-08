@@ -36,6 +36,10 @@ export async function estimatePage(): Promise<PageTranslationEstimate> {
 }
 
 export async function collectSegments(taskId: string) {
+  if (!isPageUrlSupported(location.href)) {
+    throw new Error("Unsupported page URL.");
+  }
+
   removeTranslations();
 
   const { segments, anchors } = await collectPageSegments(taskId);
@@ -48,8 +52,8 @@ export async function collectSegments(taskId: string) {
 export function applyTranslationResults(
   taskId: string,
   items: TranslationResultItem[],
-): void {
-  applyTranslations(currentAnchors, taskId, items);
+): ReturnType<typeof applyTranslations> {
+  return applyTranslations(currentAnchors, taskId, items);
 }
 
 export function hidePageTranslations(taskId?: string): void {

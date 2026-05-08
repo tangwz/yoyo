@@ -50,6 +50,9 @@ export default defineBackground(() => {
     provider,
     sendToContent: (tabId, message) =>
       sendTabMessage<ContentRequest, ContentResponse>(tabId, message),
+    emitProgress: (progress) => {
+      void browser.runtime.sendMessage({ type: "taskProgress", progress });
+    },
     now: () => Date.now(),
     createTaskId,
   });
@@ -92,7 +95,7 @@ export default defineBackground(() => {
     async (request) => {
       switch (request.type) {
         case "translatePage": {
-          const progress = await orchestrator.translatePage({
+          const progress = orchestrator.startTranslatePage({
             tabId: request.tabId,
             sourceLanguage: request.sourceLanguage,
             targetLanguage: request.targetLanguage,

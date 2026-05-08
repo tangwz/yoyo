@@ -24,7 +24,13 @@ export type ContentRequest =
 export type ContentResponse =
   | { type: "estimatePageResult"; estimate: PageTranslationEstimate }
   | { type: "collectSegmentsResult"; taskId: string; segments: PageSegment[] }
-  | { type: "contentActionResult"; success: true }
+  | {
+      type: "contentActionResult";
+      success: boolean;
+      appliedSegmentIds?: string[];
+      failedSegmentIds?: string[];
+      message?: string;
+    }
   | { type: "pageRuntimeState"; hasTranslations: boolean; taskId?: string }
   | { type: "contentError"; message: string };
 

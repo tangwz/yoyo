@@ -18,7 +18,7 @@ describe("translation injection", () => {
     const anchors = new AnchorRegistry();
     anchors.set({ segmentId: "seg_1", sourceNode: source, taskId: "task-1" });
 
-    applyTranslations(anchors, "task-1", [
+    const result = applyTranslations(anchors, "task-1", [
       { segmentId: "seg_1", translatedText: "Bonjour" },
     ]);
 
@@ -32,6 +32,10 @@ describe("translation injection", () => {
     expect(injected.dataset.yoyoSegmentId).toBe("seg_1");
     expect(injected.dataset.yoyoTaskId).toBe("task-1");
     expect(inner.textContent).toBe("Bonjour");
+    expect(result).toEqual({
+      appliedSegmentIds: ["seg_1"],
+      failedSegmentIds: [],
+    });
 
     hideTranslations("task-1");
     expect(injected.dataset.yoyoHidden).toBe("true");
@@ -159,17 +163,37 @@ describe("translation injection", () => {
       taskId: "task-1",
     });
 
-    expect(() => {
-      applyTranslations(anchors, "task-1", [
-        { segmentId: "seg_1", translatedText: "Skipped" },
-        { segmentId: "seg_2", translatedText: "Injected" },
-      ]);
-    }).not.toThrow();
+    const result = applyTranslations(anchors, "task-1", [
+      { segmentId: "seg_1", translatedText: "Skipped" },
+      { segmentId: "seg_2", translatedText: "Injected" },
+    ]);
 
     const injected = document.querySelectorAll("[data-yoyo-translation]");
     expect(staleInsert).not.toHaveBeenCalled();
     expect(injected).toHaveLength(1);
     expect(injected[0].textContent).toBe("Injected");
     expect(injected[0].previousElementSibling).toBe(validSource);
+    expect(result).toEqual({
+      appliedSegmentIds: ["seg_2"],
+      failedSegmentIds: ["seg_1"],
+    });
+  });
+
+  it("reports missing anchors as failed segments", () => {
+    document.body.innerHTML = `<article><p id="source">Hello</p></article>`;
+    const source = document.querySelector("#source") as HTMLElement;
+    const anchors = new AnchorRegistry();
+    anchors.set({ segmentId: "seg_1", sourceNode: source, taskId: "task-1" });
+
+    const result = applyTranslations(anchors, "task-1", [
+      { segmentId: "seg_1", translatedText: "Injected" },
+      { segmentId: "seg_2", translatedText: "Missing" },
+    ]);
+
+    expect(document.querySelectorAll("[data-yoyo-translation]")).toHaveLength(1);
+    expect(result).toEqual({
+      appliedSegmentIds: ["seg_1"],
+      failedSegmentIds: ["seg_2"],
+    });
   });
 });

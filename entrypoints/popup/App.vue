@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { browser } from "wxt/browser";
 
 import {
@@ -24,7 +24,9 @@ const targetLanguage = ref("zh-CN");
 const providerLabel = ref("OpenAI Compatible / api.example.com");
 const tabId = ref<number>();
 const isInitializing = ref(true);
+const canTranslate = ref(true);
 const state = ref<"idle" | "translating" | "completed" | "error">("idle");
+const currentTaskId = ref("");
 const translated = ref(0);
 const total = ref(0);
 const failed = ref(0);
@@ -42,7 +44,13 @@ const primaryLabel = computed(() => {
   return "翻译当前页面";
 });
 
-const isPrimaryDisabled = computed(() => isInitializing.value);
+const isPrimaryDisabled = computed(
+  () => isInitializing.value || (!canTranslate.value && state.value !== "translating"),
+);
+
+function isRuntimeResponse(message: unknown): message is BackgroundResponse {
+  return typeof message === "object" && message !== null && "type" in message;
+}
 
 function applyProgress(response: BackgroundResponse): void {
   if (response.type === "backgroundError") {
@@ -56,6 +64,18 @@ function applyProgress(response: BackgroundResponse): void {
   }
 
   const { progress } = response;
+  if (
+    currentTaskId.value &&
+    progress.taskId &&
+    progress.taskId !== currentTaskId.value
+  ) {
+    return;
+  }
+
+  if (progress.taskId) {
+    currentTaskId.value = progress.taskId;
+  }
+
   translated.value = progress.translated;
   total.value = progress.total;
   failed.value = progress.failed;
@@ -74,6 +94,7 @@ function applyProgress(response: BackgroundResponse): void {
 
   if (progress.state === "cancelled") {
     state.value = "idle";
+    currentTaskId.value = "";
     errorMessage.value = "";
     return;
   }
@@ -81,7 +102,15 @@ function applyProgress(response: BackgroundResponse): void {
   state.value = "translating";
 }
 
+function handleRuntimeMessage(message: unknown): void {
+  if (isRuntimeResponse(message)) {
+    applyProgress(message);
+  }
+}
+
 onMounted(async () => {
+  browser.runtime.onMessage.addListener(handleRuntimeMessage);
+
   try {
     const [activeTab] = await browser.tabs.query({
       active: true,
@@ -100,7 +129,23 @@ onMounted(async () => {
     });
 
     if (response.type === "estimatePageResult") {
+      canTranslate.value = response.estimate.canTranslate;
       total.value = response.estimate.estimatedSegments;
+      if (!response.estimate.canTranslate) {
+        errorMessage.value = response.estimate.reason ?? "当前页面不可翻译。";
+        return;
+      }
+      const taskResponse = await sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
+        type: "getTaskForTab",
+        tabId: activeTab.id,
+      });
+      if (
+        taskResponse.type === "taskProgress" &&
+        taskResponse.progress.taskId &&
+        taskResponse.progress.state !== "completed"
+      ) {
+        applyProgress(taskResponse);
+      }
       return;
     }
 
@@ -114,12 +159,31 @@ onMounted(async () => {
   }
 });
 
+onUnmounted(() => {
+  browser.runtime.onMessage.removeListener(handleRuntimeMessage);
+});
+
 async function onPrimaryAction(): Promise<void> {
   if (isInitializing.value) {
     return;
   }
 
   if (state.value === "translating") {
+    if (!currentTaskId.value) {
+      return;
+    }
+
+    try {
+      const response = await sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
+        type: "cancelTask",
+        taskId: currentTaskId.value,
+        reason: "userCancelled",
+      });
+      applyProgress(response);
+    } catch (error: unknown) {
+      state.value = "error";
+      errorMessage.value = error instanceof Error ? error.message : "取消翻译失败。";
+    }
     return;
   }
 
@@ -130,6 +194,7 @@ async function onPrimaryAction(): Promise<void> {
   }
 
   state.value = "translating";
+  currentTaskId.value = "";
   errorMessage.value = "";
   translated.value = 0;
   failed.value = 0;

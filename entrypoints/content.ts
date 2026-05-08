@@ -55,8 +55,12 @@ export default defineContentScript({
               ContentRequest,
               { type: "applyTranslations" }
             >;
-            applyTranslationResults(request.taskId, request.items);
-            return { type: "contentActionResult", success: true };
+            const result = applyTranslationResults(request.taskId, request.items);
+            return {
+              type: "contentActionResult",
+              success: result.failedSegmentIds.length === 0,
+              ...result,
+            };
           }
           case "hideTranslations": {
             const request = message as Extract<

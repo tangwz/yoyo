@@ -26,15 +26,37 @@ function createDeferred<T>(): {
 }
 
 const browserMock = vi.hoisted(() => ({
+  runtimeListeners: new Set<(message: unknown) => void>(),
   runtimeSendMessage: vi.fn(),
   tabsQuery: vi.fn(),
   tabsSendMessage: vi.fn(),
 }));
 
+function idleTaskProgress() {
+  return {
+    type: "taskProgress",
+    progress: {
+      taskId: "",
+      state: "completed",
+      total: 0,
+      translated: 0,
+      failed: 0,
+    },
+  };
+}
+
 vi.mock("wxt/browser", () => ({
   browser: {
     runtime: {
       sendMessage: browserMock.runtimeSendMessage,
+      onMessage: {
+        addListener: (listener: (message: unknown) => void) => {
+          browserMock.runtimeListeners.add(listener);
+        },
+        removeListener: (listener: (message: unknown) => void) => {
+          browserMock.runtimeListeners.delete(listener);
+        },
+      },
     },
     tabs: {
       query: browserMock.tabsQuery,
@@ -45,6 +67,7 @@ vi.mock("wxt/browser", () => ({
 
 describe("popup app", () => {
   beforeEach(() => {
+    browserMock.runtimeListeners.clear();
     browserMock.runtimeSendMessage.mockReset();
     browserMock.tabsQuery.mockReset();
     browserMock.tabsSendMessage.mockReset();
@@ -58,7 +81,12 @@ describe("popup app", () => {
         estimatedChars: 1200,
       },
     });
-    browserMock.runtimeSendMessage.mockResolvedValue({
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getTaskForTab") {
+        return idleTaskProgress();
+      }
+
+      return {
       type: "taskProgress",
       progress: {
         taskId: "task-1",
@@ -67,6 +95,7 @@ describe("popup app", () => {
         translated: 32,
         failed: 0,
       },
+      };
     });
   });
 
@@ -142,15 +171,21 @@ describe("popup app", () => {
   });
 
   it("returns cancelled task progress to a recoverable idle state", async () => {
-    browserMock.runtimeSendMessage.mockResolvedValueOnce({
-      type: "taskProgress",
-      progress: {
-        taskId: "task-1",
-        state: "cancelled",
-        total: 32,
-        translated: 12,
-        failed: 0,
-      },
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getTaskForTab") {
+        return idleTaskProgress();
+      }
+
+      return {
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "cancelled",
+          total: 32,
+          translated: 12,
+          failed: 0,
+        },
+      };
     });
 
     render(PopupApp);
@@ -167,16 +202,133 @@ describe("popup app", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("shows completed UI with failed count for completedWithErrors progress", async () => {
-    browserMock.runtimeSendMessage.mockResolvedValueOnce({
-      type: "taskProgress",
-      progress: {
-        taskId: "task-1",
-        state: "completedWithErrors",
-        total: 32,
-        translated: 29,
-        failed: 3,
+  it("sends cancelTask for the current running task", async () => {
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getTaskForTab") {
+        return idleTaskProgress();
+      }
+
+      if (message.type === "cancelTask") {
+        return {
+          type: "taskProgress",
+          progress: {
+            taskId: "task-1",
+            state: "cancelled",
+            total: 32,
+            translated: 8,
+            failed: 0,
+          },
+        };
+      }
+
+      return {
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "collecting",
+          total: 32,
+          translated: 0,
+          failed: 0,
+        },
+      };
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "取消翻译" }));
+
+    expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
+      type: "cancelTask",
+      taskId: "task-1",
+      reason: "userCancelled",
+    });
+    expect(await screen.findByRole("button", { name: "翻译当前页面" })).toBeVisible();
+  });
+
+  it("applies background progress broadcasts for the active task", async () => {
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getTaskForTab") {
+        return idleTaskProgress();
+      }
+
+      return {
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "collecting",
+          total: 32,
+          translated: 0,
+          failed: 0,
+        },
+      };
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+
+    for (const listener of browserMock.runtimeListeners) {
+      listener({
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "translating",
+          total: 32,
+          translated: 10,
+          failed: 1,
+        },
+      });
+    }
+
+    expect(await screen.findByText("10")).toBeVisible();
+    expect(screen.getByText("1")).toBeVisible();
+  });
+
+  it("disables translation when page estimate says the page is unsupported", async () => {
+    browserMock.tabsSendMessage.mockResolvedValueOnce({
+      type: "estimatePageResult",
+      estimate: {
+        canTranslate: false,
+        estimatedSegments: 0,
+        estimatedChars: 0,
+        reason: "Unsupported page URL.",
       },
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+      expect(screen.getByRole("button", { name: "翻译当前页面" })).toBeDisabled();
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Unsupported page URL.");
+  });
+
+  it("shows completed UI with failed count for completedWithErrors progress", async () => {
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getTaskForTab") {
+        return idleTaskProgress();
+      }
+
+      return {
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "completedWithErrors",
+          total: 32,
+          translated: 29,
+          failed: 3,
+        },
+      };
     });
 
     render(PopupApp);
@@ -198,16 +350,22 @@ describe("popup app", () => {
   });
 
   it("shows failed progress as an error without completed UI", async () => {
-    browserMock.runtimeSendMessage.mockResolvedValueOnce({
-      type: "taskProgress",
-      progress: {
-        taskId: "task-1",
-        state: "failed",
-        total: 32,
-        translated: 11,
-        failed: 1,
-        errorMessage: "Translation provider is unavailable.",
-      },
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getTaskForTab") {
+        return idleTaskProgress();
+      }
+
+      return {
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "failed",
+          total: 32,
+          translated: 11,
+          failed: 1,
+          errorMessage: "Translation provider is unavailable.",
+        },
+      };
     });
 
     render(PopupApp);
@@ -228,9 +386,15 @@ describe("popup app", () => {
   });
 
   it("shows background error responses from translate requests", async () => {
-    browserMock.runtimeSendMessage.mockResolvedValueOnce({
-      type: "backgroundError",
-      message: "No provider is configured.",
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getTaskForTab") {
+        return idleTaskProgress();
+      }
+
+      return {
+        type: "backgroundError",
+        message: "No provider is configured.",
+      };
     });
 
     render(PopupApp);
