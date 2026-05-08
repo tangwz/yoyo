@@ -4,7 +4,10 @@ export default defineConfig({
   modules: ["@wxt-dev/module-vue"],
   manifestVersion: 3,
   alias: {
+    "@/messaging": "src/messaging",
+    "@/translation": "src/translation",
     "@/ui": "src/ui",
+    "@/utils": "src/utils",
   },
   manifest: {
     name: "悠悠阅读助手",
