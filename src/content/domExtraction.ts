@@ -10,6 +10,7 @@ export type SegmentCollection = {
 
 const leafReadableTags = new Set(["P", "LI", "BLOCKQUOTE"]);
 const headingTags = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
+const listTags = new Set(["UL", "OL"]);
 const genericMinimumTextLength = 80;
 const textNodeType = 3;
 const elementNodeType = 1;
@@ -49,6 +50,17 @@ function hasNestedList(element: Element): boolean {
 }
 
 function collectExtractableText(element: Element): string {
+  return collectTextStream(element);
+}
+
+function collectNestedListItemOwnText(element: Element): string {
+  return collectTextStream(element, listTags);
+}
+
+function collectTextStream(
+  element: Element,
+  excludedTags: ReadonlySet<string> = new Set(),
+): string {
   const parts: string[] = [];
 
   for (const child of [...element.childNodes]) {
@@ -61,8 +73,9 @@ function collectExtractableText(element: Element): string {
 
     const childElement = child as Element;
     if (isElementSkippable(childElement)) continue;
+    if (excludedTags.has(childElement.tagName)) continue;
 
-    parts.push(collectExtractableText(childElement));
+    parts.push(collectTextStream(childElement, excludedTags));
   }
 
   return normalizeSourceText(parts.join(""));
@@ -98,24 +111,43 @@ export async function collectPageSegments(
   const segments: PageSegment[] = [];
   let order = 1;
 
+  async function addSegment(
+    element: Element,
+    sourceText: string,
+  ): Promise<void> {
+    const segmentId = `seg_${order}`;
+    segments.push({
+      id: segmentId,
+      order,
+      sourceText,
+      kind: segmentKindFor(element),
+      pathHint: pathHintFor(element),
+      textHash: await hashNormalizedText(sourceText),
+    });
+    anchors.set({ segmentId, sourceNode: element, taskId });
+    order += 1;
+  }
+
   async function walk(element: Element): Promise<void> {
     if (isElementSkippable(element)) return;
+
+    if (element.tagName === "LI" && hasNestedList(element)) {
+      const sourceText = collectNestedListItemOwnText(element);
+      if (sourceText.length > 0) {
+        await addSegment(element, sourceText);
+      }
+
+      for (const child of [...element.children]) {
+        await walk(child);
+      }
+      return;
+    }
 
     if (shouldExtractElement(element)) {
       const sourceText = collectExtractableText(element);
       if (sourceText.length === 0) return;
 
-      const segmentId = `seg_${order}`;
-      segments.push({
-        id: segmentId,
-        order,
-        sourceText,
-        kind: segmentKindFor(element),
-        pathHint: pathHintFor(element),
-        textHash: await hashNormalizedText(sourceText),
-      });
-      anchors.set({ segmentId, sourceNode: element, taskId });
-      order += 1;
+      await addSegment(element, sourceText);
       return;
     }
 

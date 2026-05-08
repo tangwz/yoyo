@@ -98,9 +98,16 @@ describe("collectPageSegments", () => {
     const result = await collectPageSegments("task-1");
 
     expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Parent item",
       "Nested child item.",
       "Sibling item.",
     ]);
+    expect(result.segments.map((segment) => segment.kind)).toEqual([
+      "listItem",
+      "listItem",
+      "listItem",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode.tagName).toBe("LI");
   });
 
   it("skips non-readable and extension-owned nodes", async () => {
