@@ -10,6 +10,21 @@ import {
   targetLanguageOptions,
 } from "../../src/i18n/languages";
 
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return { promise, resolve, reject };
+}
+
 const browserMock = vi.hoisted(() => ({
   runtimeSendMessage: vi.fn(),
   tabsQuery: vi.fn(),
@@ -76,6 +91,28 @@ describe("popup app", () => {
     });
   });
 
+  it("disables translation while resolving the active tab", async () => {
+    const activeTabQuery = createDeferred<Array<{ id: number }>>();
+    browserMock.tabsQuery.mockReturnValueOnce(activeTabQuery.promise);
+
+    render(PopupApp);
+
+    const primaryButton = screen.getByRole("button", { name: "翻译当前页面" });
+
+    expect(primaryButton).toBeDisabled();
+
+    await fireEvent.click(primaryButton);
+
+    expect(browserMock.runtimeSendMessage).not.toHaveBeenCalled();
+    expect(screen.queryByText("无法获取当前标签页。")).not.toBeInTheDocument();
+
+    activeTabQuery.resolve([{ id: 123 }]);
+
+    await waitFor(() => {
+      expect(primaryButton).toBeEnabled();
+    });
+  });
+
   it("requests page translation for the active tab and shows completed progress", async () => {
     render(PopupApp);
 
@@ -104,7 +141,7 @@ describe("popup app", () => {
     expect(screen.getByText("0")).toBeVisible();
   });
 
-  it("keeps cancelled task progress in the translating state", async () => {
+  it("returns cancelled task progress to a recoverable idle state", async () => {
     browserMock.runtimeSendMessage.mockResolvedValueOnce({
       type: "taskProgress",
       progress: {
@@ -124,7 +161,8 @@ describe("popup app", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
 
-    expect(await screen.findByRole("button", { name: "取消翻译" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "翻译当前页面" })).toBeVisible();
+    expect(screen.queryByLabelText("Task progress")).not.toBeInTheDocument();
     expect(screen.queryByText("翻译失败，请稍后重试。")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });

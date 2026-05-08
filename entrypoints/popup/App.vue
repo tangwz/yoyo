@@ -12,6 +12,7 @@ import type {
   ContentRequest,
   ContentResponse,
 } from "@/messaging/contracts";
+import { sendRuntimeMessage, sendTabMessage } from "@/messaging/runtime";
 import ErrorSummary from "@/ui/components/ErrorSummary.vue";
 import LanguageSelector from "@/ui/components/LanguageSelector.vue";
 import PopupFooter from "@/ui/components/PopupFooter.vue";
@@ -22,12 +23,12 @@ const sourceLanguage = ref("auto");
 const targetLanguage = ref("zh-CN");
 const providerLabel = ref("OpenAI Compatible / api.example.com");
 const tabId = ref<number>();
+const isInitializing = ref(true);
 const state = ref<"idle" | "translating" | "completed" | "error">("idle");
 const translated = ref(0);
 const total = ref(0);
 const failed = ref(0);
 const errorMessage = ref("");
-const activeTaskId = ref<string>();
 
 const primaryLabel = computed(() => {
   if (state.value === "translating") {
@@ -41,6 +42,8 @@ const primaryLabel = computed(() => {
   return "翻译当前页面";
 });
 
+const isPrimaryDisabled = computed(() => isInitializing.value);
+
 function applyProgress(response: BackgroundResponse): void {
   if (response.type === "backgroundError") {
     state.value = "error";
@@ -53,7 +56,6 @@ function applyProgress(response: BackgroundResponse): void {
   }
 
   const { progress } = response;
-  activeTaskId.value = progress.taskId;
   translated.value = progress.translated;
   total.value = progress.total;
   failed.value = progress.failed;
@@ -67,6 +69,12 @@ function applyProgress(response: BackgroundResponse): void {
   if (progress.state === "failed") {
     state.value = "error";
     errorMessage.value ||= "翻译失败，请稍后重试。";
+    return;
+  }
+
+  if (progress.state === "cancelled") {
+    state.value = "idle";
+    errorMessage.value = "";
     return;
   }
 
@@ -85,10 +93,11 @@ onMounted(async () => {
     }
 
     tabId.value = activeTab.id;
+    isInitializing.value = false;
 
-    const response = (await browser.tabs.sendMessage(activeTab.id, {
+    const response = await sendTabMessage<ContentRequest, ContentResponse>(activeTab.id, {
       type: "estimatePage",
-    } satisfies ContentRequest)) as ContentResponse;
+    });
 
     if (response.type === "estimatePageResult") {
       total.value = response.estimate.estimatedSegments;
@@ -100,10 +109,16 @@ onMounted(async () => {
     }
   } catch (error: unknown) {
     errorMessage.value = error instanceof Error ? error.message : "无法读取当前页面。";
+  } finally {
+    isInitializing.value = false;
   }
 });
 
 async function onPrimaryAction(): Promise<void> {
+  if (isInitializing.value) {
+    return;
+  }
+
   if (state.value === "translating") {
     return;
   }
@@ -120,12 +135,12 @@ async function onPrimaryAction(): Promise<void> {
   failed.value = 0;
 
   try {
-    const response = (await browser.runtime.sendMessage({
+    const response = await sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
       type: "translatePage",
       tabId: tabId.value,
       sourceLanguage: sourceLanguage.value,
       targetLanguage: targetLanguage.value,
-    } satisfies BackgroundRequest)) as BackgroundResponse;
+    });
 
     applyProgress(response);
   } catch (error: unknown) {
@@ -154,6 +169,7 @@ async function onPrimaryAction(): Promise<void> {
       <button
         class="primary-action"
         type="button"
+        :disabled="isPrimaryDisabled"
         @click="onPrimaryAction"
       >
         {{ primaryLabel }}
@@ -222,6 +238,11 @@ async function onPrimaryAction(): Promise<void> {
 
 .primary-action:hover {
   background: linear-gradient(180deg, #6b61ff 0%, #554ae4 100%);
+}
+
+.primary-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
 }
 
 .primary-action:focus-visible {
