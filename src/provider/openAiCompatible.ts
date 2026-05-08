@@ -14,6 +14,8 @@ function joinUrl(baseURL: string, path: string): string {
   return `${baseURL.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
+type AbortSource = "timeout" | "user";
+
 export class OpenAiCompatibleProvider {
   async generateText(request: GenerateTextRequest): Promise<GenerateTextResponse> {
     if (request.abortSignal?.aborted) {
@@ -22,9 +24,14 @@ export class OpenAiCompatibleProvider {
 
     const timeoutMs = request.profile.requestParams?.timeoutMs ?? 30000;
     const timeoutController = new AbortController();
-    const timeoutId = globalThis.setTimeout(() => timeoutController.abort(), timeoutMs);
+    let abortSource: AbortSource | undefined;
+    const abortWithSource = (source: AbortSource) => {
+      abortSource ??= source;
+      timeoutController.abort();
+    };
+    const timeoutId = globalThis.setTimeout(() => abortWithSource("timeout"), timeoutMs);
 
-    const abortForwarder = () => timeoutController.abort();
+    const abortForwarder = () => abortWithSource("user");
     request.abortSignal?.addEventListener("abort", abortForwarder, { once: true });
 
     try {
@@ -60,7 +67,7 @@ export class OpenAiCompatibleProvider {
       }
 
       const text = payload.choices?.[0]?.message?.content;
-      if (!text) {
+      if (typeof text !== "string") {
         throw new ProviderError("invalidResponse", "Provider response did not include text.");
       }
 
@@ -74,10 +81,8 @@ export class OpenAiCompatibleProvider {
       }
       if (error instanceof DOMException && error.name === "AbortError") {
         throw new ProviderError(
-          request.abortSignal?.aborted ? "aborted" : "timeout",
-          request.abortSignal?.aborted
-            ? "Provider request was aborted."
-            : "Provider request timed out.",
+          abortSource === "user" ? "aborted" : "timeout",
+          abortSource === "user" ? "Provider request was aborted." : "Provider request timed out.",
           undefined,
           error,
         );

@@ -15,6 +15,7 @@ const profile: ProviderProfile = {
 describe("OpenAiCompatibleProvider", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -49,6 +50,28 @@ describe("OpenAiCompatibleProvider", () => {
       messages: [{ role: "user", content: "Translate me" }],
       temperature: 0.2,
       max_tokens: 1200,
+    });
+  });
+
+  it("accepts an empty string response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "" } }],
+            model: "model-a",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    const provider = new OpenAiCompatibleProvider();
+
+    await expect(provider.generateText({ profile, prompt: "Hello" })).resolves.toEqual({
+      text: "",
+      model: "model-a",
     });
   });
 
@@ -93,6 +116,38 @@ describe("OpenAiCompatibleProvider", () => {
     const expectation = expect(request).rejects.toMatchObject({ code: "timeout" });
 
     await vi.advanceTimersByTimeAsync(25);
+
+    await expectation;
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps timeout classification when user aborts after timeout fires", async () => {
+    vi.useFakeTimers();
+
+    let rejectFetch: ((error: DOMException) => void) | undefined;
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      const signal = init?.signal;
+
+      return new Promise<Response>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => {
+          rejectFetch = reject;
+        });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const abortController = new AbortController();
+
+    const provider = new OpenAiCompatibleProvider();
+    const request = provider.generateText({
+      profile: { ...profile, requestParams: { ...profile.requestParams, timeoutMs: 25 } },
+      prompt: "Hello",
+      abortSignal: abortController.signal,
+    });
+    const expectation = expect(request).rejects.toMatchObject({ code: "timeout" });
+
+    await vi.advanceTimersByTimeAsync(25);
+    abortController.abort();
+    rejectFetch?.(new DOMException("The operation was aborted.", "AbortError"));
 
     await expectation;
     expect(fetchMock).toHaveBeenCalledOnce();
