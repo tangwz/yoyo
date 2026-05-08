@@ -13,7 +13,7 @@ describe("storage repositories", () => {
   it("stores provider profiles in local storage", async () => {
     const local = createInMemoryStorageArea();
     const sync = createInMemoryStorageArea();
-    const repository = providerProfileRepository(local, sync);
+    const repository = providerProfileRepository({ privateStorage: local });
 
     await repository.saveProfile({
       id: "provider-1",
@@ -36,7 +36,7 @@ describe("storage repositories", () => {
   it("stores UI preferences in sync storage", async () => {
     const local = createInMemoryStorageArea();
     const sync = createInMemoryStorageArea();
-    const repository = uiPreferenceRepository(local, sync);
+    const repository = uiPreferenceRepository({ syncedStorage: sync });
 
     await repository.save({ theme: "light", uiLanguage: "zh-CN" });
 
@@ -44,5 +44,35 @@ describe("storage repositories", () => {
       "yoyo.uiPreferences": { theme: "light", uiLanguage: "zh-CN" },
     });
     expect(await local.get("yoyo.uiPreferences")).toEqual({});
+  });
+
+  it("does not mutate stored profiles when a returned profile list changes", async () => {
+    const local = createInMemoryStorageArea();
+    const repository = providerProfileRepository({ privateStorage: local });
+
+    await repository.saveProfile({
+      id: "provider-1",
+      displayName: "Local Provider",
+      type: "openai-compatible",
+      baseURL: "https://api.example.com/v1",
+      apiKey: "secret",
+      textModel: "gpt-4.1-mini",
+      requestParams: { timeoutMs: 30000 },
+    });
+
+    const profiles = await repository.listProfiles();
+    profiles[0].apiKey = "mutated";
+    profiles.push({
+      id: "provider-2",
+      displayName: "Mutated Provider",
+      type: "openai-compatible",
+      baseURL: "https://api.example.com/v1",
+      apiKey: "mutated-secret",
+      textModel: "gpt-4.1-mini",
+    });
+
+    expect(await repository.listProfiles()).toEqual([
+      expect.objectContaining({ id: "provider-1", apiKey: "secret" }),
+    ]);
   });
 });

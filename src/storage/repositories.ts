@@ -10,6 +10,14 @@ type StorageArea = {
   remove(keys: string | string[]): Promise<void>;
 };
 
+type ProviderProfileRepositoryDependencies = {
+  privateStorage: StorageArea;
+};
+
+type UiPreferenceRepositoryDependencies = {
+  syncedStorage: StorageArea;
+};
+
 type ExtensionStorageRuntime = {
   chrome: {
     storage: {
@@ -19,34 +27,45 @@ type ExtensionStorageRuntime = {
   };
 };
 
+function cloneStorageValue<T>(value: T): T {
+  return structuredClone(value);
+}
+
 export function createInMemoryStorageArea(): StorageArea {
   const values = new Map<string, unknown>();
 
   return {
     async get(keys?: string | string[] | Record<string, unknown> | null) {
       if (typeof keys === "string") {
-        return values.has(keys) ? { [keys]: values.get(keys) } : {};
+        return values.has(keys)
+          ? { [keys]: cloneStorageValue(values.get(keys)) }
+          : {};
       }
       if (Array.isArray(keys)) {
         return Object.fromEntries(
           keys
             .filter((key) => values.has(key))
-            .map((key) => [key, values.get(key)]),
+            .map((key) => [key, cloneStorageValue(values.get(key))]),
         );
       }
       if (keys && typeof keys === "object") {
         return Object.fromEntries(
           Object.entries(keys).map(([key, fallback]) => [
             key,
-            values.has(key) ? values.get(key) : fallback,
+            cloneStorageValue(values.has(key) ? values.get(key) : fallback),
           ]),
         );
       }
-      return Object.fromEntries(values.entries());
+      return Object.fromEntries(
+        [...values.entries()].map(([key, value]) => [
+          key,
+          cloneStorageValue(value),
+        ]),
+      );
     },
     async set(items: Record<string, unknown>) {
       for (const [key, value] of Object.entries(items)) {
-        values.set(key, value);
+        values.set(key, cloneStorageValue(value));
       }
     },
     async remove(keys: string | string[]) {
@@ -57,63 +76,65 @@ export function createInMemoryStorageArea(): StorageArea {
   };
 }
 
-export function providerProfileRepository(local: StorageArea, sync: StorageArea) {
-  void sync;
+export function providerProfileRepository({
+  privateStorage,
+}: ProviderProfileRepositoryDependencies) {
+  async function listProfiles(): Promise<ProviderProfile[]> {
+    const result = await privateStorage.get({
+      [storageKeys.providerProfiles]: [],
+    });
+    return result[storageKeys.providerProfiles] as ProviderProfile[];
+  }
+
+  async function saveProfile(profile: ProviderProfile): Promise<void> {
+    const profiles = await listProfiles();
+    const nextProfiles = [
+      ...profiles.filter((existing) => existing.id !== profile.id),
+      profile,
+    ];
+    await privateStorage.set({ [storageKeys.providerProfiles]: nextProfiles });
+  }
+
+  async function getActiveProviderId(): Promise<string | undefined> {
+    const result = await privateStorage.get(storageKeys.activeProviderId);
+    return result[storageKeys.activeProviderId] as string | undefined;
+  }
+
+  async function setActiveProviderId(providerId: string): Promise<void> {
+    await privateStorage.set({ [storageKeys.activeProviderId]: providerId });
+  }
 
   return {
-    async listProfiles(): Promise<ProviderProfile[]> {
-      const result = await local.get({ [storageKeys.providerProfiles]: [] });
-      return result[storageKeys.providerProfiles] as ProviderProfile[];
-    },
-
-    async saveProfile(profile: ProviderProfile): Promise<void> {
-      const profiles = await this.listProfiles();
-      const nextProfiles = [
-        ...profiles.filter((existing) => existing.id !== profile.id),
-        profile,
-      ];
-      await local.set({ [storageKeys.providerProfiles]: nextProfiles });
-    },
-
-    async getActiveProviderId(): Promise<string | undefined> {
-      const result = await local.get(storageKeys.activeProviderId);
-      return result[storageKeys.activeProviderId] as string | undefined;
-    },
-
-    async setActiveProviderId(providerId: string): Promise<void> {
-      await local.set({ [storageKeys.activeProviderId]: providerId });
-    },
+    listProfiles,
+    saveProfile,
+    getActiveProviderId,
+    setActiveProviderId,
   };
 }
 
-export function uiPreferenceRepository(local: StorageArea, sync: StorageArea) {
-  void local;
+export function uiPreferenceRepository({
+  syncedStorage,
+}: UiPreferenceRepositoryDependencies) {
+  async function get(): Promise<UiPreferences> {
+    const result = await syncedStorage.get({
+      [storageKeys.uiPreferences]: defaultUiPreferences,
+    });
+    return result[storageKeys.uiPreferences] as UiPreferences;
+  }
 
-  return {
-    async get(): Promise<UiPreferences> {
-      const result = await sync.get({
-        [storageKeys.uiPreferences]: defaultUiPreferences,
-      });
-      return result[storageKeys.uiPreferences] as UiPreferences;
-    },
+  async function save(preferences: UiPreferences): Promise<void> {
+    await syncedStorage.set({ [storageKeys.uiPreferences]: preferences });
+  }
 
-    async save(preferences: UiPreferences): Promise<void> {
-      await sync.set({ [storageKeys.uiPreferences]: preferences });
-    },
-  };
+  return { get, save };
 }
 
 export function createStorageRepositories() {
   const runtime = globalThis as typeof globalThis & ExtensionStorageRuntime;
+  const storage = runtime.chrome.storage;
 
   return {
-    providers: providerProfileRepository(
-      runtime.chrome.storage.local,
-      runtime.chrome.storage.sync,
-    ),
-    uiPreferences: uiPreferenceRepository(
-      runtime.chrome.storage.local,
-      runtime.chrome.storage.sync,
-    ),
+    providers: providerProfileRepository({ privateStorage: storage.local }),
+    uiPreferences: uiPreferenceRepository({ syncedStorage: storage.sync }),
   };
 }
