@@ -421,12 +421,31 @@ popup 状态：
 popup 内部区域：
 
 - `PageStatusCard`
+- `LanguageSelector`
 - `ProviderInfo`
 - `ActionButtonGroup`
 - `ProgressView`
 - `ErrorSummary`
+- `PopupFooter`
 
 未配置 provider 时，主按钮变为“打开设置”。可翻译时，主按钮为“翻译当前页面”。
+
+popup 的默认可翻译态采用 Reader Focus v5 布局：
+
+1. 标题：`悠悠阅读助手`。
+2. 语言选择：源语言下拉、方向箭头、目标语言下拉。
+3. 翻译服务：显示 active provider profile 的名称和 baseURL 摘要。
+4. 主按钮：大号 `翻译当前页面`。
+5. 底部工具栏：左侧 `设置`，中间显示版本号，右侧 `更多` 下拉。
+
+语言选择区必须是控件形态，而不是静态信息卡：
+
+- 源语言第一版默认为 `自动检测`，但 UI 预留下拉选择。
+- 目标语言第一版默认为 `简体中文`，并通过下拉选择预留多语言支持。
+- 源语言和目标语言中间显示方向箭头。
+- 语言控件不需要在第一版实现完整语言管理系统，但组件边界要支持后续扩展语言列表。
+
+popup 不显示右上角状态 pill。当前页面是否可翻译通过主按钮状态、错误摘要和任务状态区域表达。
 
 popup 打开时或用户进入 popup 时，可以执行轻量估算，只返回：
 
@@ -443,7 +462,7 @@ type PageTranslationEstimate = {
 触发前 popup 显示透明提示，例如：
 
 - 将发送约 32 段文本。
-- Provider: OpenAI Compatible / api.example.com。
+- 翻译服务：OpenAI Compatible / api.example.com。
 
 这不是强确认弹窗。
 
@@ -455,7 +474,15 @@ type PageTranslationEstimate = {
 完成后操作层级：
 
 - 主按钮：重新翻译
-- 次级按钮：隐藏译文 / 显示译文 / 移除译文
+- 底部工具栏左侧：隐藏译文 / 显示译文
+- 更多菜单：移除译文、重新翻译、打开设置等次级操作
+
+底部工具栏语义：
+
+- 左侧是当前主要辅助动作。默认可翻译态为 `设置`；翻译完成后可变为 `隐藏译文` 或 `显示译文`。
+- 中间固定展示扩展版本号，例如 `0.1.0`。
+- 右侧 `更多` 打开次级菜单。
+- `隐私说明` 不作为 popup 主体按钮出现；隐私信息放在 options page 的 Privacy 区域，必要时可从 `更多` 进入。
 
 `completedWithErrors` 展示简短摘要，例如：
 
@@ -498,8 +525,8 @@ API key 旁边必须明确说明：保存在浏览器扩展本地存储，不跨
 
 第一版配置：
 
-- 源语言自动检测。
-- 目标语言默认中文。
+- 源语言默认自动检测，popup 中以可下拉控件展示。
+- 目标语言默认简体中文，popup 中以可下拉控件展示。
 - 显示方式：原文下方显示译文，并尽量保持与原段落一致的排版样式。
 - `translationStyle = "default"`，用于 cache key 和后续扩展。
 
@@ -531,6 +558,8 @@ Privacy 区域提供 site blacklist 管理。site whitelist auto-translate 只�
 
 视觉方向：
 
+- popup 和 options page 使用 Reader Focus v5 方向：现代浅色、紫蓝主按钮、清晰控件边界。
+- 网页内译文不使用 popup 的品牌色，继续遵循 source-compatible 样式镜像。
 - 工具型。
 - 克制。
 - 信息密度适中。
@@ -588,6 +617,7 @@ Privacy 区域提供 site blacklist 管理。site whitelist auto-translate 只�
 
 至少检查真实页面：
 
+- popup 默认态包含源语言下拉、方向箭头、目标语言下拉、翻译服务、大号主按钮和底部版本号工具栏。
 - 普通博客文章。
 - 技术文档页。
 - 新闻文章。
@@ -660,6 +690,7 @@ Privacy 区域提供 site blacklist 管理。site whitelist auto-translate 只�
 验收标准：
 
 - 无 provider 时，用户能清楚进入设置页配置。
+- popup 默认态包含源语言下拉、方向箭头、目标语言下拉、翻译服务、大号主按钮和底部工具栏；底部工具栏左侧为设置，中间为版本号，右侧为更多。
 - provider 测试成功后，普通文章页可以完成翻译。
 - 翻译过程中 popup 能显示进度并取消。
 - provider timeout 有明确状态，不会静默卡死。
