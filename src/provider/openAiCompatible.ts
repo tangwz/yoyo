@@ -16,6 +16,10 @@ function joinUrl(baseURL: string, path: string): string {
 
 export class OpenAiCompatibleProvider {
   async generateText(request: GenerateTextRequest): Promise<GenerateTextResponse> {
+    if (request.abortSignal?.aborted) {
+      throw new ProviderError("aborted", "Provider request was aborted.");
+    }
+
     const timeoutMs = request.profile.requestParams?.timeoutMs ?? 30000;
     const timeoutController = new AbortController();
     const timeoutId = globalThis.setTimeout(() => timeoutController.abort(), timeoutMs);
@@ -43,7 +47,18 @@ export class OpenAiCompatibleProvider {
         throw mapHttpStatusToProviderError(response.status, await response.text());
       }
 
-      const payload = (await response.json()) as ChatCompletionResponse;
+      let payload: ChatCompletionResponse;
+      try {
+        payload = (await response.json()) as ChatCompletionResponse;
+      } catch (error) {
+        throw new ProviderError(
+          "invalidResponse",
+          "Provider response was not valid JSON.",
+          undefined,
+          error,
+        );
+      }
+
       const text = payload.choices?.[0]?.message?.content;
       if (!text) {
         throw new ProviderError("invalidResponse", "Provider response did not include text.");
@@ -63,9 +78,16 @@ export class OpenAiCompatibleProvider {
           request.abortSignal?.aborted
             ? "Provider request was aborted."
             : "Provider request timed out.",
+          undefined,
+          error,
         );
       }
-      throw new ProviderError("networkError", "Provider request failed before receiving a response.");
+      throw new ProviderError(
+        "networkError",
+        "Provider request failed before receiving a response.",
+        undefined,
+        error,
+      );
     } finally {
       globalThis.clearTimeout(timeoutId);
       request.abortSignal?.removeEventListener("abort", abortForwarder);
