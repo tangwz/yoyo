@@ -37,6 +37,19 @@ describe("translation JSON result parser", () => {
     expect(result.warnings).toEqual([]);
   });
 
+  it("continues scanning after an invalid balanced object", () => {
+    const result = parseTranslationBatchResult(
+      'Note: {not json}\n{"items":[{"segmentId":"a","translatedText":"Alpha"}]}',
+      ["a"],
+    );
+
+    expect(result.items).toEqual([
+      { segmentId: "a", translatedText: "Alpha" },
+    ]);
+    expect(result.missingSegmentIds).toEqual([]);
+    expect(result.warnings).toEqual([]);
+  });
+
   it("ignores invalid items and duplicate segment IDs with warnings", () => {
     const result = parseTranslationBatchResult(
       JSON.stringify({

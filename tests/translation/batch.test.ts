@@ -66,4 +66,22 @@ describe("translation batch helpers", () => {
       ["small-after"],
     ]);
   });
+
+  it("rejects non-positive character budgets", () => {
+    expect(() =>
+      splitSegmentsIntoBatches([segment("one", 1, "A")], {
+        maxCharsPerBatch: 0,
+        maxSegmentsPerBatch: 1,
+      }),
+    ).toThrow("maxCharsPerBatch must be greater than 0.");
+  });
+
+  it("rejects non-positive segment budgets", () => {
+    expect(() =>
+      splitSegmentsIntoBatches([segment("one", 1, "A")], {
+        maxCharsPerBatch: 1,
+        maxSegmentsPerBatch: 0,
+      }),
+    ).toThrow("maxSegmentsPerBatch must be greater than 0.");
+  });
 });

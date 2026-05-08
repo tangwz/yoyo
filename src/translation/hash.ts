@@ -28,6 +28,7 @@ export async function createCacheKey(
 ): Promise<TranslationCacheKey> {
   return {
     normalizedTextHash: await hashNormalizedText(input.sourceText),
+    sourceLanguage: input.sourceLanguage,
     targetLanguage: input.targetLanguage,
     providerId: input.providerId,
     textModel: input.textModel,
@@ -39,6 +40,7 @@ export async function createCacheKey(
 export function serializeCacheKey(key: TranslationCacheKey): string {
   return JSON.stringify({
     normalizedTextHash: key.normalizedTextHash,
+    sourceLanguage: key.sourceLanguage,
     targetLanguage: key.targetLanguage,
     providerId: key.providerId,
     textModel: key.textModel,

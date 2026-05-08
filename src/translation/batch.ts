@@ -9,6 +9,14 @@ export function splitSegmentsIntoBatches(
   segments: readonly PageSegment[],
   options: BatchOptions,
 ): PageSegment[][] {
+  if (options.maxCharsPerBatch <= 0) {
+    throw new Error("maxCharsPerBatch must be greater than 0.");
+  }
+
+  if (options.maxSegmentsPerBatch <= 0) {
+    throw new Error("maxSegmentsPerBatch must be greater than 0.");
+  }
+
   const orderedSegments = [...segments].sort((left, right) => left.order - right.order);
   const batches: PageSegment[][] = [];
   let currentBatch: PageSegment[] = [];

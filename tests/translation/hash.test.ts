@@ -15,6 +15,7 @@ describe("translation hash helpers", () => {
   it("creates stable cache keys from normalized text and translation settings", async () => {
     const key = await createCacheKey({
       sourceText: " Hello\n   world ",
+      sourceLanguage: "en",
       targetLanguage: "zh-CN",
       providerId: "openai-compatible",
       textModel: "gpt-4.1-mini",
@@ -24,6 +25,7 @@ describe("translation hash helpers", () => {
 
     expect(key).toEqual({
       normalizedTextHash: await hashNormalizedText("Hello world"),
+      sourceLanguage: "en",
       targetLanguage: "zh-CN",
       providerId: "openai-compatible",
       textModel: "gpt-4.1-mini",
@@ -33,5 +35,31 @@ describe("translation hash helpers", () => {
 
     expect(serializeCacheKey(key)).toBe(serializeCacheKey({ ...key }));
     expect(JSON.parse(serializeCacheKey(key))).toEqual(key);
+  });
+
+  it("separates cache identity by source language", async () => {
+    const baseInput = {
+      sourceText: "Hello",
+      targetLanguage: "zh-CN",
+      providerId: "openai-compatible",
+      textModel: "gpt-4.1-mini",
+      translationStyle: "concise",
+      promptVersion: "v1",
+    };
+
+    const englishKey = await createCacheKey({
+      ...baseInput,
+      sourceLanguage: "en",
+    });
+    const spanishKey = await createCacheKey({
+      ...baseInput,
+      sourceLanguage: "es",
+    });
+
+    expect(englishKey.normalizedTextHash).toBe(spanishKey.normalizedTextHash);
+    expect(serializeCacheKey(englishKey)).not.toBe(serializeCacheKey(spanishKey));
+    expect(JSON.parse(serializeCacheKey(englishKey))).toMatchObject({
+      sourceLanguage: "en",
+    });
   });
 });

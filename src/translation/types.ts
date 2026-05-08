@@ -35,6 +35,7 @@ export type TranslationBatchResult = {
 
 export type TranslationCacheKey = {
   normalizedTextHash: string;
+  sourceLanguage: string;
   targetLanguage: string;
   providerId: string;
   textModel: string;

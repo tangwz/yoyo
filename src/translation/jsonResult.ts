@@ -10,11 +10,7 @@ export function parseTranslationBatchResult(
   outputText: string,
   expectedSegmentIds: readonly string[],
 ): ParsedTranslationBatchResult {
-  const parsed = parseJsonObject(outputText);
-
-  if (!isRecord(parsed) || !Array.isArray(parsed.items)) {
-    throw new Error('Translation result must be a JSON object with an "items" array.');
-  }
+  const parsed = parseTranslationResultObject(outputText);
 
   const expectedIds = new Set(expectedSegmentIds);
   const seenIds = new Set<string>();
@@ -48,30 +44,52 @@ export function parseTranslationBatchResult(
   };
 }
 
-function parseJsonObject(outputText: string): unknown {
-  const objectText = extractJsonObject(outputText);
+function parseTranslationResultObject(outputText: string): { items: unknown[] } {
+  let foundCandidate = false;
+  let foundInvalidJson = false;
+  let foundInvalidShape = false;
 
-  if (objectText === undefined) {
+  for (const objectText of extractJsonObjectCandidates(outputText)) {
+    foundCandidate = true;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(objectText);
+    } catch {
+      foundInvalidJson = true;
+      continue;
+    }
+
+    if (isTranslationResultObject(parsed)) {
+      return parsed;
+    }
+
+    foundInvalidShape = true;
+  }
+
+  if (!foundCandidate) {
     throw new Error("Translation result does not contain a JSON object.");
   }
 
-  try {
-    return JSON.parse(objectText);
-  } catch (error) {
-    throw new Error("Translation result contains invalid JSON.", { cause: error });
+  if (foundInvalidShape) {
+    throw new Error('Translation result must be a JSON object with an "items" array.');
   }
+
+  if (foundInvalidJson) {
+    throw new Error("Translation result contains invalid JSON.");
+  }
+
+  throw new Error("Translation result does not contain a JSON object.");
 }
 
-function extractJsonObject(outputText: string): string | undefined {
+function* extractJsonObjectCandidates(outputText: string): Generator<string> {
   for (let start = outputText.indexOf("{"); start !== -1; start = outputText.indexOf("{", start + 1)) {
     const end = findJsonObjectEnd(outputText, start);
 
     if (end !== undefined) {
-      return outputText.slice(start, end + 1);
+      yield outputText.slice(start, end + 1);
     }
   }
-
-  return undefined;
 }
 
 function findJsonObjectEnd(text: string, start: number): number | undefined {
@@ -111,6 +129,10 @@ function findJsonObjectEnd(text: string, start: number): number | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isTranslationResultObject(value: unknown): value is { items: unknown[] } {
+  return isRecord(value) && Array.isArray(value.items);
 }
 
 function isTranslationResultItem(value: unknown): value is TranslationResultItem {
