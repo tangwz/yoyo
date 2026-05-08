@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/vue";
 import "@testing-library/jest-dom/vitest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import OptionsApp from "../../entrypoints/options/App.vue";
 import { createStorageRepositories } from "@/storage/repositories";
@@ -31,6 +31,10 @@ describe("options app", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockStorageRepositories();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("renders provider, translation, privacy, and advanced settings", () => {
@@ -120,6 +124,61 @@ describe("options app", () => {
     });
     expect(setActiveProviderId).toHaveBeenCalledWith("deepseek");
     expect(await screen.findByText("已保存翻译服务。")).toBeVisible();
+  });
+
+  it("tests the current provider form with the fixed connection prompt without saving", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "ok" } }],
+          model: "deepseek-chat",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(OptionsApp);
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "Preset" }), "deepseek");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Display Name" }), "DeepSeek Work");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Base URL" }), "https://api.example.com/v1");
+    await fireEvent.update(screen.getByLabelText("API Key"), "secret-key");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "deepseek-chat");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "Timeout" }), "45000");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "Temperature" }), "0.7");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "Max Tokens" }), "2048");
+
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.com/v1/chat/completions",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      model: "deepseek-chat",
+      messages: [{ role: "user", content: "Reply with exactly: ok" }],
+      temperature: 0.7,
+      max_tokens: 2048,
+    });
+    expect(saveProfile).not.toHaveBeenCalled();
+    expect(setActiveProviderId).not.toHaveBeenCalled();
+    expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
+  });
+
+  it("shows error feedback when testing the provider connection fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
+    render(OptionsApp);
+
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Provider request failed before receiving a response.",
+    );
+    expect(saveProfile).not.toHaveBeenCalled();
+    expect(setActiveProviderId).not.toHaveBeenCalled();
   });
 
   it("normalizes blank numeric request params before saving", async () => {

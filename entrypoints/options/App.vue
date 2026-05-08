@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 
+import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
 import { providerPresets } from "@/provider/presets";
 import type { ProviderProfile } from "@/provider/types";
 import { createStorageRepositories } from "@/storage/repositories";
@@ -18,6 +19,8 @@ const timeoutMs = ref(30000);
 const temperature = ref(0.3);
 const maxTokens = ref(4096);
 const saveState = ref<"idle" | "saved" | "error">("idle");
+const testState = ref<"untested" | "testing" | "success" | "failed">("untested");
+const testMessage = ref("");
 
 function toFiniteNumber(value: unknown): number | undefined {
   if (typeof value === "number") {
@@ -103,6 +106,26 @@ async function saveProviderProfile() {
     saveState.value = "saved";
   } catch {
     saveState.value = "error";
+  }
+}
+
+async function testConnection() {
+  if (testState.value === "testing") {
+    return;
+  }
+
+  testState.value = "testing";
+  testMessage.value = "";
+
+  try {
+    const provider = new OpenAiCompatibleProvider();
+
+    await provider.testConnection(buildProviderProfile());
+    testState.value = "success";
+    testMessage.value = "测试成功。";
+  } catch (error) {
+    testState.value = "failed";
+    testMessage.value = error instanceof Error ? error.message : "测试失败。";
   }
 }
 </script>
@@ -198,8 +221,10 @@ async function saveProviderProfile() {
         <button
           class="secondary-button"
           type="button"
+          :disabled="testState === 'testing'"
+          @click="testConnection"
         >
-          测试连接
+          {{ testState === "testing" ? "测试中..." : "测试连接" }}
         </button>
       </div>
 
@@ -216,6 +241,28 @@ async function saveProviderProfile() {
         role="alert"
       >
         保存失败，请稍后重试。
+      </p>
+
+      <p
+        v-if="testState === 'testing'"
+        class="save-feedback"
+        role="status"
+      >
+        正在测试连接...
+      </p>
+      <p
+        v-else-if="testState === 'success'"
+        class="save-feedback success"
+        role="status"
+      >
+        {{ testMessage }}
+      </p>
+      <p
+        v-else-if="testState === 'failed'"
+        class="save-feedback error"
+        role="alert"
+      >
+        {{ testMessage }}
       </p>
     </section>
 

@@ -17,6 +17,10 @@ function joinUrl(baseURL: string, path: string): string {
 type AbortSource = "timeout" | "user";
 
 export class OpenAiCompatibleProvider {
+  async testConnection(profile: GenerateTextRequest["profile"]): Promise<GenerateTextResponse> {
+    return this.generateText({ profile, prompt: "Reply with exactly: ok" });
+  }
+
   async generateText(request: GenerateTextRequest): Promise<GenerateTextResponse> {
     if (request.abortSignal?.aborted) {
       throw new ProviderError("aborted", "Provider request was aborted.");

@@ -53,6 +53,27 @@ describe("OpenAiCompatibleProvider", () => {
     });
   });
 
+  it("tests a provider connection with the fixed prompt", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "ok" } }],
+          model: "model-a",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    const response = await provider.testConnection(profile);
+
+    expect(response.text).toBe("ok");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).messages[0].content).toBe(
+      "Reply with exactly: ok",
+    );
+  });
+
   it("accepts an empty string response", async () => {
     vi.stubGlobal(
       "fetch",
