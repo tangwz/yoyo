@@ -127,6 +127,22 @@ describe("collectPageSegments", () => {
     expect(result.segments).toEqual([]);
   });
 
+  it("does not extract form text as a generic segment", async () => {
+    const formText =
+      "This form label contains enough readable prose to pass the generic extraction threshold, but forms must be skipped.";
+    document.body.innerHTML = `
+      <article>
+        <form>
+          <label>${formText}</label>
+        </form>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments).toEqual([]);
+  });
+
   it("does not include hidden or extension-owned text in generic source text", async () => {
     const visibleText =
       "This visible generic block text is long enough to be translated without relying on skipped descendant content.";

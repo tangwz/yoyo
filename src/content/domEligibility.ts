@@ -14,6 +14,7 @@ const blockedTags = new Set([
   "CODE",
   "TEXTAREA",
   "INPUT",
+  "FORM",
   "BUTTON",
   "SELECT",
   "SVG",
