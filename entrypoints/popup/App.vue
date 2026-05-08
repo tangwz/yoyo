@@ -48,6 +48,7 @@ const providerLabel = ref("OpenAI Compatible / api.example.com");
 <style scoped>
 .yoyo-shell {
   width: 410px;
+  max-width: 100vw;
   min-height: 300px;
   padding: 22px;
   color: #202431;

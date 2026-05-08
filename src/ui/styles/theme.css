@@ -13,13 +13,10 @@
 
 body {
   margin: 0;
-  min-width: 390px;
   background: #ffffff;
 }
 
 .yoyo-shell {
-  width: 390px;
-  padding: 24px;
   color: #222632;
   background: #ffffff;
 }
