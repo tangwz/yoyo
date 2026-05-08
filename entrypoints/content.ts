@@ -10,43 +10,89 @@ import {
 import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
 import { addRuntimeMessageListener } from "@/messaging/runtime";
 
+function normalizeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function createContentError(message: string): ContentResponse {
+  return { type: "contentError", message };
+}
+
+function isRuntimeMessage(message: unknown): message is { type?: unknown } {
+  return typeof message === "object" && message !== null;
+}
+
 export default defineContentScript({
   matches: ["<all_urls>"],
   main() {
     console.info("[yoyo] content script ready");
 
-    addRuntimeMessageListener<ContentRequest, ContentResponse>(
+    addRuntimeMessageListener<unknown, ContentResponse>(
       async (message) => {
+        if (!isRuntimeMessage(message)) {
+          return createContentError("Unsupported content message.");
+        }
+
         switch (message.type) {
           case "estimatePage":
             return {
               type: "estimatePageResult",
               estimate: await estimatePage(),
             };
-          case "collectSegments":
+          case "collectSegments": {
+            const request = message as Extract<
+              ContentRequest,
+              { type: "collectSegments" }
+            >;
             return {
               type: "collectSegmentsResult",
-              taskId: message.taskId,
-              segments: await collectSegments(message.taskId),
+              taskId: request.taskId,
+              segments: await collectSegments(request.taskId),
             };
-          case "applyTranslations":
-            applyTranslationResults(message.taskId, message.items);
+          }
+          case "applyTranslations": {
+            const request = message as Extract<
+              ContentRequest,
+              { type: "applyTranslations" }
+            >;
+            applyTranslationResults(request.taskId, request.items);
             return { type: "contentActionResult", success: true };
-          case "hideTranslations":
-            hidePageTranslations(message.taskId);
+          }
+          case "hideTranslations": {
+            const request = message as Extract<
+              ContentRequest,
+              { type: "hideTranslations" }
+            >;
+            hidePageTranslations(request.taskId);
             return { type: "contentActionResult", success: true };
-          case "showTranslations":
-            showPageTranslations(message.taskId);
+          }
+          case "showTranslations": {
+            const request = message as Extract<
+              ContentRequest,
+              { type: "showTranslations" }
+            >;
+            showPageTranslations(request.taskId);
             return { type: "contentActionResult", success: true };
-          case "removeTranslations":
-            removePageTranslations(message.taskId);
+          }
+          case "removeTranslations": {
+            const request = message as Extract<
+              ContentRequest,
+              { type: "removeTranslations" }
+            >;
+            removePageTranslations(request.taskId);
             return { type: "contentActionResult", success: true };
+          }
           case "getPageRuntimeState":
             return {
               type: "pageRuntimeState",
               ...getPageRuntimeState(),
             };
+          default:
+            return createContentError("Unsupported content message.");
         }
+      },
+      {
+        createErrorResponse: (error) => createContentError(normalizeError(error)),
       },
     );
   },

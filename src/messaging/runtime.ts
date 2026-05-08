@@ -6,43 +6,39 @@ type RuntimeMessageHandler<TRequest, TResponse> = (
   request: TRequest,
   sender: RuntimeMessageSender,
 ) => TResponse | Promise<TResponse>;
-type RuntimeErrorResponse = { type: "contentError"; message: string };
+type RuntimeMessageListenerOptions<TResponse> = {
+  createErrorResponse: (error: unknown) => TResponse;
+};
 
-function normalizeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-export function sendTabMessage<TResponse>(
+export function sendTabMessage<TRequest, TResponse>(
   tabId: number,
-  message: unknown,
+  message: TRequest,
 ): Promise<TResponse> {
   return browser.tabs.sendMessage(tabId, message) as Promise<TResponse>;
 }
 
-export function sendRuntimeMessage<TResponse>(
-  message: unknown,
+export function sendRuntimeMessage<TRequest, TResponse>(
+  message: TRequest,
 ): Promise<TResponse> {
   return browser.runtime.sendMessage(message) as Promise<TResponse>;
 }
 
 export function addRuntimeMessageListener<TRequest, TResponse>(
   handler: RuntimeMessageHandler<TRequest, TResponse>,
+  options: RuntimeMessageListenerOptions<TResponse>,
 ): void {
   browser.runtime.onMessage.addListener(
     (
       request: TRequest,
       sender: RuntimeMessageSender,
-      sendResponse: RuntimeSendResponse<TResponse | RuntimeErrorResponse>,
+      sendResponse: RuntimeSendResponse<TResponse>,
     ) => {
       Promise.resolve(handler(request, sender))
         .then((response) => {
           sendResponse(response);
         })
         .catch((error: unknown) => {
-          sendResponse({
-            type: "contentError",
-            message: normalizeError(error),
-          });
+          sendResponse(options.createErrorResponse(error));
         });
 
       return true;
