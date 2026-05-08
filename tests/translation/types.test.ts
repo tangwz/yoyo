@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import type { TranslationTaskState } from "@/translation/types";
 import { isTerminalTaskState, terminalStates } from "@/translation/types";
 
 describe("translation task types", () => {
@@ -12,6 +13,10 @@ describe("translation task types", () => {
   });
 
   it("exports the shared terminal task state contract", () => {
+    expectTypeOf(terminalStates).toEqualTypeOf<
+      ReadonlySet<TranslationTaskState>
+    >();
+
     expect([...terminalStates]).toEqual([
       "completed",
       "completedWithErrors",

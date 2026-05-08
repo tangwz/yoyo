@@ -3,12 +3,8 @@ import { defineConfig } from "wxt";
 export default defineConfig({
   modules: ["@wxt-dev/module-vue"],
   manifestVersion: 3,
-  alias: {
-    "@/messaging": "src/messaging",
-    "@/translation": "src/translation",
-    "@/ui": "src/ui",
-    "@/utils": "src/utils",
-  },
+  srcDir: "src",
+  entrypointsDir: "../entrypoints",
   manifest: {
     name: "悠悠阅读助手",
     description: "A privacy-conscious LLM reading and translation assistant.",
