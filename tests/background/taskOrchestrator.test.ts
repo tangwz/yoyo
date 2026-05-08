@@ -664,4 +664,61 @@ describe("TranslationTaskOrchestrator", () => {
       expect.objectContaining({ taskId: "task-1", state: "completed" }),
     );
   });
+
+  it("splits a repeatedly failing batch and falls back to single segments", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({ id: "segment-1", sourceText: "One." }),
+            segment({ id: "segment-2", order: 2, sourceText: "Two.", textHash: "hash-2" }),
+            segment({ id: "segment-3", order: 3, sourceText: "Three.", textHash: "hash-3" }),
+          ],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockImplementation(async (request) => {
+      const containsSingleSegment =
+        request.prompt.includes("segment-1") &&
+        !request.prompt.includes("segment-2") &&
+        !request.prompt.includes("segment-3");
+
+      if (containsSingleSegment) {
+        return {
+          text: JSON.stringify({
+            items: [{ segmentId: "segment-1", translatedText: "一。" }],
+          }),
+          model: "gpt-4.1-mini",
+        };
+      }
+
+      throw new Error("batch failed");
+    });
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    expect(generateText).toHaveBeenCalledTimes(9);
+    expect(sendToContent).toHaveBeenCalledWith(7, {
+      type: "applyTranslations",
+      taskId: "task-1",
+      items: [{ segmentId: "segment-1", translatedText: "一。" }],
+    });
+    expect(progress).toEqual({
+      taskId: "task-1",
+      state: "completedWithErrors",
+      total: 3,
+      translated: 1,
+      failed: 2,
+    });
+  });
 });
