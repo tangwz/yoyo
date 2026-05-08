@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref, watch } from "vue";
 
+import { ProviderError, type ProviderErrorCode } from "@/provider/errors";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
 import { providerPresets } from "@/provider/presets";
 import type { ProviderProfile } from "@/provider/types";
@@ -21,6 +22,20 @@ const maxTokens = ref(4096);
 const saveState = ref<"idle" | "saved" | "error">("idle");
 const testState = ref<"untested" | "testing" | "success" | "failed">("untested");
 const testMessage = ref("");
+const isTestInFlight = ref(false);
+const testRequestId = ref(0);
+
+const providerErrorMessages: Record<ProviderErrorCode, string> = {
+  aborted: "测试已取消。",
+  invalidResponse: "服务返回格式不符合预期。",
+  networkError: "无法连接到服务，请检查 Base URL 和网络后重试。",
+  quotaExceeded: "服务额度不足。",
+  rateLimited: "服务请求过于频繁，请稍后重试。",
+  serverError: "服务暂时不可用，请稍后重试。",
+  timeout: "测试超时，请检查服务配置或稍后重试。",
+  unauthorized: "API Key 无效或无权限。",
+  unknown: "测试失败，请检查服务配置后重试。",
+};
 
 function toFiniteNumber(value: unknown): number | undefined {
   if (typeof value === "number") {
@@ -82,6 +97,27 @@ function buildProviderProfile(): ProviderProfile {
   };
 }
 
+function getProviderProfileSignature(profile: ProviderProfile): string {
+  return JSON.stringify(profile);
+}
+
+const providerProfileSignature = computed(() => getProviderProfileSignature(buildProviderProfile()));
+
+function resetTestFeedback() {
+  testState.value = "untested";
+  testMessage.value = "";
+}
+
+watch(providerProfileSignature, resetTestFeedback);
+
+function getProviderTestErrorMessage(error: unknown): string {
+  if (error instanceof ProviderError) {
+    return providerErrorMessages[error.code];
+  }
+
+  return providerErrorMessages.unknown;
+}
+
 function applySelectedPreset() {
   const preset = providerPresets.find((item) => item.id === selectedPresetId.value);
 
@@ -110,22 +146,46 @@ async function saveProviderProfile() {
 }
 
 async function testConnection() {
-  if (testState.value === "testing") {
+  if (isTestInFlight.value) {
     return;
   }
 
+  const requestId = testRequestId.value + 1;
+  testRequestId.value = requestId;
+  const profile = buildProviderProfile();
+  const testedProfileSignature = getProviderProfileSignature(profile);
+
+  isTestInFlight.value = true;
   testState.value = "testing";
   testMessage.value = "";
 
   try {
     const provider = new OpenAiCompatibleProvider();
 
-    await provider.testConnection(buildProviderProfile());
+    await provider.testConnection(profile);
+    if (
+      requestId !== testRequestId.value ||
+      testedProfileSignature !== providerProfileSignature.value
+    ) {
+      return;
+    }
+
     testState.value = "success";
     testMessage.value = "测试成功。";
   } catch (error) {
+    if (
+      requestId !== testRequestId.value ||
+      testedProfileSignature !== providerProfileSignature.value
+    ) {
+      return;
+    }
+
     testState.value = "failed";
-    testMessage.value = error instanceof Error ? error.message : "测试失败。";
+    testMessage.value = getProviderTestErrorMessage(error);
+  } finally {
+    if (requestId === testRequestId.value) {
+      isTestInFlight.value = false;
+    }
   }
 }
 </script>
@@ -221,10 +281,10 @@ async function testConnection() {
         <button
           class="secondary-button"
           type="button"
-          :disabled="testState === 'testing'"
+          :disabled="isTestInFlight"
           @click="testConnection"
         >
-          {{ testState === "testing" ? "测试中..." : "测试连接" }}
+          {{ isTestInFlight ? "测试中..." : "测试连接" }}
         </button>
       </div>
 

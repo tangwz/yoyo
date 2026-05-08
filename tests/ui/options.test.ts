@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/vue";
+import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +11,18 @@ vi.mock("@/storage/repositories", () => ({
 
 const saveProfile = vi.fn();
 const setActiveProviderId = vi.fn();
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+
+  return { promise, reject, resolve };
+}
 
 function mockStorageRepositories() {
   vi.mocked(createStorageRepositories).mockReturnValue({
@@ -175,10 +187,76 @@ describe("options app", () => {
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Provider request failed before receiving a response.",
+      "无法连接到服务，请检查 Base URL 和网络后重试。",
     );
     expect(saveProfile).not.toHaveBeenCalled();
     expect(setActiveProviderId).not.toHaveBeenCalled();
+  });
+
+  it("clears successful provider test feedback when the tested form changes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "ok" } }],
+            model: "gpt-4.1-mini",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    render(OptionsApp);
+
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
+
+    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "gpt-4.1");
+
+    expect(screen.queryByText("测试成功。")).not.toBeInTheDocument();
+  });
+
+  it("ignores provider test results when the form changes before the request completes", async () => {
+    const response = createDeferred<Response>();
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(response.promise));
+    render(OptionsApp);
+
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "gpt-4.1");
+
+    response.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "ok" } }],
+          model: "gpt-4.1-mini",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("正在测试连接...")).not.toBeInTheDocument();
+    });
+    expect(screen.queryByText("测试成功。")).not.toBeInTheDocument();
+  });
+
+  it("shows bounded provider test failure feedback without rendering sensitive response bodies", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("upstream leaked sk-secret-token and https://private.example.com/v1", {
+          status: 418,
+        }),
+      ),
+    );
+    render(OptionsApp);
+
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("测试失败，请检查服务配置后重试。");
+    expect(screen.queryByText(/sk-secret-token/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/private\.example\.com/)).not.toBeInTheDocument();
   });
 
   it("normalizes blank numeric request params before saving", async () => {
