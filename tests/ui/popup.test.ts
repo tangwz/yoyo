@@ -103,6 +103,31 @@ describe("popup app", () => {
     expect(screen.getAllByText("32")).toHaveLength(2);
     expect(screen.getByText("0")).toBeVisible();
   });
+
+  it("keeps cancelled task progress in the translating state", async () => {
+    browserMock.runtimeSendMessage.mockResolvedValueOnce({
+      type: "taskProgress",
+      progress: {
+        taskId: "task-1",
+        state: "cancelled",
+        total: 32,
+        translated: 12,
+        failed: 0,
+      },
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+
+    expect(await screen.findByRole("button", { name: "取消翻译" })).toBeVisible();
+    expect(screen.queryByText("翻译失败，请稍后重试。")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });
 
 describe("language selector", () => {

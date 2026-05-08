@@ -64,7 +64,7 @@ function applyProgress(response: BackgroundResponse): void {
     return;
   }
 
-  if (progress.state === "failed" || progress.state === "cancelled") {
+  if (progress.state === "failed") {
     state.value = "error";
     errorMessage.value ||= "翻译失败，请稍后重试。";
     return;
