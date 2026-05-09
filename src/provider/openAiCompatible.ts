@@ -18,7 +18,16 @@ type AbortSource = "timeout" | "user";
 
 export class OpenAiCompatibleProvider {
   async testConnection(profile: GenerateTextRequest["profile"]): Promise<GenerateTextResponse> {
-    return this.generateText({ profile, prompt: "Reply with exactly: ok" });
+    const response = await this.generateText({ profile, prompt: "Reply with exactly: ok" });
+
+    if (response.text.trim().toLowerCase() !== "ok") {
+      throw new ProviderError(
+        "invalidResponse",
+        "Provider test response did not match the expected text.",
+      );
+    }
+
+    return response;
   }
 
   async generateText(request: GenerateTextRequest): Promise<GenerateTextResponse> {

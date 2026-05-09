@@ -28,6 +28,7 @@ const testRequestId = ref(0);
 const providerErrorMessages: Record<ProviderErrorCode, string> = {
   aborted: "测试已取消。",
   invalidResponse: "服务返回格式不符合预期。",
+  invalidRequest: "模型名或请求参数无效，请确认模型 ID 区分大小写。",
   networkError: "无法连接到服务，请检查 Base URL 和网络后重试。",
   quotaExceeded: "服务额度不足。",
   rateLimited: "服务请求过于频繁，请稍后重试。",

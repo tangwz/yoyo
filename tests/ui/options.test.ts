@@ -238,6 +238,27 @@ describe("options app", () => {
     expect(setActiveProviderId).not.toHaveBeenCalled();
   });
 
+  it("shows model-specific feedback when the provider rejects the request", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: { message: "model not found" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    render(OptionsApp);
+
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "模型名或请求参数无效，请确认模型 ID 区分大小写。",
+    );
+    expect(saveProfile).not.toHaveBeenCalled();
+    expect(setActiveProviderId).not.toHaveBeenCalled();
+  });
+
   it("clears successful provider test feedback when the tested form changes", async () => {
     vi.stubGlobal(
       "fetch",

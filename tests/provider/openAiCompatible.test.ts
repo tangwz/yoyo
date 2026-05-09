@@ -74,6 +74,27 @@ describe("OpenAiCompatibleProvider", () => {
     );
   });
 
+  it("rejects provider connection tests that do not return ok", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "" } }],
+            model: "model-a",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    const provider = new OpenAiCompatibleProvider();
+
+    await expect(provider.testConnection(profile)).rejects.toMatchObject({
+      code: "invalidResponse",
+    });
+  });
+
   it("accepts an empty string response", async () => {
     vi.stubGlobal(
       "fetch",
@@ -97,10 +118,13 @@ describe("OpenAiCompatibleProvider", () => {
   });
 
   it.each([
+    [400, "invalidRequest"],
     [401, "unauthorized"],
     [403, "unauthorized"],
+    [404, "invalidRequest"],
     [429, "rateLimited"],
     [402, "quotaExceeded"],
+    [422, "invalidRequest"],
   ] as const)("maps HTTP %s responses to %s", async (status, code) => {
     vi.stubGlobal(
       "fetch",

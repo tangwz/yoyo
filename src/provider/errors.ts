@@ -4,6 +4,7 @@ export type ProviderErrorCode =
   | "quotaExceeded"
   | "timeout"
   | "networkError"
+  | "invalidRequest"
   | "invalidResponse"
   | "serverError"
   | "aborted"
@@ -36,6 +37,9 @@ export function mapHttpStatusToProviderError(status: number, bodyText: string): 
   }
   if (status >= 500) {
     return new ProviderError("serverError", "Provider server returned an error.", status);
+  }
+  if (status === 400 || status === 404 || status === 422) {
+    return new ProviderError("invalidRequest", "Provider rejected the request.", status);
   }
   return new ProviderError("unknown", bodyText || "Provider returned an unexpected error.", status);
 }
