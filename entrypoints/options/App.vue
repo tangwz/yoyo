@@ -1,0 +1,603 @@
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from "vue";
+
+import { ProviderError, type ProviderErrorCode } from "@/provider/errors";
+import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
+import { providerPresets } from "@/provider/presets";
+import type { ProviderProfile } from "@/provider/types";
+import { createStorageRepositories } from "@/storage/repositories";
+
+const defaultPreset = providerPresets[0];
+
+const selectedPresetId = ref(defaultPreset.id);
+const displayName = ref(defaultPreset.name);
+const baseUrl = ref(defaultPreset.defaultBaseUrl);
+const apiKey = ref("");
+const textModel = ref(defaultPreset.defaultTextModel ?? "");
+const visionModel = ref("");
+const targetLanguage = ref("zh-CN");
+const timeoutMs = ref(30000);
+const temperature = ref(0.3);
+const maxTokens = ref(4096);
+const saveState = ref<"idle" | "saved" | "error">("idle");
+const testState = ref<"untested" | "testing" | "success" | "failed">("untested");
+const testMessage = ref("");
+const isTestInFlight = ref(false);
+const testRequestId = ref(0);
+
+const providerErrorMessages: Record<ProviderErrorCode, string> = {
+  aborted: "测试已取消。",
+  invalidResponse: "服务返回格式不符合预期。",
+  networkError: "无法连接到服务，请检查 Base URL 和网络后重试。",
+  quotaExceeded: "服务额度不足。",
+  rateLimited: "服务请求过于频繁，请稍后重试。",
+  serverError: "服务暂时不可用，请稍后重试。",
+  timeout: "测试超时，请检查服务配置或稍后重试。",
+  unauthorized: "API Key 无效或无权限。",
+  unknown: "测试失败，请检查服务配置后重试。",
+};
+
+function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  return undefined;
+}
+
+function normalizePositiveNumber(value: unknown, defaultValue: number): number {
+  const parsed = toFiniteNumber(value);
+
+  return parsed !== undefined && parsed > 0 ? parsed : defaultValue;
+}
+
+function normalizeTemperature(value: unknown): number {
+  const parsed = toFiniteNumber(value);
+
+  if (parsed === undefined) {
+    return 0.3;
+  }
+
+  return Math.min(2, Math.max(0, parsed));
+}
+
+function normalizePositiveInteger(value: unknown, defaultValue: number): number {
+  const parsed = toFiniteNumber(value);
+
+  if (parsed === undefined || parsed < 1) {
+    return defaultValue;
+  }
+
+  return Math.trunc(parsed);
+}
+
+function buildProviderProfile(): ProviderProfile {
+  const profileId = selectedPresetId.value;
+
+  return {
+    id: profileId,
+    displayName: displayName.value,
+    presetId: selectedPresetId.value,
+    type: "openai-compatible",
+    baseURL: baseUrl.value,
+    apiKey: apiKey.value,
+    textModel: textModel.value,
+    visionModel: visionModel.value || undefined,
+    requestParams: {
+      timeoutMs: normalizePositiveNumber(timeoutMs.value, 30000),
+      temperature: normalizeTemperature(temperature.value),
+      maxTokens: normalizePositiveInteger(maxTokens.value, 4096),
+    },
+  };
+}
+
+function getProviderProfileSignature(profile: ProviderProfile): string {
+  return JSON.stringify(profile);
+}
+
+const providerProfileSignature = computed(() => getProviderProfileSignature(buildProviderProfile()));
+
+function resetTestFeedback() {
+  testState.value = "untested";
+  testMessage.value = "";
+}
+
+watch(providerProfileSignature, resetTestFeedback);
+
+function getProviderTestErrorMessage(error: unknown): string {
+  if (error instanceof ProviderError) {
+    return providerErrorMessages[error.code];
+  }
+
+  return providerErrorMessages.unknown;
+}
+
+function applySelectedPreset() {
+  const preset = providerPresets.find((item) => item.id === selectedPresetId.value);
+
+  if (!preset) {
+    return;
+  }
+
+  displayName.value = preset.name;
+  baseUrl.value = preset.defaultBaseUrl;
+  textModel.value = preset.defaultTextModel ?? "";
+}
+
+function applyProviderProfile(profile: ProviderProfile) {
+  const presetId = profile.presetId ?? profile.id;
+  selectedPresetId.value = providerPresets.some((item) => item.id === presetId)
+    ? presetId
+    : "custom";
+  displayName.value = profile.displayName;
+  baseUrl.value = profile.baseURL;
+  apiKey.value = profile.apiKey;
+  textModel.value = profile.textModel;
+  visionModel.value = profile.visionModel ?? "";
+  timeoutMs.value = profile.requestParams?.timeoutMs ?? 30000;
+  temperature.value = profile.requestParams?.temperature ?? 0.3;
+  maxTokens.value = profile.requestParams?.maxTokens ?? 4096;
+}
+
+async function loadActiveProviderProfile() {
+  try {
+    const storage = createStorageRepositories();
+    const [profiles, activeProviderId] = await Promise.all([
+      storage.providers.listProfiles(),
+      storage.providers.getActiveProviderId(),
+    ]);
+    const activeProfile =
+      profiles.find((profile) => profile.id === activeProviderId) ?? profiles[0];
+
+    if (activeProfile) {
+      applyProviderProfile(activeProfile);
+    }
+  } catch {
+    // Keep defaults when saved settings cannot be read.
+  }
+}
+
+onMounted(loadActiveProviderProfile);
+
+async function saveProviderProfile() {
+  saveState.value = "idle";
+
+  try {
+    const storage = createStorageRepositories();
+    const profile = buildProviderProfile();
+
+    await storage.providers.saveProfile(profile);
+    await storage.providers.setActiveProviderId(profile.id);
+    saveState.value = "saved";
+  } catch {
+    saveState.value = "error";
+  }
+}
+
+async function testConnection() {
+  if (isTestInFlight.value) {
+    return;
+  }
+
+  const requestId = testRequestId.value + 1;
+  testRequestId.value = requestId;
+  const profile = buildProviderProfile();
+  const testedProfileSignature = getProviderProfileSignature(profile);
+
+  isTestInFlight.value = true;
+  testState.value = "testing";
+  testMessage.value = "";
+
+  try {
+    const provider = new OpenAiCompatibleProvider();
+
+    await provider.testConnection(profile);
+    if (
+      requestId !== testRequestId.value ||
+      testedProfileSignature !== providerProfileSignature.value
+    ) {
+      return;
+    }
+
+    testState.value = "success";
+    testMessage.value = "测试成功。";
+  } catch (error) {
+    if (
+      requestId !== testRequestId.value ||
+      testedProfileSignature !== providerProfileSignature.value
+    ) {
+      return;
+    }
+
+    testState.value = "failed";
+    testMessage.value = getProviderTestErrorMessage(error);
+  } finally {
+    if (requestId === testRequestId.value) {
+      isTestInFlight.value = false;
+    }
+  }
+}
+</script>
+
+<template>
+  <main class="yoyo-shell">
+    <header class="page-header">
+      <h1>设置</h1>
+    </header>
+
+    <section
+      class="settings-section"
+      aria-labelledby="provider-heading"
+    >
+      <h2 id="provider-heading">
+        Provider
+      </h2>
+
+      <div class="settings-grid">
+        <label class="field">
+          <span>Preset</span>
+          <select
+            v-model="selectedPresetId"
+            @change="applySelectedPreset"
+          >
+            <option
+              v-for="preset in providerPresets"
+              :key="preset.id"
+              :value="preset.id"
+            >
+              {{ preset.name }}
+            </option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Display Name</span>
+          <input
+            v-model="displayName"
+            type="text"
+            autocomplete="off"
+          >
+        </label>
+
+        <label class="field field-wide">
+          <span>Base URL</span>
+          <input
+            v-model="baseUrl"
+            type="url"
+            inputmode="url"
+            autocomplete="off"
+          >
+        </label>
+
+        <div class="field field-wide">
+          <label for="api-key">API Key</label>
+          <input
+            id="api-key"
+            v-model="apiKey"
+            type="password"
+            autocomplete="off"
+          >
+          <small>API Key 保存在浏览器扩展本地存储，不跨设备同步。</small>
+        </div>
+
+        <label class="field">
+          <span>Text Model</span>
+          <input
+            v-model="textModel"
+            type="text"
+            autocomplete="off"
+          >
+        </label>
+
+        <label class="field">
+          <span>Vision Model</span>
+          <input
+            v-model="visionModel"
+            type="text"
+            autocomplete="off"
+          >
+        </label>
+      </div>
+
+      <div class="button-row">
+        <button
+          class="primary-button"
+          type="button"
+          @click="saveProviderProfile"
+        >
+          保存翻译服务
+        </button>
+        <button
+          class="secondary-button"
+          type="button"
+          :disabled="isTestInFlight"
+          @click="testConnection"
+        >
+          {{ isTestInFlight ? "测试中..." : "测试连接" }}
+        </button>
+      </div>
+
+      <p
+        v-if="saveState === 'saved'"
+        class="save-feedback success"
+        role="status"
+      >
+        已保存翻译服务。
+      </p>
+      <p
+        v-else-if="saveState === 'error'"
+        class="save-feedback error"
+        role="alert"
+      >
+        保存失败，请稍后重试。
+      </p>
+
+      <p
+        v-if="testState === 'testing'"
+        class="save-feedback"
+        role="status"
+      >
+        正在测试连接...
+      </p>
+      <p
+        v-else-if="testState === 'success'"
+        class="save-feedback success"
+        role="status"
+      >
+        {{ testMessage }}
+      </p>
+      <p
+        v-else-if="testState === 'failed'"
+        class="save-feedback error"
+        role="alert"
+      >
+        {{ testMessage }}
+      </p>
+    </section>
+
+    <section
+      class="settings-section"
+      aria-labelledby="translation-heading"
+    >
+      <h2 id="translation-heading">
+        Translation
+      </h2>
+
+      <div class="settings-grid">
+        <label class="field">
+          <span>Target Language</span>
+          <select v-model="targetLanguage">
+            <option value="zh-CN">简体中文</option>
+            <option value="zh-TW">繁體中文</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+          </select>
+        </label>
+      </div>
+
+      <p class="section-note">
+        显示方式：原文下方显示译文，并尽量保持与原段落一致的排版样式。
+      </p>
+    </section>
+
+    <section
+      class="settings-section"
+      aria-labelledby="privacy-heading"
+    >
+      <h2 id="privacy-heading">
+        Privacy
+      </h2>
+
+      <ul class="privacy-list">
+        <li>Page text is extracted only when you manually start translation.</li>
+        <li>Extracted text is sent to your configured model provider during translation.</li>
+        <li>API key does not enter content script or page</li>
+        <li>First version has no persistent translation cache</li>
+      </ul>
+    </section>
+
+    <section
+      class="settings-section"
+      aria-labelledby="advanced-heading"
+    >
+      <h2 id="advanced-heading">
+        Advanced
+      </h2>
+
+      <div class="settings-grid">
+        <label class="field">
+          <span>Timeout</span>
+          <input
+            v-model.number="timeoutMs"
+            type="number"
+            min="1000"
+            step="1000"
+          >
+        </label>
+
+        <label class="field">
+          <span>Temperature</span>
+          <input
+            v-model.number="temperature"
+            type="number"
+            min="0"
+            max="2"
+            step="0.1"
+          >
+        </label>
+
+        <label class="field">
+          <span>Max Tokens</span>
+          <input
+            v-model.number="maxTokens"
+            type="number"
+            min="1"
+            step="1"
+          >
+        </label>
+
+        <div class="field static-field">
+          <span>Prompt version</span>
+          <strong>v1</strong>
+        </div>
+      </div>
+    </section>
+  </main>
+</template>
+
+<style scoped>
+.yoyo-shell {
+  box-sizing: border-box;
+  width: min(920px, 100%);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 32px 24px 48px;
+  color: #172033;
+  background: #f7f8fb;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.page-header {
+  margin-bottom: 24px;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+}
+
+.settings-section {
+  padding: 20px;
+  margin-bottom: 16px;
+  background: #ffffff;
+  border: 1px solid #d9deea;
+  border-radius: 8px;
+}
+
+.settings-section h2 {
+  margin: 0 0 16px;
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  color: #3d4658;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+.field input,
+.field select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  color: #172033;
+  font: inherit;
+  font-weight: 400;
+  background: #ffffff;
+  border: 1px solid #b8c0d1;
+  border-radius: 6px;
+}
+
+.field small,
+.section-note {
+  margin: 0;
+  color: #5d6678;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.primary-button,
+.secondary-button {
+  min-height: 40px;
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 600;
+  border-radius: 6px;
+}
+
+.primary-button {
+  color: #ffffff;
+  background: #1f5fbf;
+  border: 1px solid #1f5fbf;
+}
+
+.secondary-button {
+  color: #172033;
+  background: #ffffff;
+  border: 1px solid #aab3c5;
+}
+
+.save-feedback {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.save-feedback.success {
+  color: #17663a;
+}
+
+.save-feedback.error {
+  color: #b3261e;
+}
+
+.privacy-list {
+  padding-left: 20px;
+  margin: 0;
+  color: #3d4658;
+  line-height: 1.6;
+}
+
+.static-field {
+  min-height: 40px;
+  justify-content: center;
+}
+
+.static-field strong {
+  color: #172033;
+  font-size: 15px;
+}
+
+@media (max-width: 720px) {
+  .yoyo-shell {
+    padding: 24px 16px 40px;
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

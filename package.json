@@ -1,0 +1,42 @@
+{
+  "name": "wxt-vue-starter",
+  "description": "manifest.json description",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "compile": "vue-tsc --noEmit",
+    "typecheck": "vue-tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify:extension": "pnpm build && node scripts/verify-extension-smoke.mjs",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "vue": "^3.5.29"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/vue": "^8.1.0",
+    "@vitejs/plugin-vue": "^6.0.6",
+    "@vitest/ui": "^4.1.5",
+    "@vue/test-utils": "^2.4.10",
+    "@wxt-dev/module-vue": "^1.0.3",
+    "eslint": "^10.3.0",
+    "eslint-plugin-vue": "^10.9.1",
+    "happy-dom": "^20.9.0",
+    "jsdom": "^29.1.1",
+    "playwright-core": "^1.59.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.59.2",
+    "vitest": "^4.1.5",
+    "vue-tsc": "^3.2.5",
+    "wxt": "^0.20.25"
+  }
+}
