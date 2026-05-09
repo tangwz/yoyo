@@ -1,40 +1,42 @@
-# 悠悠阅读助手
+# Yoyo Reading Assistant
 
-悠悠阅读助手是一个面向 Chrome / Edge 的浏览器阅读辅助插件。它允许用户配置自己的 OpenAI-compatible 大模型服务，并在用户手动触发后，对当前网页进行全文翻译、渐进式注入译文和任务状态管理。
+[简体中文](README-zh.md)
 
-这个项目的产品定位不是“又一个网页清洗器”，而是一个尽量尊重原网页结构的双语阅读工具：插件不替换原文，不把 API Key 暴露给 content script，也不默认自动采集网页内容。当前 MVP 聚焦全文翻译主链路，后续会在同一套 provider 与任务调度框架上扩展划词翻译、图片翻译、视频翻译和全文总结。
+Yoyo Reading Assistant is a Chrome / Edge reading assistant extension for bilingual long-form reading. It lets users configure their own OpenAI-compatible LLM provider, then manually translate the current page with progressive result injection and task state tracking.
 
-## 功能介绍
+This project is not positioned as a page-cleaning tool. It is designed to preserve the original page structure as much as possible: it does not replace source text, does not expose API keys to content scripts, and does not automatically collect page text by default. The current MVP focuses on the full-page translation workflow. Future versions can extend the same provider and task orchestration foundation to support selection translation, image translation, video translation, and page summaries.
 
-当前版本已实现：
+## Features
 
-- 自定义大模型服务：支持 OpenAI-compatible provider，用户可配置 Base URL、API Key、文本模型、视觉模型占位和请求参数。
-- Provider 本地保存：provider profile、API Key、模型名和 Base URL 保存到 `chrome.storage.local`，不会同步到云端。
-- Provider 连接测试：设置页可发送固定短文本测试模型服务，不读取网页正文。
-- 当前页全文翻译：通过 popup 或右键菜单触发当前页面翻译。
-- 双语对照注入：译文插入在原文下方，不替换原文，方便对照阅读。
-- 样式兼容：译文节点尽量继承原段落排版样式，减少对不同背景色和网页布局的干扰。
-- 渐进式结果展示：翻译结果按批次返回并注入，不需要等待整页完成。
-- 任务状态管理：支持 collecting、translating、completed、completedWithErrors、failed、cancelled 等任务状态。
-- 取消任务：翻译过程中可取消任务，并通过 AbortController 中断进行中的 provider 请求。
-- DOM 安全提取：跳过 `script`、`style`、`pre`、`code`、表单控件、隐藏节点、扩展自身节点以及受限页面。
-- Popup 控制台：展示当前页可翻译状态、语言选择、provider 信息、翻译按钮、进度和错误摘要。
-- 设置页：提供 Provider、Translation、Privacy、Advanced 设置分区。
-- Chrome / Edge MV3：基于 Manifest V3 service worker 架构实现。
+Implemented in the current version:
 
-当前版本不包含：
+- Custom LLM provider: supports OpenAI-compatible providers with configurable Base URL, API Key, text model, vision model placeholder, and request parameters.
+- Local provider storage: provider profiles, API keys, model names, and Base URLs are stored in `chrome.storage.local` and are not synced across devices.
+- Provider connection test: the options page can send a fixed short prompt to test the configured provider without reading page content.
+- Full-page translation: users can translate the current page from the popup or context menu.
+- Bilingual reading layout: translations are inserted below the original text instead of replacing it.
+- Style compatibility: injected translations try to mirror the original paragraph styling to reduce disruption across different page backgrounds and layouts.
+- Progressive injection: translated batches are injected as they complete instead of waiting for the entire page.
+- Task state tracking: supports collecting, translating, completed, completedWithErrors, failed, and cancelled states.
+- Cancellation: running tasks can be cancelled, and in-flight provider requests are aborted with `AbortController`.
+- Safe DOM extraction: skips `script`, `style`, `pre`, `code`, form controls, hidden nodes, extension-owned nodes, and restricted pages.
+- Popup control panel: shows current page status, language selectors, provider information, action button, progress, and error summary.
+- Options page: includes Provider, Translation, Privacy, and Advanced sections.
+- Chrome / Edge MV3: implemented with Manifest V3 service worker architecture.
 
-- 划词翻译
-- 图片翻译
-- 视频字幕翻译
-- 全文总结
-- 持久翻译缓存
-- service worker 重启后的任务恢复
-- 自动翻译所有网站
+Not included in the current version:
 
-这些能力属于后续版本规划，不在当前 MVP 的可用范围内。
+- Selection translation
+- Image translation
+- Video subtitle translation
+- Page summaries
+- Persistent translation cache
+- Task recovery after service worker restart
+- Automatic translation for all websites
 
-## 技术栈
+These capabilities are planned for later versions and are not part of the current MVP scope.
+
+## Tech Stack
 
 - WXT
 - Vue 3
@@ -43,54 +45,54 @@
 - Playwright Core
 - Chrome / Edge Manifest V3
 
-## 开发
+## Development
 
-安装依赖：
+Install dependencies:
 
 ```bash
 pnpm install
 ```
 
-启动开发模式：
+Start development mode:
 
 ```bash
 pnpm dev
 ```
 
-开发模式会由 WXT 生成浏览器扩展开发产物。根据 WXT 输出提示，在 Chrome 或 Edge 的扩展管理页面中加载对应的 unpacked extension。
+WXT generates the development extension output. Follow the WXT terminal output and load the generated unpacked extension from the Chrome or Edge extension management page.
 
-## 打包
+## Packaging
 
-生成 Chrome MV3 生产构建：
+Build the Chrome MV3 production extension:
 
 ```bash
 pnpm build
 ```
 
-构建产物位于：
+The unpacked build is written to:
 
 ```text
 .output/chrome-mv3
 ```
 
-在 Chrome 或 Edge 中手动加载：
+Load it manually in Chrome or Edge:
 
-1. 打开 `chrome://extensions` 或 `edge://extensions`
-2. 开启开发者模式
-3. 选择“加载已解压的扩展程序”
-4. 选择 `.output/chrome-mv3`
+1. Open `chrome://extensions` or `edge://extensions`
+2. Enable developer mode
+3. Click "Load unpacked"
+4. Select `.output/chrome-mv3`
 
-生成可分发压缩包：
+Create a distributable zip:
 
 ```bash
 pnpm zip
 ```
 
-压缩包会由 WXT 输出到 `.output` 目录中，文件名包含 package name、扩展版本和目标浏览器，例如 `.output/yoyo-reading-assistant-0.1.0-chrome.zip`。该产物可用于手动分发、提交审核或归档发布。
+WXT writes the zip file to `.output`. The file name includes the package name, extension version, and browser target, for example `.output/yoyo-reading-assistant-0.1.0-chrome.zip`. This artifact can be used for manual distribution, review submission, or release archiving.
 
-## 验证
+## Verification
 
-常规验证：
+Run the standard checks:
 
 ```bash
 pnpm typecheck
@@ -99,37 +101,37 @@ pnpm test
 pnpm build
 ```
 
-扩展烟测：
+Run the extension smoke test:
 
 ```bash
 pnpm verify:extension
 ```
 
-`pnpm verify:extension` 会构建扩展，启动本地测试文章和 mock OpenAI-compatible provider，然后启动 Chrome 并加载 `.output/chrome-mv3`，验证 provider 配置、全文翻译、译文注入和代码块跳过等主链路。
+`pnpm verify:extension` builds the extension, starts a local test article and mock OpenAI-compatible provider, launches Chrome with `.output/chrome-mv3` loaded, and verifies provider configuration, full-page translation, translation injection, and code-block skipping.
 
-如果需要保留浏览器窗口用于人工验收：
+Keep the browser open for manual acceptance:
 
 ```bash
 YOYO_SMOKE_KEEP_OPEN=1 pnpm verify:extension
 ```
 
-如果需要让脚本结束后保留一个独立 Chrome for Testing 窗口：
+Keep a detached Chrome for Testing window after the script exits:
 
 ```bash
 YOYO_SMOKE_DETACH_BROWSER=1 pnpm verify:extension
 ```
 
-## 隐私边界
+## Privacy Boundaries
 
-- 只有用户手动触发翻译时，扩展才会提取当前页面文本。
-- 页面文本会发送到用户自己配置的模型服务商。
-- API Key 保存在浏览器扩展本地存储，不进入 content script，也不会注入网页上下文。
-- 当前版本不提供账号系统，不上传配置到项目自有云端。
-- 当前版本不保存持久翻译缓存。
+- Page text is extracted only when the user manually starts translation.
+- Extracted page text is sent to the model provider configured by the user.
+- API keys are stored in browser extension local storage, do not enter content scripts, and are not injected into the page context.
+- The current version has no account system and does not upload configuration to a project-owned cloud service.
+- The current version does not store a persistent translation cache.
 
-## 项目状态
+## Project Status
 
-当前代码处于 MVP 阶段，重点验证全文翻译主链路、Provider 配置、安全边界和 MV3 任务调度可行性。设计文档和验收清单可参考：
+This codebase is currently in the MVP phase. The priority is to validate the full-page translation workflow, provider configuration, privacy boundary, and MV3 task orchestration. See:
 
 - `docs/superpowers/specs/2026-05-08-yoyo-reading-assistant-design.md`
 - `docs/qa/manual-mvp-checklist.md`
