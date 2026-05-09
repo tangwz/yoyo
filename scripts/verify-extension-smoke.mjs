@@ -59,6 +59,21 @@ function createMockProviderServer() {
     try {
       const body = await readJsonBody(request);
       const prompt = body.messages?.[0]?.content ?? "";
+      const authorization = request.headers.authorization ?? "";
+
+      if (authorization === "Bearer smoke-failing-key") {
+        response.writeHead(401, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            error: {
+              message:
+                "Unauthorized for sk-secret-token at https://private.example.com/v1/chat/completions",
+              type: "invalid_request_error",
+            },
+          }),
+        );
+        return;
+      }
 
       if (prompt === "Reply with exactly: ok") {
         promptProbe.connectionTestPrompt = prompt;
@@ -280,6 +295,21 @@ async function main() {
     assert(
       promptProbe.connectionTestPrompt === "Reply with exactly: ok",
       "Provider test did not use the fixed connection-test prompt.",
+    );
+
+    await optionsPage.getByLabel("API Key").fill("smoke-failing-key");
+    await optionsPage.getByRole("button", { name: "测试连接" }).click();
+    const failureMessage = optionsPage.getByRole("alert");
+    await failureMessage.waitFor({ timeout: 5000 });
+    assert(
+      (await failureMessage.textContent())?.trim() === "API Key 无效或无权限。",
+      "Provider failure did not show the bounded unauthorized message.",
+    );
+    const optionsTextAfterFailure = (await optionsPage.textContent("body")) ?? "";
+    assert(
+      !optionsTextAfterFailure.includes("sk-secret-token") &&
+        !optionsTextAfterFailure.includes("private.example.com"),
+      "Provider failure leaked sensitive response details into the options page.",
     );
 
     const storageSnapshot = await optionsPage.evaluate(async () => {
