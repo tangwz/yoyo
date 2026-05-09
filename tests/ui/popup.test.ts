@@ -27,6 +27,7 @@ function createDeferred<T>(): {
 
 const browserMock = vi.hoisted(() => ({
   runtimeListeners: new Set<(message: unknown) => void>(),
+  runtimeOpenOptionsPage: vi.fn(),
   runtimeSendMessage: vi.fn(),
   tabsQuery: vi.fn(),
   tabsSendMessage: vi.fn(),
@@ -48,6 +49,7 @@ function idleTaskProgress() {
 vi.mock("wxt/browser", () => ({
   browser: {
     runtime: {
+      openOptionsPage: browserMock.runtimeOpenOptionsPage,
       sendMessage: browserMock.runtimeSendMessage,
       onMessage: {
         addListener: (listener: (message: unknown) => void) => {
@@ -68,6 +70,7 @@ vi.mock("wxt/browser", () => ({
 describe("popup app", () => {
   beforeEach(() => {
     browserMock.runtimeListeners.clear();
+    browserMock.runtimeOpenOptionsPage.mockReset();
     browserMock.runtimeSendMessage.mockReset();
     browserMock.tabsQuery.mockReset();
     browserMock.tabsSendMessage.mockReset();
@@ -140,6 +143,14 @@ describe("popup app", () => {
     await waitFor(() => {
       expect(primaryButton).toBeEnabled();
     });
+  });
+
+  it("opens the options page from the settings button", async () => {
+    render(PopupApp);
+
+    await fireEvent.click(screen.getByRole("button", { name: "设置" }));
+
+    expect(browserMock.runtimeOpenOptionsPage).toHaveBeenCalledOnce();
   });
 
   it("requests page translation for the active tab and shows completed progress", async () => {

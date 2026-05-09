@@ -3,6 +3,10 @@ defineProps<{
   leftLabel: string;
   version: string;
 }>();
+
+const emit = defineEmits<{
+  openSettings: [];
+}>();
 </script>
 
 <template>
@@ -10,6 +14,7 @@ defineProps<{
     <button
       class="popup-footer__button"
       type="button"
+      @click="emit('openSettings')"
     >
       {{ leftLabel }}
     </button>

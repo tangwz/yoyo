@@ -11,6 +11,8 @@ vi.mock("@/storage/repositories", () => ({
 
 const saveProfile = vi.fn();
 const setActiveProviderId = vi.fn();
+const listProfiles = vi.fn();
+const getActiveProviderId = vi.fn();
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -27,9 +29,9 @@ function createDeferred<T>() {
 function mockStorageRepositories() {
   vi.mocked(createStorageRepositories).mockReturnValue({
     providers: {
-      listProfiles: vi.fn(),
+      listProfiles,
       saveProfile,
-      getActiveProviderId: vi.fn(),
+      getActiveProviderId,
       setActiveProviderId,
     },
     uiPreferences: {
@@ -42,6 +44,8 @@ function mockStorageRepositories() {
 describe("options app", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    listProfiles.mockResolvedValue([]);
+    getActiveProviderId.mockResolvedValue(undefined);
     mockStorageRepositories();
   });
 
@@ -90,6 +94,47 @@ describe("options app", () => {
       "0.1",
     );
     expect(screen.getByRole("spinbutton", { name: "Max Tokens" })).toHaveValue(4096);
+  });
+
+  it("loads the active provider profile into the settings form", async () => {
+    listProfiles.mockResolvedValue([
+      {
+        id: "openai",
+        displayName: "Custom Provider",
+        presetId: "custom",
+        type: "openai-compatible",
+        baseURL: "https://api.example.test/v1",
+        apiKey: "saved-key",
+        textModel: "custom-text-model",
+        visionModel: "custom-vision-model",
+        requestParams: {
+          timeoutMs: 60000,
+          temperature: 0.2,
+          maxTokens: 8192,
+        },
+      },
+    ]);
+    getActiveProviderId.mockResolvedValue("openai");
+
+    render(OptionsApp);
+
+    expect(await screen.findByDisplayValue("Custom Provider")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Preset" })).toHaveDisplayValue(
+      "Custom OpenAI Compatible",
+    );
+    expect(screen.getByRole("textbox", { name: "Base URL" })).toHaveValue(
+      "https://api.example.test/v1",
+    );
+    expect(screen.getByLabelText("API Key")).toHaveValue("saved-key");
+    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue(
+      "custom-text-model",
+    );
+    expect(screen.getByRole("textbox", { name: "Vision Model" })).toHaveValue(
+      "custom-vision-model",
+    );
+    expect(screen.getByRole("spinbutton", { name: "Timeout" })).toHaveValue(60000);
+    expect(screen.getByRole("spinbutton", { name: "Temperature" })).toHaveValue(0.2);
+    expect(screen.getByRole("spinbutton", { name: "Max Tokens" })).toHaveValue(8192);
   });
 
   it("fills provider fields from the selected preset", async () => {

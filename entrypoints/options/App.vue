@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 
 import { ProviderError, type ProviderErrorCode } from "@/provider/errors";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
@@ -129,6 +129,41 @@ function applySelectedPreset() {
   baseUrl.value = preset.defaultBaseUrl;
   textModel.value = preset.defaultTextModel ?? "";
 }
+
+function applyProviderProfile(profile: ProviderProfile) {
+  const presetId = profile.presetId ?? profile.id;
+  selectedPresetId.value = providerPresets.some((item) => item.id === presetId)
+    ? presetId
+    : "custom";
+  displayName.value = profile.displayName;
+  baseUrl.value = profile.baseURL;
+  apiKey.value = profile.apiKey;
+  textModel.value = profile.textModel;
+  visionModel.value = profile.visionModel ?? "";
+  timeoutMs.value = profile.requestParams?.timeoutMs ?? 30000;
+  temperature.value = profile.requestParams?.temperature ?? 0.3;
+  maxTokens.value = profile.requestParams?.maxTokens ?? 4096;
+}
+
+async function loadActiveProviderProfile() {
+  try {
+    const storage = createStorageRepositories();
+    const [profiles, activeProviderId] = await Promise.all([
+      storage.providers.listProfiles(),
+      storage.providers.getActiveProviderId(),
+    ]);
+    const activeProfile =
+      profiles.find((profile) => profile.id === activeProviderId) ?? profiles[0];
+
+    if (activeProfile) {
+      applyProviderProfile(activeProfile);
+    }
+  } catch {
+    // Keep defaults when saved settings cannot be read.
+  }
+}
+
+onMounted(loadActiveProviderProfile);
 
 async function saveProviderProfile() {
   saveState.value = "idle";

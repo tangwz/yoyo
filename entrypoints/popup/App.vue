@@ -213,6 +213,10 @@ async function onPrimaryAction(): Promise<void> {
     errorMessage.value = error instanceof Error ? error.message : "翻译请求失败。";
   }
 }
+
+async function onOpenSettings(): Promise<void> {
+  await browser.runtime.openOptionsPage();
+}
 </script>
 
 <template>
@@ -253,14 +257,24 @@ async function onPrimaryAction(): Promise<void> {
     <PopupFooter
       left-label="设置"
       version="0.1.0"
+      @open-settings="onOpenSettings"
     />
   </main>
 </template>
 
 <style scoped>
+:global(html),
+:global(body),
+:global(#app) {
+  width: 392px;
+  min-width: 392px;
+  max-width: 392px;
+  margin: 0;
+  overflow-x: hidden;
+}
+
 .yoyo-shell {
-  width: 410px;
-  max-width: 100vw;
+  width: 100%;
   min-height: 300px;
   padding: 22px;
   color: #202431;

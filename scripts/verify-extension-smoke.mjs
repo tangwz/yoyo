@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +8,8 @@ import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 
 const extensionPath = resolve(".output/chrome-mv3");
+const keepOpen = process.env.YOYO_SMOKE_KEEP_OPEN === "1";
+const detachBrowser = process.env.YOYO_SMOKE_DETACH_BROWSER === "1";
 const promptProbe = {
   connectionTestPrompt: "",
   translationPrompts: [],
@@ -101,6 +104,45 @@ function createMockProviderServer() {
   });
 }
 
+function getFreePort() {
+  const server = createServer();
+
+  return new Promise((resolvePort, rejectPort) => {
+    server.once("error", rejectPort);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close(() => {
+        if (!address || typeof address !== "object") {
+          rejectPort(new Error("Could not allocate a debugging port."));
+          return;
+        }
+
+        resolvePort(address.port);
+      });
+    });
+  });
+}
+
+async function waitForCdpEndpoint(port) {
+  const endpoint = `http://127.0.0.1:${port}`;
+  const deadline = Date.now() + 15000;
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${endpoint}/json/version`);
+      if (response.ok) {
+        return endpoint;
+      }
+    } catch {
+      // Chrome is still starting.
+    }
+
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+  }
+
+  throw new Error("Timed out waiting for detached Chrome debugging endpoint.");
+}
+
 function createArticleServer() {
   const server = createServer((request, response) => {
     if (request.url !== "/article") {
@@ -152,9 +194,14 @@ function findChromeExecutable() {
 }
 
 async function getExtensionServiceWorker(context) {
-  let serviceWorker = context.serviceWorkers()[0];
+  let serviceWorker = context.serviceWorkers().find((worker) =>
+    worker.url().endsWith("/background.js"),
+  );
   if (!serviceWorker) {
-    serviceWorker = await context.waitForEvent("serviceworker", { timeout: 10000 });
+    serviceWorker = await context.waitForEvent("serviceworker", {
+      predicate: (worker) => worker.url().endsWith("/background.js"),
+      timeout: 10000,
+    });
   }
 
   const match = serviceWorker.url().match(/^chrome-extension:\/\/([^/]+)\//);
@@ -172,22 +219,51 @@ async function main() {
   ]);
 
   let context;
+  let browser;
+  let leaveBrowserOpen = false;
   try {
     const executablePath = findChromeExecutable();
-    const launchOptions = executablePath
-      ? { executablePath }
-      : { channel: process.env.YOYO_CHROME_CHANNEL ?? "chrome" };
+    if (detachBrowser) {
+      assert(executablePath, "Detached mode requires a Chrome executable.");
+      const debuggingPort = await getFreePort();
+      const chromeProcess = spawn(
+        executablePath,
+        [
+          `--user-data-dir=${userDataDir}`,
+          `--remote-debugging-port=${debuggingPort}`,
+          "--no-first-run",
+          "--no-default-browser-check",
+          "--disable-features=DisableLoadExtensionCommandLineSwitch",
+          `--disable-extensions-except=${extensionPath}`,
+          `--load-extension=${extensionPath}`,
+          "about:blank",
+        ],
+        {
+          detached: true,
+          stdio: "ignore",
+        },
+      );
+      chromeProcess.unref();
 
-    context = await chromium.launchPersistentContext(userDataDir, {
-      ...launchOptions,
-      headless: false,
-      ignoreDefaultArgs: ["--disable-extensions"],
-      args: [
-        "--disable-features=DisableLoadExtensionCommandLineSwitch",
-        `--disable-extensions-except=${extensionPath}`,
-        `--load-extension=${extensionPath}`,
-      ],
-    });
+      browser = await chromium.connectOverCDP(await waitForCdpEndpoint(debuggingPort));
+      context = browser.contexts()[0];
+      assert(context, "Detached Chrome did not expose a browser context.");
+    } else {
+      const launchOptions = executablePath
+        ? { executablePath }
+        : { channel: process.env.YOYO_CHROME_CHANNEL ?? "chrome" };
+
+      context = await chromium.launchPersistentContext(userDataDir, {
+        ...launchOptions,
+        headless: false,
+        ignoreDefaultArgs: ["--disable-extensions"],
+        args: [
+          "--disable-features=DisableLoadExtensionCommandLineSwitch",
+          `--disable-extensions-except=${extensionPath}`,
+          `--load-extension=${extensionPath}`,
+        ],
+      });
+    }
 
     const { extensionId, serviceWorker } = await getExtensionServiceWorker(context);
     const optionsPage = await context.newPage();
@@ -221,7 +297,10 @@ async function main() {
       "Provider profile data leaked into chrome.storage.sync.",
     );
 
-    const articlePage = await context.newPage();
+    const articlePage = detachBrowser
+      ? (context.pages().find((page) => page !== optionsPage && page.url() === "about:blank") ??
+        (await context.newPage()))
+      : await context.newPage();
     await articlePage.goto(articleServer.url);
     await articlePage.waitForSelector("main p");
 
@@ -258,16 +337,36 @@ async function main() {
       promptProbe.translationPrompts.length > 0,
       "No translation prompt reached the mock provider.",
     );
+    if (detachBrowser) {
+      await optionsPage.close().catch(() => undefined);
+    }
+    await articlePage.bringToFront();
 
     console.log("Extension smoke test passed.");
     console.log(`Extension id: ${extensionId}`);
     console.log(`Injected translations: ${translationCount}`);
+
+    if (detachBrowser) {
+      leaveBrowserOpen = true;
+      console.log("Chrome is ready for acceptance and will remain open.");
+      return;
+    }
+
+    if (keepOpen) {
+      console.log("Chrome is ready for acceptance. Close the browser or stop this process when done.");
+      await new Promise(() => undefined);
+    }
   } finally {
-    await context?.close();
+    if (!keepOpen && !leaveBrowserOpen) {
+      await context?.close();
+    }
+
     await Promise.allSettled([
       providerServer.close(),
       articleServer.close(),
-      rm(userDataDir, { recursive: true, force: true }),
+      leaveBrowserOpen
+        ? Promise.resolve()
+        : rm(userDataDir, { recursive: true, force: true }),
     ]);
   }
 }
