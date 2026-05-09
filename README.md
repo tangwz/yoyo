@@ -72,7 +72,7 @@ pnpm build
 The unpacked build is written to:
 
 ```text
-.output/chrome-mv3
+build/chrome-mv3
 ```
 
 Load it manually in Chrome or Edge:
@@ -80,7 +80,7 @@ Load it manually in Chrome or Edge:
 1. Open `chrome://extensions` or `edge://extensions`
 2. Enable developer mode
 3. Click "Load unpacked"
-4. Select `.output/chrome-mv3`
+4. Select `build/chrome-mv3`
 
 Create a distributable zip:
 
@@ -88,7 +88,7 @@ Create a distributable zip:
 pnpm zip
 ```
 
-WXT writes the zip file to `.output`. The file name includes the package name, extension version, and browser target, for example `.output/yoyo-reading-assistant-0.1.0-chrome.zip`. This artifact can be used for manual distribution, review submission, or release archiving.
+WXT writes the zip file to `build`. The file name includes the package name, extension version, and browser target, for example `build/yoyo-reading-assistant-0.1.0-chrome.zip`. This artifact can be used for manual distribution, review submission, or release archiving.
 
 ## Verification
 
@@ -107,7 +107,7 @@ Run the extension smoke test:
 pnpm verify:extension
 ```
 
-`pnpm verify:extension` builds the extension, starts a local test article and mock OpenAI-compatible provider, launches Chrome with `.output/chrome-mv3` loaded, and verifies provider configuration, full-page translation, translation injection, and code-block skipping.
+`pnpm verify:extension` builds the extension, starts a local test article and mock OpenAI-compatible provider, launches Chrome with `build/chrome-mv3` loaded, and verifies provider configuration, full-page translation, translation injection, and code-block skipping.
 
 Keep the browser open for manual acceptance:
 

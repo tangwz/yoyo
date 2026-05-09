@@ -5,6 +5,7 @@ export default defineConfig({
   manifestVersion: 3,
   srcDir: "src",
   entrypointsDir: "../entrypoints",
+  outDir: "build",
   manifest: {
     name: "悠悠阅读助手",
     description: "A privacy-conscious LLM reading and translation assistant.",

@@ -72,7 +72,7 @@ pnpm build
 构建产物位于：
 
 ```text
-.output/chrome-mv3
+build/chrome-mv3
 ```
 
 在 Chrome 或 Edge 中手动加载：
@@ -80,7 +80,7 @@ pnpm build
 1. 打开 `chrome://extensions` 或 `edge://extensions`
 2. 开启开发者模式
 3. 选择“加载已解压的扩展程序”
-4. 选择 `.output/chrome-mv3`
+4. 选择 `build/chrome-mv3`
 
 生成可分发压缩包：
 
@@ -88,7 +88,7 @@ pnpm build
 pnpm zip
 ```
 
-压缩包会由 WXT 输出到 `.output` 目录中，文件名包含 package name、扩展版本和目标浏览器，例如 `.output/yoyo-reading-assistant-0.1.0-chrome.zip`。该产物可用于手动分发、提交审核或归档发布。
+压缩包会由 WXT 输出到 `build` 目录中，文件名包含 package name、扩展版本和目标浏览器，例如 `build/yoyo-reading-assistant-0.1.0-chrome.zip`。该产物可用于手动分发、提交审核或归档发布。
 
 ## 验证
 
@@ -107,7 +107,7 @@ pnpm build
 pnpm verify:extension
 ```
 
-`pnpm verify:extension` 会构建扩展，启动本地测试文章和 mock OpenAI-compatible provider，然后启动 Chrome 并加载 `.output/chrome-mv3`，验证 provider 配置、全文翻译、译文注入和代码块跳过等主链路。
+`pnpm verify:extension` 会构建扩展，启动本地测试文章和 mock OpenAI-compatible provider，然后启动 Chrome 并加载 `build/chrome-mv3`，验证 provider 配置、全文翻译、译文注入和代码块跳过等主链路。
 
 如果需要保留浏览器窗口用于人工验收：
 

@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
 
-const extensionPath = resolve(".output/chrome-mv3");
+const extensionPath = resolve("build/chrome-mv3");
 const keepOpen = process.env.YOYO_SMOKE_KEEP_OPEN === "1";
 const detachBrowser = process.env.YOYO_SMOKE_DETACH_BROWSER === "1";
 const promptProbe = {
@@ -210,7 +210,7 @@ async function getExtensionServiceWorker(context) {
 }
 
 async function main() {
-  assert(existsSync(extensionPath), "Missing .output/chrome-mv3. Run pnpm build first.");
+  assert(existsSync(extensionPath), "Missing build/chrome-mv3. Run pnpm build first.");
 
   const [providerServer, articleServer, userDataDir] = await Promise.all([
     createMockProviderServer(),
