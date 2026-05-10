@@ -1,4 +1,5 @@
 import { mapHttpStatusToProviderError, ProviderError } from "@/provider/errors";
+import { createTextModelCandidates } from "@/provider/modelNames";
 import type { GenerateTextRequest, GenerateTextResponse } from "@/provider/types";
 
 type ChatCompletionResponse = {
@@ -15,6 +16,13 @@ function joinUrl(baseURL: string, path: string): string {
 }
 
 type AbortSource = "timeout" | "user";
+
+function canRetryWithNextModelCandidate(error: ProviderError): boolean {
+  return (
+    error.code === "invalidRequest" &&
+    (error.status === 400 || error.status === 404 || error.status === 422)
+  );
+}
 
 export class OpenAiCompatibleProvider {
   async testConnection(profile: GenerateTextRequest["profile"]): Promise<GenerateTextResponse> {
@@ -48,46 +56,30 @@ export class OpenAiCompatibleProvider {
     request.abortSignal?.addEventListener("abort", abortForwarder, { once: true });
 
     try {
-      const response = await fetch(joinUrl(request.profile.baseURL, "/chat/completions"), {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${request.profile.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: request.profile.textModel,
-          messages: [{ role: "user", content: request.prompt }],
-          temperature: request.profile.requestParams?.temperature ?? 0.2,
-          max_tokens: request.profile.requestParams?.maxTokens ?? 1200,
-        }),
-        signal: timeoutController.signal,
-      });
+      const modelCandidates = createTextModelCandidates(request.profile);
 
-      if (!response.ok) {
-        throw mapHttpStatusToProviderError(response.status, await response.text());
+      for (let index = 0; index < modelCandidates.length; index += 1) {
+        const model = modelCandidates[index];
+        if (model === undefined) {
+          continue;
+        }
+
+        try {
+          return await this.generateTextWithModel(request, model, timeoutController.signal);
+        } catch (error) {
+          if (
+            error instanceof ProviderError &&
+            canRetryWithNextModelCandidate(error) &&
+            index + 1 < modelCandidates.length
+          ) {
+            continue;
+          }
+
+          throw error;
+        }
       }
 
-      let payload: ChatCompletionResponse;
-      try {
-        payload = (await response.json()) as ChatCompletionResponse;
-      } catch (error) {
-        throw new ProviderError(
-          "invalidResponse",
-          "Provider response was not valid JSON.",
-          undefined,
-          error,
-        );
-      }
-
-      const text = payload.choices?.[0]?.message?.content;
-      if (typeof text !== "string") {
-        throw new ProviderError("invalidResponse", "Provider response did not include text.");
-      }
-
-      return {
-        text,
-        model: payload.model ?? request.profile.textModel,
-      };
+      throw new ProviderError("invalidRequest", "Provider rejected the request.");
     } catch (error) {
       if (error instanceof ProviderError) {
         throw error;
@@ -110,5 +102,52 @@ export class OpenAiCompatibleProvider {
       globalThis.clearTimeout(timeoutId);
       request.abortSignal?.removeEventListener("abort", abortForwarder);
     }
+  }
+
+  private async generateTextWithModel(
+    request: GenerateTextRequest,
+    model: string,
+    signal: AbortSignal,
+  ): Promise<GenerateTextResponse> {
+    const response = await fetch(joinUrl(request.profile.baseURL, "/chat/completions"), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${request.profile.apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: request.prompt }],
+        temperature: request.profile.requestParams?.temperature ?? 0.2,
+        max_tokens: request.profile.requestParams?.maxTokens ?? 1200,
+      }),
+      signal,
+    });
+
+    if (!response.ok) {
+      throw mapHttpStatusToProviderError(response.status, await response.text());
+    }
+
+    let payload: ChatCompletionResponse;
+    try {
+      payload = (await response.json()) as ChatCompletionResponse;
+    } catch (error) {
+      throw new ProviderError(
+        "invalidResponse",
+        "Provider response was not valid JSON.",
+        undefined,
+        error,
+      );
+    }
+
+    const text = payload.choices?.[0]?.message?.content;
+    if (typeof text !== "string") {
+      throw new ProviderError("invalidResponse", "Provider response did not include text.");
+    }
+
+    return {
+      text,
+      model: payload.model ?? model,
+    };
   }
 }

@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 
 import { ProviderError, type ProviderErrorCode } from "@/provider/errors";
+import { normalizeModelNameForProfile } from "@/provider/modelNames";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
 import { providerPresets } from "@/provider/presets";
 import type { ProviderProfile } from "@/provider/types";
@@ -34,7 +35,7 @@ const isFirstRunProviderLanding =
 const providerErrorMessages: Record<ProviderErrorCode, string> = {
   aborted: "测试已取消。",
   invalidResponse: "服务返回格式不符合预期。",
-  invalidRequest: "模型名或请求参数无效，请确认模型 ID 区分大小写。",
+  invalidRequest: "模型名或请求参数无效，请检查后重试。",
   networkError: "无法连接到服务，请检查 Base URL 和网络后重试。",
   quotaExceeded: "服务额度不足。",
   rateLimited: "服务请求过于频繁，请稍后重试。",
@@ -86,6 +87,12 @@ function normalizePositiveInteger(value: unknown, defaultValue: number): number 
 
 function buildProviderProfile(): ProviderProfile {
   const profileId = selectedPresetId.value;
+  const modelContext = {
+    id: profileId,
+    presetId: selectedPresetId.value,
+  };
+  const normalizedTextModel = normalizeModelNameForProfile(modelContext, textModel.value);
+  const normalizedVisionModel = visionModel.value.trim();
 
   return {
     id: profileId,
@@ -94,8 +101,8 @@ function buildProviderProfile(): ProviderProfile {
     type: "openai-compatible",
     baseURL: baseUrl.value,
     apiKey: apiKey.value,
-    textModel: textModel.value,
-    visionModel: visionModel.value || undefined,
+    textModel: normalizedTextModel,
+    visionModel: normalizedVisionModel || undefined,
     requestParams: {
       timeoutMs: normalizePositiveNumber(timeoutMs.value, 30000),
       temperature: normalizeTemperature(temperature.value),
@@ -217,11 +224,20 @@ async function testConnection() {
   try {
     const provider = new OpenAiCompatibleProvider();
 
-    await provider.testConnection(profile);
+    const response = await provider.testConnection(profile);
     if (
       requestId !== testRequestId.value ||
       testedProfileSignature !== providerProfileSignature.value
     ) {
+      return;
+    }
+
+    const acceptedTextModel = normalizeModelNameForProfile(profile, response.model);
+    if (acceptedTextModel !== textModel.value) {
+      textModel.value = acceptedTextModel;
+      await nextTick();
+    }
+    if (requestId !== testRequestId.value || textModel.value !== acceptedTextModel) {
       return;
     }
 

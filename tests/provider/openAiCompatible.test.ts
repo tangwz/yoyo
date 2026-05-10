@@ -53,6 +53,58 @@ describe("OpenAiCompatibleProvider", () => {
     });
   });
 
+  it("tries a lower-case model candidate when the original model casing is rejected", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("model not found", { status: 400 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "translated text" } }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    const response = await provider.generateText({
+      profile: { ...profile, textModel: "Model-A" },
+      prompt: "Translate me",
+    });
+
+    expect(response).toEqual({ text: "translated text", model: "model-a" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("Model-A");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("model-a");
+  });
+
+  it("uses the preset canonical model candidate before generic lower-case fallback", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("model not found", { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "ok" } }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    const response = await provider.testConnection({
+      ...profile,
+      presetId: "openai",
+      textModel: "GPT-4.1-MINI",
+    });
+
+    expect(response.model).toBe("gpt-4.1-mini");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("gpt-4.1-mini");
+  });
+
   it("tests a provider connection with the fixed prompt", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

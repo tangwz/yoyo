@@ -229,6 +229,23 @@ describe("options app", () => {
     expect(await screen.findByText("已保存翻译服务。")).toBeVisible();
   });
 
+  it("normalizes known preset model casing before saving", async () => {
+    render(OptionsApp);
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "Preset" }), "openai");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), " GPT-4.1-MINI ");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Vision Model" }), " CUSTOM-VISION ");
+
+    await fireEvent.click(screen.getByRole("button", { name: "保存翻译服务" }));
+
+    expect(saveProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        textModel: "gpt-4.1-mini",
+        visionModel: "CUSTOM-VISION",
+      }),
+    );
+  });
+
   it("tests the current provider form with the fixed connection prompt without saving", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
@@ -271,6 +288,30 @@ describe("options app", () => {
     expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
   });
 
+  it("quietly updates the text model to the provider-accepted fallback after a successful test", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("model not found", { status: 400 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "ok" } }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(OptionsApp);
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "Preset" }), "custom");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "Custom-Model");
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
+    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue("custom-model");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("shows error feedback when testing the provider connection fails", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
     render(OptionsApp);
@@ -299,7 +340,7 @@ describe("options app", () => {
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "模型名或请求参数无效，请确认模型 ID 区分大小写。",
+      "模型名或请求参数无效，请检查后重试。",
     );
     expect(saveProfile).not.toHaveBeenCalled();
     expect(setActiveProviderId).not.toHaveBeenCalled();
