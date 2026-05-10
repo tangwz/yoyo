@@ -26,14 +26,26 @@ function assert(condition, message) {
   }
 }
 
+function isErrnoException(error, code) {
+  return error && typeof error === "object" && "code" in error && error.code === code;
+}
+
+function getErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function readManifest() {
   try {
     return JSON.parse(await readFile(manifestPath, "utf8"));
   } catch (error) {
-    if (error?.code === "ENOENT") {
-      throw new Error("Missing build/chrome-mv3/manifest.json. Run pnpm build first.");
+    if (isErrnoException(error, "ENOENT")) {
+      throw new Error("Missing build/chrome-mv3/manifest.json. Run pnpm build first.", {
+        cause: error,
+      });
     }
-    throw new Error(`Could not read build/chrome-mv3/manifest.json: ${error.message}`);
+    throw new Error(`Could not read build/chrome-mv3/manifest.json: ${getErrorMessage(error)}`, {
+      cause: error,
+    });
   }
 }
 
@@ -69,10 +81,12 @@ async function findLatestChromeZip() {
   try {
     entries = await readdir(buildDir, { withFileTypes: true });
   } catch (error) {
-    if (error?.code === "ENOENT") {
-      throw new Error("Missing build/. Run pnpm build and pnpm zip first.");
+    if (isErrnoException(error, "ENOENT")) {
+      throw new Error("Missing build/. Run pnpm build and pnpm zip first.", {
+        cause: error,
+      });
     }
-    throw new Error(`Could not read build/: ${error.message}`);
+    throw new Error(`Could not read build/: ${getErrorMessage(error)}`, { cause: error });
   }
 
   const zipFiles = await Promise.all(
@@ -99,9 +113,13 @@ async function listZipEntries(zipPath) {
     });
     return stdout.split("\n").filter(Boolean);
   } catch (error) {
-    const stderr = error.stderr?.trim();
+    const stderr = error && typeof error === "object" && "stderr" in error
+      ? String(error.stderr).trim()
+      : "";
     const detail = stderr ? ` ${stderr}` : "";
-    throw new Error(`Could not list zip entries with "unzip -Z1 ${zipPath}".${detail}`);
+    throw new Error(`Could not list zip entries with "unzip -Z1 ${zipPath}".${detail}`, {
+      cause: error,
+    });
   }
 }
 
@@ -112,9 +130,11 @@ async function readZipManifest(zipPath, zipName) {
     });
     return JSON.parse(stdout);
   } catch (error) {
-    const stderr = error.stderr?.trim();
+    const stderr = error && typeof error === "object" && "stderr" in error
+      ? String(error.stderr).trim()
+      : "";
     const detail = stderr ? ` ${stderr}` : "";
-    throw new Error(`Could not read manifest.json from ${zipName}.${detail}`);
+    throw new Error(`Could not read manifest.json from ${zipName}.${detail}`, { cause: error });
   }
 }
 
