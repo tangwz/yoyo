@@ -23,18 +23,20 @@ export function parseTranslationBatchResult(
       return;
     }
 
-    if (!expectedIds.has(item.segmentId)) {
-      warnings.push(`Ignoring unknown segmentId "${item.segmentId}".`);
+    const normalizedItem = normalizeTranslationResultItem(item);
+
+    if (!expectedIds.has(normalizedItem.segmentId)) {
+      warnings.push(`Ignoring unknown segmentId "${normalizedItem.segmentId}".`);
       return;
     }
 
-    if (seenIds.has(item.segmentId)) {
-      warnings.push(`Ignoring duplicate segmentId "${item.segmentId}".`);
+    if (seenIds.has(normalizedItem.segmentId)) {
+      warnings.push(`Ignoring duplicate segmentId "${normalizedItem.segmentId}".`);
       return;
     }
 
-    seenIds.add(item.segmentId);
-    items.push(item);
+    seenIds.add(normalizedItem.segmentId);
+    items.push(normalizedItem);
   });
 
   return {
@@ -138,7 +140,21 @@ function isTranslationResultObject(value: unknown): value is { items: unknown[] 
 function isTranslationResultItem(value: unknown): value is TranslationResultItem {
   return (
     isRecord(value) &&
-    typeof value.segmentId === "string" &&
-    typeof value.translatedText === "string"
+    ((typeof value.segmentId === "string" && typeof value.translatedText === "string") ||
+      (typeof value.id === "string" && typeof value.text === "string"))
   );
+}
+
+function normalizeTranslationResultItem(
+  item: TranslationResultItem | Record<string, unknown>,
+): TranslationResultItem {
+  if (typeof item.segmentId === "string" && typeof item.translatedText === "string") {
+    return item as TranslationResultItem;
+  }
+
+  const record = item as Record<string, unknown>;
+  return {
+    segmentId: record.id as string,
+    translatedText: record.text as string,
+  };
 }

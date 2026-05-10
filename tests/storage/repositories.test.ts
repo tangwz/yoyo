@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createInMemoryStorageArea,
   providerProfileRepository,
+  translationPreferenceRepository,
   uiPreferenceRepository,
 } from "@/storage/repositories";
 
@@ -44,6 +45,21 @@ describe("storage repositories", () => {
       "yoyo.uiPreferences": { theme: "light", uiLanguage: "zh-CN" },
     });
     expect(await local.get("yoyo.uiPreferences")).toEqual({});
+  });
+
+  it("defaults translation preferences to lazy viewport mode and stores them in sync storage", async () => {
+    const local = createInMemoryStorageArea();
+    const sync = createInMemoryStorageArea();
+    const repository = translationPreferenceRepository({ syncedStorage: sync });
+
+    await expect(repository.get()).resolves.toEqual({ mode: "lazyViewport" });
+
+    await repository.save({ mode: "fullPage" });
+
+    expect(await sync.get("yoyo.translationPreferences")).toEqual({
+      "yoyo.translationPreferences": { mode: "fullPage" },
+    });
+    expect(await local.get("yoyo.translationPreferences")).toEqual({});
   });
 
   it("stores active provider id in local storage", async () => {

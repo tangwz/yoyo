@@ -12,6 +12,12 @@ describe("translation hash helpers", () => {
     );
   });
 
+  it("normalizes non-breaking spaces before hashing", async () => {
+    await expect(hashNormalizedText("Hello\u00A0world")).resolves.toBe(
+      await hashNormalizedText("Hello world"),
+    );
+  });
+
   it("creates stable cache keys from normalized text and translation settings", async () => {
     const key = await createCacheKey({
       sourceText: " Hello\n   world ",

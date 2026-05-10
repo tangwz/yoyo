@@ -1,3 +1,5 @@
+import type { TranslationPreferences } from "@/translation/types";
+
 export type UiPreferences = {
   theme: "light";
   uiLanguage: "zh-CN" | "en-US";
@@ -14,4 +16,8 @@ export const defaultUiPreferences: UiPreferences = {
 
 export const defaultExperimentalFlags: ExperimentalFlags = {
   translateMoreVisibleText: false,
+};
+
+export const defaultTranslationPreferences: TranslationPreferences = {
+  mode: "lazyViewport",
 };

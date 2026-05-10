@@ -1,7 +1,7 @@
 import { AnchorRegistry } from "@/content/anchors";
 import { isElementSkippable } from "@/content/domEligibility";
 import { hashNormalizedText, normalizeSourceText } from "@/translation/hash";
-import type { PageSegment, PageSegmentKind } from "@/translation/types";
+import type { PageSegment, PageSegmentKind, SegmentPriority } from "@/translation/types";
 
 export type SegmentCollection = {
   segments: PageSegment[];
@@ -104,6 +104,21 @@ function pathHintFor(element: Element): string {
   return parts.join(" > ");
 }
 
+export function priorityForElement(element: Element): SegmentPriority {
+  const rect = element.getBoundingClientRect();
+  const viewportHeight = Math.max(1, window.innerHeight || document.documentElement.clientHeight);
+
+  if (rect.bottom > 0 && rect.top < viewportHeight) {
+    return "viewport";
+  }
+
+  if (rect.bottom > -viewportHeight * 2 && rect.top < viewportHeight * 3) {
+    return "nearViewport";
+  }
+
+  return "normal";
+}
+
 export async function collectPageSegments(
   taskId: string,
 ): Promise<SegmentCollection> {
@@ -121,6 +136,7 @@ export async function collectPageSegments(
       order,
       sourceText,
       kind: segmentKindFor(element),
+      priority: priorityForElement(element),
       pathHint: pathHintFor(element),
       textHash: await hashNormalizedText(sourceText),
     });

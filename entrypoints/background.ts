@@ -82,6 +82,7 @@ export default defineBackground(() => {
         tabId,
         sourceLanguage: "auto",
         targetLanguage: "zh-CN",
+        translationMode: (await storage.translationPreferences.get()).mode,
       });
 
       if (progress.state === "failed") {
@@ -105,13 +106,23 @@ export default defineBackground(() => {
     async (request) => {
       switch (request.type) {
         case "translatePage": {
+          const preferences = await storage.translationPreferences.get();
           const progress = orchestrator.startTranslatePage({
             tabId: request.tabId,
             sourceLanguage: request.sourceLanguage,
             targetLanguage: request.targetLanguage,
+            translationMode: preferences.mode,
           });
           return { type: "taskProgress", progress };
         }
+        case "enqueueLazySegments":
+          return {
+            type: "taskProgress",
+            progress: await orchestrator.enqueueLazySegments(
+              request.taskId,
+              request.segmentIds,
+            ),
+          };
         case "cancelTask":
           return {
             type: "taskProgress",

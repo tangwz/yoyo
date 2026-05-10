@@ -1,5 +1,6 @@
 .superpowers/
 .playwright-mcp/
+.DS_Store
 node_modules/
 .wxt/
 .output/

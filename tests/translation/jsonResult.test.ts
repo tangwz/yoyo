@@ -2,6 +2,24 @@ import { describe, expect, it } from "vitest";
 import { parseTranslationBatchResult } from "@/translation/jsonResult";
 
 describe("translation JSON result parser", () => {
+  it("parses compact v2 items and maps them to translation results", () => {
+    const result = parseTranslationBatchResult(
+      JSON.stringify({
+        items: [
+          { id: "a", text: "Alpha" },
+          { id: "b", text: "Beta" },
+        ],
+      }),
+      ["a", "b"],
+    );
+
+    expect(result.items).toEqual([
+      { segmentId: "a", translatedText: "Alpha" },
+      { segmentId: "b", translatedText: "Beta" },
+    ]);
+    expect(result.missingSegmentIds).toEqual([]);
+  });
+
   it("parses valid items and ignores unknown segment IDs with warnings", () => {
     const result = parseTranslationBatchResult(
       JSON.stringify({

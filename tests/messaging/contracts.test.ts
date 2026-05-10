@@ -14,18 +14,20 @@ describe("messaging contracts", () => {
     const request = {
       type: "collectSegments",
       taskId: "task-1",
+      translationMode: "lazyViewport",
     } satisfies ContentRequest;
 
     expect(request).toEqual({
       type: "collectSegments",
       taskId: "task-1",
+      translationMode: "lazyViewport",
     });
   });
 
   it("covers content entrypoint request variants", () => {
     const requests = [
       { type: "estimatePage" },
-      { type: "collectSegments", taskId: "task-1" },
+      { type: "collectSegments", taskId: "task-1", translationMode: "lazyViewport" },
       { type: "applyTranslations", taskId: "task-1", items: [] },
       { type: "hideTranslations", taskId: "task-1" },
       { type: "showTranslations", taskId: "task-1" },
@@ -42,6 +44,20 @@ describe("messaging contracts", () => {
       "removeTranslations",
       "getPageRuntimeState",
     ]);
+  });
+
+  it("supports lazy segment enqueue requests from content scripts", () => {
+    const request = {
+      type: "enqueueLazySegments",
+      taskId: "task-1",
+      segmentIds: ["seg_3"],
+    } satisfies BackgroundRequest;
+
+    expect(request).toEqual({
+      type: "enqueueLazySegments",
+      taskId: "task-1",
+      segmentIds: ["seg_3"],
+    });
   });
 
   it("keeps content error responses available to runtime handlers", () => {

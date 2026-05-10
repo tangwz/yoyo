@@ -3,6 +3,7 @@ import type {
   PageSegment,
   TranslationProgress,
   TranslationResultItem,
+  TranslationMode,
 } from "@/translation/types";
 import type { ProviderReadiness } from "@/provider/readiness";
 
@@ -19,7 +20,7 @@ export type PageTranslationEstimate = {
 
 export type ContentRequest =
   | { type: "estimatePage" }
-  | { type: "collectSegments"; taskId: string }
+  | { type: "collectSegments"; taskId: string; translationMode: TranslationMode }
   | { type: "applyTranslations"; taskId: string; items: TranslationResultItem[] }
   | { type: "hideTranslations"; taskId?: string }
   | { type: "showTranslations"; taskId?: string }
@@ -58,7 +59,8 @@ export type BackgroundRequest =
       type: "openOptions";
       section?: OptionsSection;
       source?: OptionsOpenSource;
-    };
+    }
+  | { type: "enqueueLazySegments"; taskId: string; segmentIds: string[] };
 
 export type BackgroundResponse =
   | { type: "taskProgress"; progress: TranslationProgress }

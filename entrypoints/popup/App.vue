@@ -169,7 +169,9 @@ function isRunningTask(
   return (
     response.type === "taskProgress" &&
     response.progress.taskId.length > 0 &&
-    (response.progress.state === "collecting" || response.progress.state === "translating")
+    (response.progress.state === "collecting" ||
+      response.progress.state === "translating" ||
+      response.progress.state === "waitingForViewport")
   );
 }
 

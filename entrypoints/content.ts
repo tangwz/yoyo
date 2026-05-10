@@ -47,7 +47,7 @@ export default defineContentScript({
             return {
               type: "collectSegmentsResult",
               taskId: request.taskId,
-              segments: await collectSegments(request.taskId),
+              segments: await collectSegments(request.taskId, request.translationMode),
             };
           }
           case "applyTranslations": {

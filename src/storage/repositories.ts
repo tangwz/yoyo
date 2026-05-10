@@ -1,6 +1,11 @@
 import type { ProviderProfile } from "@/provider/types";
-import { defaultUiPreferences, type UiPreferences } from "@/storage/defaults";
+import {
+  defaultTranslationPreferences,
+  defaultUiPreferences,
+  type UiPreferences,
+} from "@/storage/defaults";
 import { storageKeys } from "@/storage/storageKeys";
+import type { TranslationPreferences } from "@/translation/types";
 
 type StorageGetKeys = string | string[] | Record<string, unknown> | null;
 
@@ -15,6 +20,10 @@ type ProviderProfileRepositoryDependencies = {
 };
 
 type UiPreferenceRepositoryDependencies = {
+  syncedStorage: StorageArea;
+};
+
+type TranslationPreferenceRepositoryDependencies = {
   syncedStorage: StorageArea;
 };
 
@@ -129,6 +138,27 @@ export function uiPreferenceRepository({
   return { get, save };
 }
 
+export function translationPreferenceRepository({
+  syncedStorage,
+}: TranslationPreferenceRepositoryDependencies) {
+  async function get(): Promise<TranslationPreferences> {
+    const result = await syncedStorage.get({
+      [storageKeys.translationPreferences]: defaultTranslationPreferences,
+    });
+    const preferences = result[storageKeys.translationPreferences] as Partial<TranslationPreferences>;
+
+    return preferences.mode === "fullPage" || preferences.mode === "lazyViewport"
+      ? { mode: preferences.mode }
+      : defaultTranslationPreferences;
+  }
+
+  async function save(preferences: TranslationPreferences): Promise<void> {
+    await syncedStorage.set({ [storageKeys.translationPreferences]: preferences });
+  }
+
+  return { get, save };
+}
+
 export function createStorageRepositories() {
   const runtime = globalThis as typeof globalThis & ExtensionStorageRuntime;
   const storage = runtime.chrome.storage;
@@ -136,5 +166,6 @@ export function createStorageRepositories() {
   return {
     providers: providerProfileRepository({ privateStorage: storage.local }),
     uiPreferences: uiPreferenceRepository({ syncedStorage: storage.sync }),
+    translationPreferences: translationPreferenceRepository({ syncedStorage: storage.sync }),
   };
 }
