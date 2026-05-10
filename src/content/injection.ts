@@ -7,6 +7,12 @@ export type ApplyTranslationsResult = {
   failedSegmentIds: string[];
 };
 
+export type TranslationDomState = {
+  hasTranslations: boolean;
+  taskId?: string;
+  visibility?: "visible" | "hidden";
+};
+
 export function insertPendingTranslations(
   anchors: AnchorRegistry,
   taskId: string,
@@ -114,6 +120,21 @@ export function removeTranslations(taskId?: string): void {
   for (const node of translationNodes(taskId)) {
     node.remove();
   }
+}
+
+export function getTranslationDomState(taskId?: string): TranslationDomState {
+  const nodes = translationNodes(taskId);
+  if (nodes.length === 0) {
+    return { hasTranslations: false };
+  }
+
+  return {
+    hasTranslations: true,
+    taskId: taskId ?? nodes[0]?.dataset.yoyoTaskId,
+    visibility: nodes.every((node) => node.dataset.yoyoHidden === "true")
+      ? "hidden"
+      : "visible",
+  };
 }
 
 function translationNodes(taskId?: string): HTMLElement[] {
