@@ -93,15 +93,21 @@ async function reportVisibleLazySegments(): Promise<void> {
     return;
   }
 
+  const response = await Promise.resolve(
+    sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
+      type: "enqueueLazySegments",
+      taskId,
+      segmentIds,
+    }),
+  ).catch(() => undefined);
+
+  if (!response || response.type !== "taskProgress") {
+    return;
+  }
+
   for (const segmentId of segmentIds) {
     reportedLazySegmentIds.add(segmentId);
   }
-
-  await Promise.resolve(sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
-    type: "enqueueLazySegments",
-    taskId,
-    segmentIds,
-  })).catch(() => undefined);
 }
 
 function startLazySegmentReporting(taskId: string): void {

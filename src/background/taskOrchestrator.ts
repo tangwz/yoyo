@@ -5,8 +5,15 @@ import type { ProviderProfile } from "@/provider/types";
 import { splitSegmentsIntoBatches } from "@/translation/batch";
 import { SessionTranslationCache } from "@/translation/cache";
 import { createCacheKey, serializeCacheKey } from "@/translation/hash";
-import { parseTranslationBatchResult } from "@/translation/jsonResult";
-import { buildTranslationPrompt, translationPromptVersion } from "@/translation/prompt";
+import {
+  createStreamingTranslationResultParser,
+  parseTranslationBatchResult,
+} from "@/translation/jsonResult";
+import {
+  buildStreamingTranslationPrompt,
+  buildTranslationPrompt,
+  translationPromptVersion,
+} from "@/translation/prompt";
 import { isTerminalTaskState } from "@/translation/types";
 import type {
   CancelReason,
@@ -27,7 +34,8 @@ const rateLimitBackoffMs = 250;
 
 export type TranslationTaskOrchestratorDependencies = {
   getActiveProfile: () => Promise<ProviderProfile | undefined>;
-  provider: Pick<OpenAiCompatibleProvider, "generateText">;
+  provider: Pick<OpenAiCompatibleProvider, "generateText"> &
+    Partial<Pick<OpenAiCompatibleProvider, "streamText">>;
   sendToContent: (tabId: number, message: ContentRequest) => Promise<ContentResponse>;
   emitProgress?: (progress: TranslationProgress) => void | Promise<void>;
   now: () => number;
@@ -60,6 +68,8 @@ type RunningTask = {
   context?: TaskTranslationContext;
   currentConcurrency: number;
   consecutiveSuccessfulBatches: number;
+  activeProviderRequests: number;
+  providerSlotWaiters: Array<() => void>;
 };
 
 type TranslationBatchInput = TaskTranslationContext & {
@@ -212,6 +222,8 @@ export class TranslationTaskOrchestrator {
       inFlightSegmentIds: new Set(),
       currentConcurrency: defaultConcurrency,
       consecutiveSuccessfulBatches: 0,
+      activeProviderRequests: 0,
+      providerSlotWaiters: [],
       progress: {
         taskId,
         state: "collecting",
@@ -364,15 +376,103 @@ export class TranslationTaskOrchestrator {
   }
 
   private async requestAndApplyBatch(input: TranslationBatchInput): Promise<PageSegment[]> {
-    const response = await this.dependencies.provider.generateText({
-      profile: input.profile,
-      prompt: buildTranslationPrompt({
-        sourceLanguage: input.sourceLanguage,
-        targetLanguage: input.targetLanguage,
-        segments: input.segments,
-      }),
-      abortSignal: input.task.controller.signal,
-    });
+    if (this.dependencies.provider.streamText) {
+      const streamingResult = await this.requestAndApplyStreamingBatch(input);
+      if (streamingResult) {
+        return streamingResult;
+      }
+    }
+
+    return this.requestAndApplyBufferedBatch(input);
+  }
+
+  private async requestAndApplyStreamingBatch(
+    input: TranslationBatchInput,
+  ): Promise<PageSegment[] | undefined> {
+    const streamText = this.dependencies.provider.streamText;
+    if (!streamText) {
+      return undefined;
+    }
+
+    const parser = createStreamingTranslationResultParser(
+      input.segments.map((segment) => segment.id),
+    );
+    const appliedRepresentativeIds = new Set<string>();
+    let sawValidItem = false;
+    let acquiredProviderSlot = false;
+
+    try {
+      if (!(await this.acquireProviderRequestSlot(input.task))) {
+        return [];
+      }
+      acquiredProviderSlot = true;
+
+      for await (const chunk of streamText({
+        profile: input.profile,
+        prompt: buildStreamingTranslationPrompt({
+          sourceLanguage: input.sourceLanguage,
+          targetLanguage: input.targetLanguage,
+          segments: input.segments,
+        }),
+        abortSignal: input.task.controller.signal,
+      })) {
+        if (this.isTaskCancelled(input.task)) {
+          return [];
+        }
+
+        for (const item of parser.push(chunk.text)) {
+          sawValidItem = true;
+          if (await this.applyAndCacheRepresentativeItem(input, item)) {
+            appliedRepresentativeIds.add(item.segmentId);
+          }
+        }
+      }
+
+      for (const item of parser.finish().items) {
+        sawValidItem = true;
+        if (await this.applyAndCacheRepresentativeItem(input, item)) {
+          appliedRepresentativeIds.add(item.segmentId);
+        }
+      }
+
+      return input.segments.filter((segment) => !appliedRepresentativeIds.has(segment.id));
+    } catch (error) {
+      if (this.isTaskCancelled(input.task)) {
+        return [];
+      }
+
+      if (!sawValidItem) {
+        await this.handleBatchError(input.task, error);
+        return undefined;
+      }
+
+      return input.segments.filter((segment) => !appliedRepresentativeIds.has(segment.id));
+    } finally {
+      if (acquiredProviderSlot) {
+        this.releaseProviderRequestSlot(input.task);
+      }
+    }
+  }
+
+  private async requestAndApplyBufferedBatch(input: TranslationBatchInput): Promise<PageSegment[]> {
+    if (!(await this.acquireProviderRequestSlot(input.task))) {
+      return [];
+    }
+
+    let response: Awaited<ReturnType<TranslationTaskOrchestratorDependencies["provider"]["generateText"]>>;
+    try {
+      response = await this.dependencies.provider.generateText({
+        profile: input.profile,
+        prompt: buildTranslationPrompt({
+          sourceLanguage: input.sourceLanguage,
+          targetLanguage: input.targetLanguage,
+          segments: input.segments,
+        }),
+        abortSignal: input.task.controller.signal,
+      });
+    } finally {
+      this.releaseProviderRequestSlot(input.task);
+    }
 
     if (this.isTaskCancelled(input.task)) {
       return [];
@@ -398,6 +498,22 @@ export class TranslationTaskOrchestrator {
 
     const missingIds = new Set(parsed.missingSegmentIds);
     return input.segments.filter((segment) => missingIds.has(segment.id));
+  }
+
+  private async applyAndCacheRepresentativeItem(
+    input: TranslationBatchInput,
+    item: TranslationResultItem,
+  ): Promise<boolean> {
+    const fanOutItems = this.fanOutTranslationItem(item, input.fanOutGroups);
+    const appliedItems = await this.applyTranslations(input.task, fanOutItems);
+    if (appliedItems.length === 0) {
+      return false;
+    }
+
+    await this.cacheAppliedGroups(input, [item], appliedItems);
+    const appliedIds = new Set(appliedItems.map((appliedItem) => appliedItem.segmentId));
+    const group = input.fanOutGroups.get(item.segmentId) ?? [];
+    return group.length > 0 && group.every((segment) => appliedIds.has(segment.id));
   }
 
   private fanOutTranslationItem(
@@ -515,9 +631,31 @@ export class TranslationTaskOrchestrator {
     worker: (batch: PageSegment[]) => Promise<void>,
   ): Promise<void> {
     let nextIndex = 0;
+    let activeCount = 0;
+    const waiters: Array<() => void> = [];
+    const wakeWorkers = () => {
+      for (const wake of waiters.splice(0)) {
+        wake();
+      }
+    };
+    const waitForCapacity = () =>
+      new Promise<void>((resolve) => {
+        waiters.push(resolve);
+      });
 
-    const runNext = async (): Promise<void> => {
+    const runNext = async (workerIndex: number): Promise<void> => {
       while (!this.isTaskCancelled(task)) {
+        while (
+          !this.isTaskCancelled(task) &&
+          (workerIndex >= task.currentConcurrency || activeCount >= task.currentConcurrency)
+        ) {
+          if (workerIndex >= task.currentConcurrency) {
+            return;
+          }
+
+          await waitForCapacity();
+        }
+
         const index = nextIndex;
         nextIndex += 1;
         const batch = batches[index];
@@ -526,12 +664,20 @@ export class TranslationTaskOrchestrator {
           return;
         }
 
-        await worker(batch);
+        activeCount += 1;
+        try {
+          await worker(batch);
+        } finally {
+          activeCount -= 1;
+          wakeWorkers();
+        }
       }
     };
 
     await Promise.all(
-      Array.from({ length: Math.min(task.currentConcurrency, batches.length) }, () => runNext()),
+      Array.from({ length: Math.min(task.currentConcurrency, batches.length) }, (_value, index) =>
+        runNext(index),
+      ),
     );
   }
 
@@ -539,7 +685,34 @@ export class TranslationTaskOrchestrator {
     if (error instanceof ProviderError && error.code === "rateLimited") {
       task.currentConcurrency = minConcurrency;
       task.consecutiveSuccessfulBatches = 0;
+      this.wakeProviderRequestWaiters(task);
       await new Promise((resolve) => globalThis.setTimeout(resolve, rateLimitBackoffMs));
+    }
+  }
+
+  private async acquireProviderRequestSlot(task: RunningTask): Promise<boolean> {
+    while (!this.isTaskCancelled(task) && task.activeProviderRequests >= task.currentConcurrency) {
+      await new Promise<void>((resolve) => {
+        task.providerSlotWaiters.push(resolve);
+      });
+    }
+
+    if (this.isTaskCancelled(task)) {
+      return false;
+    }
+
+    task.activeProviderRequests += 1;
+    return true;
+  }
+
+  private releaseProviderRequestSlot(task: RunningTask): void {
+    task.activeProviderRequests = Math.max(0, task.activeProviderRequests - 1);
+    this.wakeProviderRequestWaiters(task);
+  }
+
+  private wakeProviderRequestWaiters(task: RunningTask): void {
+    for (const wake of task.providerSlotWaiters.splice(0)) {
+      wake();
     }
   }
 

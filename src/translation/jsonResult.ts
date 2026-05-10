@@ -6,6 +6,11 @@ export type ParsedTranslationBatchResult = {
   warnings: string[];
 };
 
+export type StreamingTranslationResultParser = {
+  push: (chunk: string) => TranslationResultItem[];
+  finish: () => ParsedTranslationBatchResult;
+};
+
 export function parseTranslationBatchResult(
   outputText: string,
   expectedSegmentIds: readonly string[],
@@ -156,5 +161,78 @@ function normalizeTranslationResultItem(
   return {
     segmentId: record.id as string,
     translatedText: record.text as string,
+  };
+}
+
+export function createStreamingTranslationResultParser(
+  expectedSegmentIds: readonly string[],
+): StreamingTranslationResultParser {
+  const expectedIds = new Set(expectedSegmentIds);
+  const seenIds = new Set<string>();
+  const warnings: string[] = [];
+  let buffer = "";
+  let lineNumber = 0;
+
+  function parseLine(line: string): TranslationResultItem | undefined {
+    lineNumber += 1;
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      warnings.push(`Ignoring invalid JSON at line ${lineNumber}.`);
+      return undefined;
+    }
+
+    if (!isTranslationResultItem(parsed)) {
+      warnings.push(`Ignoring invalid item at line ${lineNumber}.`);
+      return undefined;
+    }
+
+    const item = normalizeTranslationResultItem(parsed);
+    if (!expectedIds.has(item.segmentId)) {
+      warnings.push(`Ignoring unknown segmentId "${item.segmentId}".`);
+      return undefined;
+    }
+
+    if (seenIds.has(item.segmentId)) {
+      warnings.push(`Ignoring duplicate segmentId "${item.segmentId}".`);
+      return undefined;
+    }
+
+    seenIds.add(item.segmentId);
+    return item;
+  }
+
+  return {
+    push(chunk: string) {
+      buffer += chunk;
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      return lines.flatMap((line) => {
+        const item = parseLine(line);
+        return item ? [item] : [];
+      });
+    },
+    finish() {
+      const items: TranslationResultItem[] = [];
+      if (buffer.trim().length > 0) {
+        const item = parseLine(buffer);
+        if (item) {
+          items.push(item);
+        }
+      }
+      buffer = "";
+
+      return {
+        items,
+        missingSegmentIds: expectedSegmentIds.filter((segmentId) => !seenIds.has(segmentId)),
+        warnings,
+      };
+    },
   };
 }

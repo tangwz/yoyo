@@ -37,3 +37,10 @@ export type GenerateTextResponse = {
   text: string;
   model: string;
 };
+
+export type StreamTextRequest = GenerateTextRequest;
+
+export type StreamTextChunk = {
+  text: string;
+  model?: string;
+};

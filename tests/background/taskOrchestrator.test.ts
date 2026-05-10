@@ -4,7 +4,12 @@ import {
   type TranslationTaskOrchestratorDependencies,
 } from "@/background/taskOrchestrator";
 import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
-import type { GenerateTextRequest, ProviderProfile } from "@/provider/types";
+import { ProviderError } from "@/provider/errors";
+import type {
+  GenerateTextRequest,
+  ProviderProfile,
+  StreamTextRequest,
+} from "@/provider/types";
 import type { PageSegment } from "@/translation/types";
 
 function providerProfile(overrides: Partial<ProviderProfile> = {}): ProviderProfile {
@@ -38,6 +43,9 @@ function createOrchestrator(
   const generateText = vi.fn<
     (request: GenerateTextRequest) => Promise<{ text: string; model: string }>
   >();
+  const streamText = vi.fn<
+    (request: StreamTextRequest) => AsyncGenerator<{ text: string }>
+  >();
   const getActiveProfile = vi.fn<() => Promise<ProviderProfile | undefined>>(
     async () => providerProfile(),
   );
@@ -49,7 +57,7 @@ function createOrchestrator(
 
   const orchestrator = new TranslationTaskOrchestrator({
     getActiveProfile,
-    provider: { generateText },
+    provider: { generateText, streamText },
     sendToContent,
     now,
     createTaskId,
@@ -59,11 +67,19 @@ function createOrchestrator(
   return {
     orchestrator,
     generateText,
+    streamText,
     getActiveProfile,
     sendToContent,
     now,
     createTaskId,
   };
+}
+
+async function* streamChunks(chunks: readonly string[]): AsyncGenerator<{ text: string }> {
+  for (const text of chunks) {
+    await Promise.resolve();
+    yield { text };
+  }
 }
 
 describe("TranslationTaskOrchestrator", () => {
@@ -623,6 +639,135 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("applies streamed translation items as soon as each record is parsed", async () => {
+    const { orchestrator, generateText, streamText, sendToContent } = createOrchestrator();
+    const applyEvents: string[] = [];
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({ id: "segment-1", sourceText: "One." }),
+            segment({ id: "segment-2", order: 2, sourceText: "Two.", textHash: "hash-2" }),
+          ],
+        };
+      }
+
+      if (message.type !== "applyTranslations") {
+        throw new Error(`Unexpected content message: ${message.type}`);
+      }
+
+      applyEvents.push(message.items.map((item) => item.segmentId).join(","));
+      return { type: "contentActionResult", success: true };
+    });
+    streamText.mockReturnValue(
+      streamChunks([
+        '{"id":"segment-1","text":"一。"}\n',
+        '{"id":"segment-2","text":"二。"}\n',
+      ]),
+    );
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    expect(generateText).not.toHaveBeenCalled();
+    expect(streamText).toHaveBeenCalledTimes(1);
+    expect(applyEvents).toEqual(["segment-1", "segment-2"]);
+    expect(progress).toMatchObject({
+      state: "completed",
+      translated: 2,
+      failed: 0,
+    });
+  });
+
+  it("falls back to non-streaming translation when streamText is unavailable", async () => {
+    const fallbackGenerateText = vi.fn(async () => ({
+      text: JSON.stringify({
+        items: [{ id: "segment-1", text: "你好，世界。" }],
+      }),
+      model: "gpt-4.1-mini",
+    }));
+    const { orchestrator, streamText, sendToContent } = createOrchestrator({
+      provider: {
+        generateText: fallbackGenerateText,
+      },
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [segment()],
+        };
+      }
+      return { type: "contentActionResult", success: true };
+    });
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    expect(streamText).not.toHaveBeenCalled();
+    expect(fallbackGenerateText).toHaveBeenCalledTimes(1);
+    expect(progress).toMatchObject({
+      state: "completed",
+      translated: 1,
+    });
+  });
+
+  it("retries only missing streamed items after a stream fails mid-batch", async () => {
+    const { orchestrator, generateText, streamText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({ id: "segment-1", sourceText: "One." }),
+            segment({ id: "segment-2", order: 2, sourceText: "Two.", textHash: "hash-2" }),
+          ],
+        };
+      }
+      return { type: "contentActionResult", success: true };
+    });
+    streamText.mockImplementation(() =>
+      (async function* () {
+        yield { text: '{"id":"segment-1","text":"一。"}\n' };
+        throw new Error("stream failed");
+      })(),
+    );
+    generateText.mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ id: "segment-2", text: "二。" }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    expect(generateText).toHaveBeenCalled();
+    expect(generateText.mock.calls.at(-1)?.[0].prompt).toContain("segment-2");
+    expect(generateText.mock.calls.at(-1)?.[0].prompt).not.toContain("segment-1");
+    expect(progress).toMatchObject({
+      state: "completed",
+      translated: 2,
+      failed: 0,
+    });
+  });
+
   it("does not cancel a completed task when a same-tab task starts later", async () => {
     const { orchestrator, generateText, sendToContent } = createOrchestrator({
       createTaskId: vi.fn().mockReturnValueOnce("task-1").mockReturnValueOnce("task-2"),
@@ -961,6 +1106,85 @@ describe("TranslationTaskOrchestrator", () => {
       total: 3,
       translated: 1,
       failed: 2,
+    });
+  });
+
+  it("waits for the second active request before draining more batches after rate limiting", async () => {
+    vi.useFakeTimers();
+    const generateText = vi.fn<
+      (request: GenerateTextRequest) => Promise<{ text: string; model: string }>
+    >();
+    const { orchestrator, sendToContent } = createOrchestrator({
+      provider: { generateText },
+    });
+    let releaseSecondRequest: (() => void) | undefined;
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: Array.from({ length: 21 }, (_value, index) =>
+            segment({
+              id: `segment-${index + 1}`,
+              order: index + 1,
+              sourceText: `Paragraph ${index + 1}.`,
+              textHash: `hash-${index + 1}`,
+            }),
+          ),
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText
+      .mockRejectedValueOnce(new ProviderError("rateLimited", "Provider rate limit exceeded.", 429))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseSecondRequest = () =>
+              resolve({
+                text: JSON.stringify({
+                  items: Array.from({ length: 10 }, (_value, index) => ({
+                    id: `segment-${index + 11}`,
+                    text: `Translated ${index + 11}`,
+                  })),
+                }),
+                model: "gpt-4.1-mini",
+              });
+          }),
+      )
+      .mockImplementation(async (request) => {
+        const ids = Array.from({ length: 21 }, (_value, index) => `segment-${index + 1}`)
+          .filter((id) => request.prompt.includes(id));
+        return {
+          text: JSON.stringify({
+            items: ids.map((id) => ({ id, text: `Translated ${id}` })),
+          }),
+          model: "gpt-4.1-mini",
+        };
+      });
+
+    const running = orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "fullPage",
+    });
+
+    await vi.waitFor(() => {
+      expect(generateText).toHaveBeenCalledTimes(2);
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(generateText).toHaveBeenCalledTimes(2);
+
+    releaseSecondRequest?.();
+    await vi.runAllTimersAsync();
+
+    await expect(running).resolves.toMatchObject({
+      state: "completed",
+      translated: 21,
+      failed: 0,
     });
   });
 });
