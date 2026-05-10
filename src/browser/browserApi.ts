@@ -60,10 +60,10 @@ export async function openOptionsPage(input: OpenOptionsPageInput = {}): Promise
     params.set("source", input.source);
   }
 
-  if (params.size > 0) {
-    await openRoutedOptionsPage(
-      browser.runtime.getURL(`/options.html?${params.toString()}` as never),
-    );
+  const query = params.toString();
+
+  if (query.length > 0) {
+    await openRoutedOptionsPage(browser.runtime.getURL(`/options.html?${query}` as never));
     return;
   }
 

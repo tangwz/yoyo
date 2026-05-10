@@ -64,6 +64,24 @@ describe("browserApi", () => {
     expect(updateTab).not.toHaveBeenCalled();
   });
 
+  it("keeps routed options metadata when URLSearchParams.size is unavailable", async () => {
+    queryTabs.mockResolvedValue([]);
+    const sizeSpy = vi
+      .spyOn(URLSearchParams.prototype, "size", "get")
+      .mockReturnValue(undefined as unknown as number);
+
+    try {
+      await openOptionsPage({ section: "provider", source: "first-run" });
+    } finally {
+      sizeSpy.mockRestore();
+    }
+
+    expect(runtimeOpenOptionsPage).not.toHaveBeenCalled();
+    expect(createTab).toHaveBeenCalledWith({
+      url: "chrome-extension://id/options.html?section=provider&source=first-run",
+    });
+  });
+
   it("reuses an existing options tab when routing input is provided", async () => {
     queryTabs.mockResolvedValue([{ id: 42, windowId: 7 }]);
 
