@@ -1,5 +1,9 @@
 import { onTranslatePageMenuClick, registerContextMenus } from "@/background/contextMenu";
 import { notifyPageCannotTranslate, notifyProviderMissing } from "@/background/notifications";
+import {
+  buildProviderStatusResponse,
+  selectReadyProviderProfile,
+} from "@/background/providerStatus";
 import { TranslationTaskOrchestrator } from "@/background/taskOrchestrator";
 import { openOptionsPage } from "@/browser/browserApi";
 import type {
@@ -10,11 +14,6 @@ import type {
 } from "@/messaging/contracts";
 import { addRuntimeMessageListener, sendTabMessage } from "@/messaging/runtime";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
-import {
-  evaluateProviderReadiness,
-  formatProviderLabel,
-  resolveReadyProviderProfile,
-} from "@/provider/readiness";
 import type { ProviderProfile } from "@/provider/types";
 import { createStorageRepositories } from "@/storage/repositories";
 
@@ -43,7 +42,7 @@ export default defineBackground(() => {
       listProfiles(),
     ]);
 
-    return resolveReadyProviderProfile(profiles, activeProviderId);
+    return selectReadyProviderProfile(profiles, activeProviderId);
   }
 
   const orchestrator = new TranslationTaskOrchestrator({
@@ -123,16 +122,13 @@ export default defineBackground(() => {
             storage.providers.getActiveProviderId(),
             listProfiles(),
           ]);
-          const readiness = evaluateProviderReadiness(profiles, activeProviderId);
-          return {
-            type: "providerStatus",
-            configured: readiness.readiness === "ready",
-            readiness: readiness.readiness,
-            providerLabel: formatProviderLabel(readiness.profile),
-          };
+          return buildProviderStatusResponse(profiles, activeProviderId);
         }
         case "openOptions":
-          await openOptionsPage();
+          await openOptionsPage({
+            section: request.section,
+            source: request.source,
+          });
           return { type: "backgroundActionResult", success: true };
         default:
           return { type: "backgroundError", message: "Unknown background message." };

@@ -1,4 +1,5 @@
 import { browser } from "wxt/browser";
+import type { OptionsOpenSource, OptionsSection } from "@/messaging/contracts";
 
 export type ActiveTab = {
   id: number;
@@ -23,7 +24,29 @@ export async function getActiveTab(): Promise<ActiveTab | undefined> {
   };
 }
 
-export async function openOptionsPage(): Promise<void> {
+export type OpenOptionsPageInput = {
+  section?: OptionsSection;
+  source?: OptionsOpenSource;
+};
+
+export async function openOptionsPage(input: OpenOptionsPageInput = {}): Promise<void> {
+  const params = new URLSearchParams();
+
+  if (input.section) {
+    params.set("section", input.section);
+  }
+
+  if (input.source) {
+    params.set("source", input.source);
+  }
+
+  if (params.size > 0) {
+    await browser.tabs.create({
+      url: browser.runtime.getURL(`/options.html?${params.toString()}` as never),
+    });
+    return;
+  }
+
   await browser.runtime.openOptionsPage();
 }
 
