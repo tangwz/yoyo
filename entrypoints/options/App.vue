@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 
 import { ProviderError, type ProviderErrorCode } from "@/provider/errors";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
@@ -24,6 +24,12 @@ const testState = ref<"untested" | "testing" | "success" | "failed">("untested")
 const testMessage = ref("");
 const isTestInFlight = ref(false);
 const testRequestId = ref(0);
+const providerSectionRef = ref<HTMLElement>();
+const presetSelectRef = ref<HTMLSelectElement>();
+const routeParams = new URLSearchParams(globalThis.location.search);
+const shouldLandOnProvider = routeParams.get("section") === "provider";
+const isFirstRunProviderLanding =
+  shouldLandOnProvider && routeParams.get("source") === "first-run";
 
 const providerErrorMessages: Record<ProviderErrorCode, string> = {
   aborted: "测试已取消。",
@@ -164,7 +170,20 @@ async function loadActiveProviderProfile() {
   }
 }
 
-onMounted(loadActiveProviderProfile);
+async function focusProviderLanding() {
+  if (!shouldLandOnProvider) {
+    return;
+  }
+
+  await nextTick();
+  providerSectionRef.value?.scrollIntoView({ block: "start", behavior: "smooth" });
+  presetSelectRef.value?.focus();
+}
+
+onMounted(async () => {
+  await loadActiveProviderProfile();
+  await focusProviderLanding();
+});
 
 async function saveProviderProfile() {
   saveState.value = "idle";
@@ -247,17 +266,25 @@ async function testConnection() {
 
       <div class="settings-content">
         <section
+          ref="providerSectionRef"
           class="settings-section"
           aria-labelledby="provider-heading"
         >
           <h2 id="provider-heading">
             Provider
           </h2>
+          <p
+            v-if="isFirstRunProviderLanding"
+            class="section-note"
+          >
+            首次使用前，请先配置模型服务。
+          </p>
 
           <div class="settings-grid">
             <label class="field">
               <span>Preset</span>
               <select
+                ref="presetSelectRef"
                 v-model="selectedPresetId"
                 @change="applySelectedPreset"
               >

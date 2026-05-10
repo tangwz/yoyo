@@ -13,6 +13,7 @@ const saveProfile = vi.fn();
 const setActiveProviderId = vi.fn();
 const listProfiles = vi.fn();
 const getActiveProviderId = vi.fn();
+const originalScrollIntoView = Element.prototype.scrollIntoView;
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -44,6 +45,7 @@ function mockStorageRepositories() {
 describe("options app", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.history.pushState({}, "", "/options.html");
     listProfiles.mockResolvedValue([]);
     getActiveProviderId.mockResolvedValue(undefined);
     mockStorageRepositories();
@@ -51,6 +53,8 @@ describe("options app", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    Element.prototype.scrollIntoView = originalScrollIntoView;
+    window.history.pushState({}, "", "/options.html");
   });
 
   it("renders provider, translation, privacy, and advanced settings", () => {
@@ -113,6 +117,29 @@ describe("options app", () => {
       "0.1",
     );
     expect(screen.getByRole("spinbutton", { name: "Max Tokens" })).toHaveValue(4096);
+  });
+
+  it("lands on the provider section from first-run options routing", async () => {
+    const scrollIntoView = vi.fn();
+    window.history.pushState(
+      {},
+      "",
+      "/options.html?section=provider&source=first-run",
+    );
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    render(OptionsApp);
+
+    expect(screen.getByText("首次使用前，请先配置模型服务。")).toBeVisible();
+
+    const providerSection = screen.getByRole("heading", { name: "Provider" }).closest("section");
+    const presetSelect = screen.getByRole("combobox", { name: "Preset" });
+
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
+      expect(scrollIntoView.mock.instances[0]).toBe(providerSection);
+      expect(presetSelect).toHaveFocus();
+    });
   });
 
   it("loads the active provider profile into the settings form", async () => {
