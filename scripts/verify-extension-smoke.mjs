@@ -13,12 +13,17 @@ const detachBrowser = process.env.YOYO_SMOKE_DETACH_BROWSER === "1";
 const promptProbe = {
   connectionTestPrompt: "",
   translationPrompts: [],
+  requests: [],
 };
 
 function assert(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+function delay(ms) {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
 function readJsonBody(request) {
@@ -48,6 +53,37 @@ function extractSegmentIds(prompt) {
   return [...ids];
 }
 
+function countProviderRequests() {
+  return promptProbe.requests.length;
+}
+
+function lastProviderRequest() {
+  return promptProbe.requests.at(-1);
+}
+
+function assertProviderRequestCount(expected, message) {
+  const actual = countProviderRequests();
+  assert(actual === expected, `${message} Expected ${expected}, got ${actual}.`);
+}
+
+async function assertProviderRequestCountStays(expected, message, durationMs = 500) {
+  const deadline = Date.now() + durationMs;
+
+  while (Date.now() < deadline) {
+    assertProviderRequestCount(expected, message);
+    await delay(50);
+  }
+
+  assertProviderRequestCount(expected, message);
+}
+
+function assertNoProviderPromptIncludes(snippets, message) {
+  const leakedSnippet = promptProbe.requests
+    .map((request) => request.prompt)
+    .find((prompt) => snippets.some((snippet) => prompt.includes(snippet)));
+  assert(!leakedSnippet, message);
+}
+
 function createMockProviderServer() {
   const server = createServer(async (request, response) => {
     if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
@@ -60,6 +96,10 @@ function createMockProviderServer() {
       const body = await readJsonBody(request);
       const prompt = body.messages?.[0]?.content ?? "";
       const authorization = request.headers.authorization ?? "";
+      promptProbe.requests.push({
+        prompt,
+        authorization,
+      });
 
       if (authorization === "Bearer smoke-failing-key") {
         response.writeHead(401, { "content-type": "application/json" });
@@ -224,6 +264,41 @@ async function getExtensionServiceWorker(context) {
   return { extensionId: match[1], serviceWorker };
 }
 
+async function findExtensionPage(context, extensionId, pathPrefix, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+
+  while (Date.now() < deadline) {
+    const page = context
+      .pages()
+      .find((candidate) =>
+        candidate.url().startsWith(`chrome-extension://${extensionId}/${pathPrefix}`),
+      );
+    if (page) {
+      return page;
+    }
+
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+  }
+
+  return undefined;
+}
+
+async function openActionPopup(serviceWorker, windowId) {
+  const result = await serviceWorker.evaluate(async (targetWindowId) => {
+    try {
+      await chrome.action.openPopup({ windowId: targetWindowId });
+      return { ok: true };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }, windowId);
+
+  assert(result.ok, `Could not open extension action popup: ${result.message}`);
+}
+
 async function main() {
   assert(existsSync(extensionPath), "Missing build/chrome-mv3. Run pnpm build first.");
 
@@ -281,20 +356,43 @@ async function main() {
     }
 
     const { extensionId, serviceWorker } = await getExtensionServiceWorker(context);
-    const optionsPage = await context.newPage();
-    await optionsPage.goto(`chrome-extension://${extensionId}/options.html`);
+    assertProviderRequestCount(0, "Provider received a request before any UI interaction.");
+
+    const firstRunPopupPage = await context.newPage();
+    await firstRunPopupPage.goto(`chrome-extension://${extensionId}/popup.html`);
+    await firstRunPopupPage
+      .getByText("需要先配置 Provider，正在打开设置页面...")
+      .waitFor({ timeout: 5000 });
+    await firstRunPopupPage.getByRole("button", { name: "打开设置" }).waitFor({ timeout: 5000 });
+    await assertProviderRequestCountStays(0, "First-run popup sent a provider request.");
+
+    const optionsPage = await findExtensionPage(context, extensionId, "options.html");
+    assert(optionsPage, "First-run popup did not open the options page.");
+    assert(
+      optionsPage.url().includes("options.html") &&
+        optionsPage.url().includes("section=provider") &&
+        optionsPage.url().includes("source=first-run"),
+      `First-run options URL did not include provider routing params: ${optionsPage.url()}`,
+    );
+    await firstRunPopupPage.close().catch(() => undefined);
 
     await optionsPage.getByLabel("Base URL").fill(providerServer.baseUrl);
     await optionsPage.getByLabel("API Key").fill("smoke-test-key");
     await optionsPage.getByLabel("Text Model").fill("mock-model");
     await optionsPage.getByRole("button", { name: "保存翻译服务" }).click();
     await optionsPage.getByText("已保存翻译服务。").waitFor({ timeout: 5000 });
+    await assertProviderRequestCountStays(0, "Saving provider settings sent a provider request.");
 
     await optionsPage.getByRole("button", { name: "测试连接" }).click();
     await optionsPage.getByText("测试成功。").waitFor({ timeout: 5000 });
     assert(
       promptProbe.connectionTestPrompt === "Reply with exactly: ok",
       "Provider test did not use the fixed connection-test prompt.",
+    );
+    assertProviderRequestCount(1, "Provider test should be the first and only provider request.");
+    assert(
+      lastProviderRequest()?.prompt === "Reply with exactly: ok",
+      "Provider test request did not contain the fixed connection-test prompt.",
     );
 
     await optionsPage.getByLabel("API Key").fill("smoke-failing-key");
@@ -327,22 +425,59 @@ async function main() {
       "Provider profile data leaked into chrome.storage.sync.",
     );
 
+    const beforeArticleLoadRequestCount = countProviderRequests();
     const articlePage = detachBrowser
       ? (context.pages().find((page) => page !== optionsPage && page.url() === "about:blank") ??
         (await context.newPage()))
       : await context.newPage();
     await articlePage.goto(articleServer.url);
     await articlePage.waitForSelector("main p");
+    await assertProviderRequestCountStays(
+      beforeArticleLoadRequestCount,
+      "Loading a readable article sent a provider request.",
+    );
 
-    const articleTabId = await serviceWorker.evaluate(async (targetUrl) => {
+    const articleTab = await serviceWorker.evaluate(async (targetUrl) => {
       const tabs = await chrome.tabs.query({});
       const tab = tabs.find((candidate) => candidate.url === targetUrl);
       if (!tab?.id) {
         throw new Error(`No article tab found for ${targetUrl}`);
       }
-      return tab.id;
+      return { id: tab.id, windowId: tab.windowId };
     }, articlePage.url());
 
+    const beforePopupRequestCount = countProviderRequests();
+    await articlePage.bringToFront();
+    await openActionPopup(serviceWorker, articleTab.windowId);
+    await assertProviderRequestCountStays(
+      beforePopupRequestCount,
+      "Opening the action popup for a readable article sent a provider request.",
+    );
+
+    const beforeEstimateRequestCount = countProviderRequests();
+    const estimateResponse = await optionsPage.evaluate(async (targetTabId) => {
+      return chrome.tabs.sendMessage(targetTabId, {
+        type: "estimatePage",
+      });
+    }, articleTab.id);
+    assert(
+      estimateResponse?.type === "estimatePageResult",
+      "Page estimate did not return an estimate result.",
+    );
+    await assertProviderRequestCountStays(
+      beforeEstimateRequestCount,
+      "Page estimate sent a provider request.",
+    );
+    assertNoProviderPromptIncludes(
+      [
+        "Smoke test title",
+        "The first paragraph should be translated by the extension.",
+        "The second paragraph keeps the page realistic.",
+      ],
+      "Article text reached the provider before explicit translation.",
+    );
+
+    const beforeTranslationRequestCount = countProviderRequests();
     await optionsPage.evaluate(async (targetTabId) => {
       await chrome.runtime.sendMessage({
         type: "translatePage",
@@ -350,7 +485,7 @@ async function main() {
         sourceLanguage: "auto",
         targetLanguage: "zh-CN",
       });
-    }, articleTabId);
+    }, articleTab.id);
 
     await articlePage
       .locator("[data-yoyo-translation]")
@@ -366,6 +501,35 @@ async function main() {
     assert(
       promptProbe.translationPrompts.length > 0,
       "No translation prompt reached the mock provider.",
+    );
+    assert(
+      countProviderRequests() > beforeTranslationRequestCount,
+      "Explicit translation did not increment provider request count.",
+    );
+    const translationRequests = promptProbe.requests.slice(beforeTranslationRequestCount);
+    assert(
+      translationRequests.some(
+        (request) =>
+          request.prompt.includes("Smoke test title") &&
+          request.prompt.includes("The first paragraph should be translated by the extension."),
+      ),
+      "Translation provider request did not include article text after explicit translation.",
+    );
+    const runtimeState = await optionsPage.evaluate(async (targetTabId) => {
+      return chrome.tabs.sendMessage(targetTabId, {
+        type: "getPageRuntimeState",
+      });
+    }, articleTab.id);
+    assert(
+      runtimeState?.type === "pageRuntimeState" && runtimeState.hasTranslations === true,
+      "Article tab did not report existing translations after injection.",
+    );
+    const beforeExistingPopupRequestCount = countProviderRequests();
+    await articlePage.bringToFront();
+    await openActionPopup(serviceWorker, articleTab.windowId);
+    await assertProviderRequestCountStays(
+      beforeExistingPopupRequestCount,
+      "Opening the action popup for existing translations sent a provider request.",
     );
     if (detachBrowser) {
       await optionsPage.close().catch(() => undefined);

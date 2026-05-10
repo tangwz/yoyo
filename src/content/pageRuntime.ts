@@ -3,6 +3,7 @@ import { collectPageSegments } from "@/content/domExtraction";
 import { isPageUrlSupported } from "@/content/domEligibility";
 import {
   applyTranslations,
+  getTranslationDomState,
   hideTranslations,
   insertPendingTranslations,
   removeTranslations,
@@ -81,9 +82,13 @@ export function removePageTranslations(taskId?: string): void {
 export function getPageRuntimeState(): {
   hasTranslations: boolean;
   taskId?: string;
+  visibility?: "visible" | "hidden";
 } {
+  const domState = getTranslationDomState(activeTaskId);
+
   return {
-    hasTranslations: document.querySelector("[data-yoyo-translation]") !== null,
-    taskId: activeTaskId,
+    hasTranslations: domState.hasTranslations,
+    taskId: domState.taskId ?? (domState.hasTranslations ? activeTaskId : undefined),
+    visibility: domState.visibility,
   };
 }

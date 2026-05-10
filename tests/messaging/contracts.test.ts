@@ -4,7 +4,10 @@ import type {
   BackgroundResponse,
   ContentRequest,
   ContentResponse,
+  OptionsOpenSource,
+  OptionsSection,
 } from "@/messaging/contracts";
+import type { ProviderReadiness } from "@/provider/readiness";
 
 describe("messaging contracts", () => {
   it("supports collecting page segments from the content entrypoint", () => {
@@ -56,10 +59,53 @@ describe("messaging contracts", () => {
     const response = {
       type: "providerStatus",
       configured: false,
+      readiness: "missingProvider",
       providerLabel: "未配置翻译服务",
+    } satisfies BackgroundResponse;
+    const readyResponse = {
+      type: "providerStatus",
+      configured: true,
+      readiness: "ready",
+      providerLabel: "Work Provider / api.example.com",
     } satisfies BackgroundResponse;
 
     expect(request.type).toBe("getProviderStatus");
     expect(response.configured).toBe(false);
+    expect(response.readiness).toBe("missingProvider");
+    expectTypeOf(response.readiness).toMatchTypeOf<ProviderReadiness>();
+    expect(readyResponse.configured).toBe(true);
+    expect(readyResponse.readiness).toBe("ready");
+    expect(readyResponse.providerLabel).toBe("Work Provider / api.example.com");
+  });
+
+  it("accepts options routing metadata in background requests", () => {
+    const section: OptionsSection = "provider";
+    const source: OptionsOpenSource = "first-run";
+    const requests = [
+      { type: "openOptions" },
+      { type: "openOptions", section },
+      { type: "openOptions", section, source },
+      { type: "openOptions", source: "popup" },
+      { type: "openOptions", source: "manual" },
+    ] satisfies BackgroundRequest[];
+
+    expect(requests).toEqual([
+      { type: "openOptions" },
+      { type: "openOptions", section: "provider" },
+      { type: "openOptions", section: "provider", source: "first-run" },
+      { type: "openOptions", source: "popup" },
+      { type: "openOptions", source: "manual" },
+    ]);
+  });
+
+  it("includes optional page translation visibility in runtime state responses", () => {
+    const response = {
+      type: "pageRuntimeState",
+      hasTranslations: true,
+      taskId: "task-1",
+      visibility: "hidden",
+    } satisfies ContentResponse;
+
+    expect(response.visibility).toBe("hidden");
   });
 });

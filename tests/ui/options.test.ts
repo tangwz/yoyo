@@ -13,6 +13,7 @@ const saveProfile = vi.fn();
 const setActiveProviderId = vi.fn();
 const listProfiles = vi.fn();
 const getActiveProviderId = vi.fn();
+const originalScrollIntoView = Element.prototype.scrollIntoView;
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -44,6 +45,7 @@ function mockStorageRepositories() {
 describe("options app", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.history.pushState({}, "", "/options.html");
     listProfiles.mockResolvedValue([]);
     getActiveProviderId.mockResolvedValue(undefined);
     mockStorageRepositories();
@@ -51,6 +53,8 @@ describe("options app", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    Element.prototype.scrollIntoView = originalScrollIntoView;
+    window.history.pushState({}, "", "/options.html");
   });
 
   it("renders provider, translation, privacy, and advanced settings", () => {
@@ -113,6 +117,29 @@ describe("options app", () => {
       "0.1",
     );
     expect(screen.getByRole("spinbutton", { name: "Max Tokens" })).toHaveValue(4096);
+  });
+
+  it("lands on the provider section from first-run options routing", async () => {
+    const scrollIntoView = vi.fn();
+    window.history.pushState(
+      {},
+      "",
+      "/options.html?section=provider&source=first-run",
+    );
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    render(OptionsApp);
+
+    expect(screen.getByText("首次使用前，请先配置模型服务。")).toBeVisible();
+
+    const providerSection = screen.getByRole("heading", { name: "Provider" }).closest("section");
+    const presetSelect = screen.getByRole("combobox", { name: "Preset" });
+
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
+      expect(scrollIntoView.mock.instances[0]).toBe(providerSection);
+      expect(presetSelect).toHaveFocus();
+    });
   });
 
   it("loads the active provider profile into the settings form", async () => {
@@ -202,6 +229,23 @@ describe("options app", () => {
     expect(await screen.findByText("已保存翻译服务。")).toBeVisible();
   });
 
+  it("normalizes known preset model casing before saving", async () => {
+    render(OptionsApp);
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "Preset" }), "openai");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), " GPT-4.1-MINI ");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Vision Model" }), " CUSTOM-VISION ");
+
+    await fireEvent.click(screen.getByRole("button", { name: "保存翻译服务" }));
+
+    expect(saveProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        textModel: "gpt-4.1-mini",
+        visionModel: "CUSTOM-VISION",
+      }),
+    );
+  });
+
   it("tests the current provider form with the fixed connection prompt without saving", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
@@ -236,12 +280,68 @@ describe("options app", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
       model: "deepseek-chat",
       messages: [{ role: "user", content: "Reply with exactly: ok" }],
-      temperature: 0.7,
-      max_tokens: 2048,
+      temperature: 0,
+      max_tokens: 32,
     });
     expect(saveProfile).not.toHaveBeenCalled();
     expect(setActiveProviderId).not.toHaveBeenCalled();
     expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
+  });
+
+  it("keeps the original text model when lower-case probing is rejected during a successful test", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("model not found", { status: 400 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "ok" } }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(OptionsApp);
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "Preset" }), "custom");
+    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "Custom-Model");
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
+    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue("Custom-Model");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("custom-model");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("Custom-Model");
+  });
+
+  it("tests MiMo mixed-case input using lower-case model casing without surfacing casing details", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "ok" } }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(OptionsApp);
+
+    await fireEvent.update(
+      screen.getByRole("textbox", { name: "Base URL" }),
+      "https://token-plan-cn.xiaomimimo.com/v1",
+    );
+    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "MiMo-V2.5");
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      model: "mimo-v2.5",
+      messages: [{ role: "user", content: "Reply with exactly: ok" }],
+      temperature: 0,
+      max_tokens: 32,
+    });
+    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue("mimo-v2.5");
+    expect(screen.queryByText(/大小写/)).not.toBeInTheDocument();
   });
 
   it("shows error feedback when testing the provider connection fails", async () => {
@@ -272,7 +372,7 @@ describe("options app", () => {
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "模型名或请求参数无效，请确认模型 ID 区分大小写。",
+      "模型名或请求参数无效，请检查后重试。",
     );
     expect(saveProfile).not.toHaveBeenCalled();
     expect(setActiveProviderId).not.toHaveBeenCalled();

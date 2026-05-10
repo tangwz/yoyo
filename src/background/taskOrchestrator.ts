@@ -72,6 +72,11 @@ export class TranslationTaskOrchestrator {
     input: TranslatePageInput,
   ): Promise<TranslationProgress> {
     try {
+      const profile = await this.dependencies.getActiveProfile();
+      if (!profile) {
+        return this.failTask(task, "No active provider profile.");
+      }
+
       const collectResponse = await this.dependencies.sendToContent(input.tabId, {
         type: "collectSegments",
         taskId: task.progress.taskId,
@@ -85,12 +90,6 @@ export class TranslationTaskOrchestrator {
       }
 
       const segments = collectResponse.segments;
-      const profile = await this.dependencies.getActiveProfile();
-      if (!profile) {
-        this.updateProgress(task, { total: segments.length });
-        return this.failTask(task, "No active provider profile.", segments.length);
-      }
-
       this.updateProgress(task, {
         state: "translating",
         total: segments.length,

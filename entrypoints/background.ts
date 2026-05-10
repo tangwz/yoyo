@@ -1,5 +1,10 @@
 import { onTranslatePageMenuClick, registerContextMenus } from "@/background/contextMenu";
 import { notifyPageCannotTranslate, notifyProviderMissing } from "@/background/notifications";
+import {
+  buildProviderStatusResponse,
+  getStoredProviderState,
+  selectReadyProviderProfile,
+} from "@/background/providerStatus";
 import { TranslationTaskOrchestrator } from "@/background/taskOrchestrator";
 import { openOptionsPage } from "@/browser/browserApi";
 import type {
@@ -24,18 +29,6 @@ function createErrorResponse(error: unknown): BackgroundResponse {
   };
 }
 
-function formatProviderLabel(profile: ProviderProfile | undefined): string {
-  if (!profile) {
-    return "未配置翻译服务";
-  }
-
-  try {
-    return `${profile.displayName} / ${new URL(profile.baseURL).host}`;
-  } catch {
-    return profile.displayName;
-  }
-}
-
 export default defineBackground(() => {
   const storage = createStorageRepositories();
   const provider = new OpenAiCompatibleProvider();
@@ -44,17 +37,22 @@ export default defineBackground(() => {
     return storage.providers.listProfiles();
   }
 
+  async function loadStoredProviderState(): Promise<{
+    activeProviderId: string | undefined;
+    profiles: ProviderProfile[];
+  }> {
+    return getStoredProviderState({
+      loadActiveProviderId: () => storage.providers.getActiveProviderId(),
+      loadProfiles: listProfiles,
+      persistActiveProviderId: (activeProviderId) =>
+        storage.providers.setActiveProviderId(activeProviderId),
+    });
+  }
+
   async function getActiveProfile(): Promise<ProviderProfile | undefined> {
-    const [activeProviderId, profiles] = await Promise.all([
-      storage.providers.getActiveProviderId(),
-      listProfiles(),
-    ]);
+    const { activeProviderId, profiles } = await loadStoredProviderState();
 
-    if (!activeProviderId) {
-      return profiles[0];
-    }
-
-    return profiles.find((profile) => profile.id === activeProviderId) ?? profiles[0];
+    return selectReadyProviderProfile(profiles, activeProviderId);
   }
 
   const orchestrator = new TranslationTaskOrchestrator({
@@ -75,7 +73,7 @@ export default defineBackground(() => {
 
   onTranslatePageMenuClick(
     async (tabId) => {
-      if ((await listProfiles()).length === 0) {
+      if (!(await getActiveProfile())) {
         await notifyProviderMissing();
         return;
       }
@@ -130,15 +128,14 @@ export default defineBackground(() => {
           return { type: "taskProgress", progress };
         }
         case "getProviderStatus": {
-          const profile = await getActiveProfile();
-          return {
-            type: "providerStatus",
-            configured: profile !== undefined,
-            providerLabel: formatProviderLabel(profile),
-          };
+          const { activeProviderId, profiles } = await loadStoredProviderState();
+          return buildProviderStatusResponse(profiles, activeProviderId);
         }
         case "openOptions":
-          await openOptionsPage();
+          await openOptionsPage({
+            section: request.section,
+            source: request.source,
+          });
           return { type: "backgroundActionResult", success: true };
         default:
           return { type: "backgroundError", message: "Unknown background message." };
