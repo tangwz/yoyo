@@ -187,7 +187,7 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
-  it("fails when no active provider profile exists", async () => {
+  it("does not collect page content when no active provider profile exists", async () => {
     const missingProvider = vi.fn(async () => undefined);
     const { orchestrator, sendToContent, generateText } = createOrchestrator({
       getActiveProfile: missingProvider,
@@ -206,13 +206,14 @@ describe("TranslationTaskOrchestrator", () => {
     });
 
     expect(missingProvider).toHaveBeenCalledTimes(1);
+    expect(sendToContent).not.toHaveBeenCalled();
     expect(generateText).not.toHaveBeenCalled();
     expect(progress).toMatchObject({
       taskId: "task-1",
       state: "failed",
-      total: 1,
+      total: 0,
       translated: 0,
-      failed: 1,
+      failed: 0,
     });
   });
 

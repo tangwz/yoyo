@@ -63,7 +63,7 @@ export default defineBackground(() => {
 
   onTranslatePageMenuClick(
     async (tabId) => {
-      if ((await listProfiles()).length === 0) {
+      if (!(await getActiveProfile())) {
         await notifyProviderMissing();
         return;
       }

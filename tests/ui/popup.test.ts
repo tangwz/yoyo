@@ -269,6 +269,49 @@ describe("popup app", () => {
     });
   });
 
+  it("keeps first-run routing when the onboarding fallback button opens settings", async () => {
+    let openOptionsCalls = 0;
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return {
+          type: "providerStatus",
+          configured: false,
+          readiness: "missingApiKey",
+          providerLabel: "未配置翻译服务",
+        };
+      }
+
+      if (message.type === "openOptions") {
+        openOptionsCalls += 1;
+        if (openOptionsCalls === 1) {
+          throw new Error("Options page blocked.");
+        }
+
+        return { type: "backgroundActionResult", success: true };
+      }
+
+      throw new Error(`Unexpected runtime message: ${message.type}`);
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("Options page blocked.");
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
+
+    expect(openOptionsCalls).toBe(2);
+    await waitFor(() => {
+      expect(browserMock.runtimeSendMessage).toHaveBeenLastCalledWith({
+        type: "openOptions",
+        section: "provider",
+        source: "first-run",
+      });
+    });
+    expect(browserMock.tabsQuery).not.toHaveBeenCalled();
+  });
+
   it("shows running background task before page estimate", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
       if (message.type === "getProviderStatus") {

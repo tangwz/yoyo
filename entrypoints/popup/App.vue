@@ -288,7 +288,7 @@ async function onPrimaryAction(): Promise<void> {
   }
 
   if (state.value === "onboarding" || !isProviderConfigured.value) {
-    await onOpenSettings();
+    await onOpenProviderOnboardingSettings();
     return;
   }
 
@@ -361,6 +361,15 @@ async function onPrimaryAction(): Promise<void> {
 async function onOpenSettings(): Promise<void> {
   try {
     await openSettings(undefined, "popup");
+  } catch (error: unknown) {
+    state.value = "error";
+    errorMessage.value = error instanceof Error ? error.message : "无法打开设置页面。";
+  }
+}
+
+async function onOpenProviderOnboardingSettings(): Promise<void> {
+  try {
+    await openSettings("provider", "first-run");
   } catch (error: unknown) {
     state.value = "error";
     errorMessage.value = error instanceof Error ? error.message : "无法打开设置页面。";
