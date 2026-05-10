@@ -46,6 +46,15 @@ function idleTaskProgress() {
   };
 }
 
+function readyProviderStatus() {
+  return {
+    type: "providerStatus",
+    configured: true,
+    readiness: "ready",
+    providerLabel: "OpenAI / api.openai.com",
+  };
+}
+
 vi.mock("wxt/browser", () => ({
   browser: {
     runtime: {
@@ -76,38 +85,90 @@ describe("popup app", () => {
     browserMock.tabsSendMessage.mockReset();
 
     browserMock.tabsQuery.mockResolvedValue([{ id: 123 }]);
-    browserMock.tabsSendMessage.mockResolvedValue({
-      type: "estimatePageResult",
-      estimate: {
-        canTranslate: true,
-        estimatedSegments: 32,
-        estimatedChars: 1200,
+    browserMock.tabsSendMessage.mockImplementation(
+      async (_tabId: number, message: { type: string }) => {
+        if (message.type === "getPageRuntimeState") {
+          return {
+            type: "pageRuntimeState",
+            hasTranslations: false,
+          };
+        }
+
+        if (message.type === "estimatePage") {
+          return {
+            type: "estimatePageResult",
+            estimate: {
+              canTranslate: true,
+              estimatedSegments: 32,
+              estimatedChars: 1200,
+            },
+          };
+        }
+
+        if (
+          message.type === "hideTranslations" ||
+          message.type === "showTranslations" ||
+          message.type === "removeTranslations"
+        ) {
+          return {
+            type: "contentActionResult",
+            success: true,
+          };
+        }
+
+        throw new Error(`Unexpected tab message: ${message.type}`);
       },
-    });
+    );
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
       if (message.type === "getProviderStatus") {
-        return {
-          type: "providerStatus",
-          configured: true,
-          providerLabel: "OpenAI / api.openai.com",
-        };
+        return readyProviderStatus();
       }
 
       if (message.type === "getTaskForTab") {
         return idleTaskProgress();
       }
 
-      return {
-      type: "taskProgress",
-      progress: {
-        taskId: "task-1",
-        state: "completed",
-        total: 32,
-        translated: 32,
-        failed: 0,
-      },
-      };
+      if (message.type === "openOptions") {
+        return { type: "backgroundActionResult", success: true };
+      }
+
+      if (message.type === "translatePage") {
+        return {
+          type: "taskProgress",
+          progress: {
+            taskId: "task-1",
+            state: "completed",
+            total: 32,
+            translated: 32,
+            failed: 0,
+          },
+        };
+      }
+
+      throw new Error(`Unexpected runtime message: ${message.type}`);
     });
+  });
+
+  it("stops initialization when Provider status returns a background error", async () => {
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return {
+          type: "backgroundError",
+          message: "Storage unavailable.",
+        };
+      }
+
+      throw new Error(`Unexpected runtime message: ${message.type}`);
+    });
+
+    render(PopupApp);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Storage unavailable.");
+    expect(browserMock.tabsQuery).not.toHaveBeenCalled();
+    expect(browserMock.runtimeSendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "getTaskForTab" }),
+    );
+    expect(browserMock.tabsSendMessage).not.toHaveBeenCalled();
   });
 
   it("renders the default popup controls", async () => {
@@ -161,16 +222,302 @@ describe("popup app", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "设置" }));
 
-    expect(browserMock.runtimeOpenOptionsPage).toHaveBeenCalledOnce();
+    expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
+      type: "openOptions",
+      source: "popup",
+    });
+    expect(browserMock.runtimeOpenOptionsPage).not.toHaveBeenCalled();
   });
 
-  it("shows a provider setup prompt for first-time users", async () => {
+  it("opens Provider settings and skips page estimate when Provider is not ready", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
       if (message.type === "getProviderStatus") {
         return {
           type: "providerStatus",
           configured: false,
+          readiness: "missingApiKey",
           providerLabel: "未配置翻译服务",
+        };
+      }
+
+      if (message.type === "openOptions") {
+        return { type: "backgroundActionResult", success: true };
+      }
+
+      return idleTaskProgress();
+    });
+
+    render(PopupApp);
+
+    expect(await screen.findByText("未配置翻译服务")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "需要先配置 Provider，正在打开设置页面...",
+    );
+
+    await waitFor(() => {
+      expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
+        type: "openOptions",
+        section: "provider",
+        source: "first-run",
+      });
+    });
+
+    expect(screen.getByRole("button", { name: "打开设置" })).toBeVisible();
+    expect(browserMock.tabsQuery).not.toHaveBeenCalled();
+    expect(browserMock.tabsSendMessage).not.toHaveBeenCalledWith(expect.any(Number), {
+      type: "estimatePage",
+    });
+  });
+
+  it("shows running background task before page estimate", async () => {
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return {
+          type: "providerStatus",
+          configured: true,
+          readiness: "ready",
+          providerLabel: "OpenAI / api.openai.com",
+        };
+      }
+
+      if (message.type === "getTaskForTab") {
+        return {
+          type: "taskProgress",
+          progress: {
+            taskId: "task-1",
+            state: "translating",
+            total: 32,
+            translated: 8,
+            failed: 1,
+          },
+        };
+      }
+
+      return idleTaskProgress();
+    });
+
+    render(PopupApp);
+
+    expect(await screen.findByRole("button", { name: "取消翻译" })).toBeVisible();
+    expect(screen.getByLabelText("Task progress")).toBeVisible();
+    expect(browserMock.tabsSendMessage).not.toHaveBeenCalledWith(123, {
+      type: "estimatePage",
+    });
+  });
+
+  it("shows existing translations before page estimate when no task is running", async () => {
+    browserMock.tabsSendMessage.mockImplementation(
+      async (_tabId: number, message: { type: string }) => {
+        if (message.type === "getPageRuntimeState") {
+          return {
+            type: "pageRuntimeState",
+            hasTranslations: true,
+            taskId: "task-previous",
+            visibility: "visible",
+          };
+        }
+
+        if (message.type === "estimatePage") {
+          return {
+            type: "estimatePageResult",
+            estimate: {
+              canTranslate: true,
+              estimatedSegments: 32,
+              estimatedChars: 1200,
+            },
+          };
+        }
+
+        throw new Error(`Unexpected tab message: ${message.type}`);
+      },
+    );
+
+    render(PopupApp);
+
+    expect(await screen.findByText("页面已有译文")).toBeVisible();
+    expect(screen.getByRole("button", { name: "重新翻译" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "隐藏译文" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "移除译文" })).toBeVisible();
+    expect(browserMock.tabsSendMessage).not.toHaveBeenCalledWith(123, {
+      type: "estimatePage",
+    });
+  });
+
+  it("toggles and removes existing translations", async () => {
+    browserMock.tabsSendMessage.mockImplementation(
+      async (_tabId: number, message: { type: string }) => {
+        if (message.type === "getPageRuntimeState") {
+          return {
+            type: "pageRuntimeState",
+            hasTranslations: true,
+            taskId: "task-previous",
+            visibility: "visible",
+          };
+        }
+
+        if (
+          message.type === "hideTranslations" ||
+          message.type === "showTranslations" ||
+          message.type === "removeTranslations"
+        ) {
+          return {
+            type: "contentActionResult",
+            success: true,
+          };
+        }
+
+        throw new Error(`Unexpected tab message: ${message.type}`);
+      },
+    );
+
+    render(PopupApp);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "隐藏译文" }));
+
+    expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, {
+      type: "hideTranslations",
+      taskId: "task-previous",
+    });
+    expect(screen.getByRole("button", { name: "显示译文" })).toBeVisible();
+
+    await fireEvent.click(screen.getByRole("button", { name: "显示译文" }));
+
+    expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, {
+      type: "showTranslations",
+      taskId: "task-previous",
+    });
+    expect(screen.getByRole("button", { name: "隐藏译文" })).toBeVisible();
+
+    await fireEvent.click(screen.getByRole("button", { name: "移除译文" }));
+
+    expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, {
+      type: "removeTranslations",
+      taskId: "task-previous",
+    });
+    expect(screen.queryByText("页面已有译文")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "翻译当前页面" })).toBeVisible();
+  });
+
+  it("shows an alert when hiding existing translations fails", async () => {
+    browserMock.tabsSendMessage.mockImplementation(
+      async (_tabId: number, message: { type: string }) => {
+        if (message.type === "getPageRuntimeState") {
+          return {
+            type: "pageRuntimeState",
+            hasTranslations: true,
+            taskId: "task-previous",
+            visibility: "visible",
+          };
+        }
+
+        if (message.type === "hideTranslations") {
+          return {
+            type: "contentActionResult",
+            success: false,
+            message: "Cannot hide translations.",
+          };
+        }
+
+        throw new Error(`Unexpected tab message: ${message.type}`);
+      },
+    );
+
+    render(PopupApp);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "隐藏译文" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Cannot hide translations.");
+    expect(screen.getByRole("button", { name: "隐藏译文" })).toBeVisible();
+  });
+
+  it("shows an alert when removing existing translations returns a content error", async () => {
+    browserMock.tabsSendMessage.mockImplementation(
+      async (_tabId: number, message: { type: string }) => {
+        if (message.type === "getPageRuntimeState") {
+          return {
+            type: "pageRuntimeState",
+            hasTranslations: true,
+            taskId: "task-previous",
+            visibility: "visible",
+          };
+        }
+
+        if (message.type === "removeTranslations") {
+          return {
+            type: "contentError",
+            message: "Cannot remove translations.",
+          };
+        }
+
+        throw new Error(`Unexpected tab message: ${message.type}`);
+      },
+    );
+
+    render(PopupApp);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "移除译文" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Cannot remove translations.");
+    expect(screen.getByText("页面已有译文")).toBeVisible();
+  });
+
+  it("shows an alert when removing existing translations rejects", async () => {
+    browserMock.tabsSendMessage.mockImplementation(
+      async (_tabId: number, message: { type: string }) => {
+        if (message.type === "getPageRuntimeState") {
+          return {
+            type: "pageRuntimeState",
+            hasTranslations: true,
+            taskId: "task-previous",
+            visibility: "visible",
+          };
+        }
+
+        if (message.type === "removeTranslations") {
+          throw new Error("Content script disconnected.");
+        }
+
+        throw new Error(`Unexpected tab message: ${message.type}`);
+      },
+    );
+
+    render(PopupApp);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "移除译文" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Content script disconnected.");
+    expect(screen.getByText("页面已有译文")).toBeVisible();
+  });
+
+  it("removes existing translations before re-translating", async () => {
+    browserMock.tabsSendMessage.mockImplementation(
+      async (_tabId: number, message: { type: string }) => {
+        if (message.type === "getPageRuntimeState") {
+          return {
+            type: "pageRuntimeState",
+            hasTranslations: true,
+            taskId: "task-previous",
+            visibility: "hidden",
+          };
+        }
+
+        if (message.type === "removeTranslations") {
+          return {
+            type: "contentActionResult",
+            success: true,
+          };
+        }
+
+        throw new Error(`Unexpected tab message: ${message.type}`);
+      },
+    );
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return {
+          type: "providerStatus",
+          configured: true,
+          readiness: "ready",
+          providerLabel: "OpenAI / api.openai.com",
         };
       }
 
@@ -178,24 +525,74 @@ describe("popup app", () => {
         return idleTaskProgress();
       }
 
-      return {
-        type: "backgroundError",
-        message: "Provider should be configured before translating.",
-      };
+      if (message.type === "translatePage") {
+        return {
+          type: "taskProgress",
+          progress: {
+            taskId: "task-new",
+            state: "translating",
+            total: 32,
+            translated: 0,
+            failed: 0,
+          },
+        };
+      }
+
+      return { type: "backgroundActionResult", success: true };
     });
 
     render(PopupApp);
 
-    expect(await screen.findByText("未配置翻译服务")).toBeVisible();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "首次使用前，请先配置大模型 Provider。",
-    );
-    await fireEvent.click(screen.getByRole("button", { name: "去配置大模型 Provider" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "重新翻译" }));
 
-    expect(browserMock.runtimeOpenOptionsPage).toHaveBeenCalledOnce();
+    expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, {
+      type: "removeTranslations",
+      taskId: "task-previous",
+    });
+    expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
+      type: "translatePage",
+      tabId: 123,
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+    });
+  });
+
+  it("keeps existing translations retryable when re-translate removal fails", async () => {
+    browserMock.tabsSendMessage.mockImplementation(
+      async (_tabId: number, message: { type: string }) => {
+        if (message.type === "getPageRuntimeState") {
+          return {
+            type: "pageRuntimeState",
+            hasTranslations: true,
+            taskId: "task-previous",
+            visibility: "visible",
+          };
+        }
+
+        if (message.type === "removeTranslations") {
+          return {
+            type: "contentError",
+            message: "Cannot remove before translating.",
+          };
+        }
+
+        throw new Error(`Unexpected tab message: ${message.type}`);
+      },
+    );
+
+    render(PopupApp);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "重新翻译" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Cannot remove before translating.",
+    );
     expect(browserMock.runtimeSendMessage).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "translatePage" }),
     );
+    expect(screen.getByText("页面已有译文")).toBeVisible();
+    expect(screen.getByRole("button", { name: "重新翻译" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "隐藏译文" })).toBeVisible();
   });
 
   it("requests page translation for the active tab and shows completed progress", async () => {
@@ -228,6 +625,10 @@ describe("popup app", () => {
 
   it("returns cancelled task progress to a recoverable idle state", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return readyProviderStatus();
+      }
+
       if (message.type === "getTaskForTab") {
         return idleTaskProgress();
       }
@@ -260,6 +661,10 @@ describe("popup app", () => {
 
   it("sends cancelTask for the current running task", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return readyProviderStatus();
+      }
+
       if (message.type === "getTaskForTab") {
         return idleTaskProgress();
       }
@@ -308,6 +713,10 @@ describe("popup app", () => {
 
   it("applies background progress broadcasts for the active task", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return readyProviderStatus();
+      }
+
       if (message.type === "getTaskForTab") {
         return idleTaskProgress();
       }
@@ -350,15 +759,30 @@ describe("popup app", () => {
   });
 
   it("disables translation when page estimate says the page is unsupported", async () => {
-    browserMock.tabsSendMessage.mockResolvedValueOnce({
-      type: "estimatePageResult",
-      estimate: {
-        canTranslate: false,
-        estimatedSegments: 0,
-        estimatedChars: 0,
-        reason: "Unsupported page URL.",
+    browserMock.tabsSendMessage.mockImplementation(
+      async (_tabId: number, message: { type: string }) => {
+        if (message.type === "getPageRuntimeState") {
+          return {
+            type: "pageRuntimeState",
+            hasTranslations: false,
+          };
+        }
+
+        if (message.type === "estimatePage") {
+          return {
+            type: "estimatePageResult",
+            estimate: {
+              canTranslate: false,
+              estimatedSegments: 0,
+              estimatedChars: 0,
+              reason: "Unsupported page URL.",
+            },
+          };
+        }
+
+        throw new Error(`Unexpected tab message: ${message.type}`);
       },
-    });
+    );
 
     render(PopupApp);
 
@@ -371,6 +795,10 @@ describe("popup app", () => {
 
   it("shows completed UI with failed count for completedWithErrors progress", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return readyProviderStatus();
+      }
+
       if (message.type === "getTaskForTab") {
         return idleTaskProgress();
       }
@@ -407,6 +835,10 @@ describe("popup app", () => {
 
   it("shows failed progress as an error without completed UI", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return readyProviderStatus();
+      }
+
       if (message.type === "getTaskForTab") {
         return idleTaskProgress();
       }
@@ -443,6 +875,10 @@ describe("popup app", () => {
 
   it("shows background error responses from translate requests", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return readyProviderStatus();
+      }
+
       if (message.type === "getTaskForTab") {
         return idleTaskProgress();
       }
