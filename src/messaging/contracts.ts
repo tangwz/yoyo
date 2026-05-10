@@ -4,6 +4,11 @@ import type {
   TranslationProgress,
   TranslationResultItem,
 } from "@/translation/types";
+import type { ProviderReadiness } from "@/provider/readiness";
+
+export type OptionsSection = "provider";
+
+export type OptionsOpenSource = "first-run" | "popup" | "manual";
 
 export type PageTranslationEstimate = {
   canTranslate: boolean;
@@ -31,7 +36,12 @@ export type ContentResponse =
       failedSegmentIds?: string[];
       message?: string;
     }
-  | { type: "pageRuntimeState"; hasTranslations: boolean; taskId?: string }
+  | {
+      type: "pageRuntimeState";
+      hasTranslations: boolean;
+      taskId?: string;
+      visibility?: "visible" | "hidden";
+    }
   | { type: "contentError"; message: string };
 
 export type BackgroundRequest =
@@ -44,10 +54,19 @@ export type BackgroundRequest =
   | { type: "cancelTask"; taskId: string; reason: CancelReason }
   | { type: "getTaskForTab"; tabId: number }
   | { type: "getProviderStatus" }
-  | { type: "openOptions" };
+  | {
+      type: "openOptions";
+      section?: OptionsSection;
+      source?: OptionsOpenSource;
+    };
 
 export type BackgroundResponse =
   | { type: "taskProgress"; progress: TranslationProgress }
-  | { type: "providerStatus"; configured: boolean; providerLabel: string }
+  | {
+      type: "providerStatus";
+      configured: boolean;
+      readiness: ProviderReadiness;
+      providerLabel: string;
+    }
   | { type: "backgroundActionResult"; success: true }
   | { type: "backgroundError"; message: string };

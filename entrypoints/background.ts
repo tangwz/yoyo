@@ -10,6 +10,11 @@ import type {
 } from "@/messaging/contracts";
 import { addRuntimeMessageListener, sendTabMessage } from "@/messaging/runtime";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
+import {
+  evaluateProviderReadiness,
+  formatProviderLabel,
+  resolveReadyProviderProfile,
+} from "@/provider/readiness";
 import type { ProviderProfile } from "@/provider/types";
 import { createStorageRepositories } from "@/storage/repositories";
 
@@ -22,18 +27,6 @@ function createErrorResponse(error: unknown): BackgroundResponse {
     type: "backgroundError",
     message: error instanceof Error ? error.message : "Background action failed.",
   };
-}
-
-function formatProviderLabel(profile: ProviderProfile | undefined): string {
-  if (!profile) {
-    return "未配置翻译服务";
-  }
-
-  try {
-    return `${profile.displayName} / ${new URL(profile.baseURL).host}`;
-  } catch {
-    return profile.displayName;
-  }
 }
 
 export default defineBackground(() => {
@@ -50,11 +43,7 @@ export default defineBackground(() => {
       listProfiles(),
     ]);
 
-    if (!activeProviderId) {
-      return profiles[0];
-    }
-
-    return profiles.find((profile) => profile.id === activeProviderId) ?? profiles[0];
+    return resolveReadyProviderProfile(profiles, activeProviderId);
   }
 
   const orchestrator = new TranslationTaskOrchestrator({
@@ -130,11 +119,16 @@ export default defineBackground(() => {
           return { type: "taskProgress", progress };
         }
         case "getProviderStatus": {
-          const profile = await getActiveProfile();
+          const [activeProviderId, profiles] = await Promise.all([
+            storage.providers.getActiveProviderId(),
+            listProfiles(),
+          ]);
+          const readiness = evaluateProviderReadiness(profiles, activeProviderId);
           return {
             type: "providerStatus",
-            configured: profile !== undefined,
-            providerLabel: formatProviderLabel(profile),
+            configured: readiness.readiness === "ready",
+            readiness: readiness.readiness,
+            providerLabel: formatProviderLabel(readiness.profile),
           };
         }
         case "openOptions":

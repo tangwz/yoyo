@@ -65,6 +65,7 @@ function applyProgress(response: BackgroundResponse): void {
       applyProviderStatus({
         type: "providerStatus",
         configured: false,
+        readiness: "missingProvider",
         providerLabel: "未配置翻译服务",
       });
       return;
