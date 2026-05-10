@@ -32,7 +32,7 @@ Yoyo 1.1 命名为 **Chrome Web Store Beta Hardening**。这一版不扩展划�
 
 `<all_urls>` 的解释边界必须写清楚：
 
-- `<all_urls>` 表示扩展具备页面读取与译文注入能力。
+- `<all_urls>` 表示扩展具备页面访问能力：运行 content script、读取可见正文、注入译文节点。
 - 它不等于自动发送页面数据。
 - 只有用户显式触发全文翻译时，当前页面正文才会发送到用户配置的 Provider。
 
@@ -117,11 +117,11 @@ type PageRuntimeState = {
 
 Manifest 权限策略：
 
-- 继续保留 `<all_urls>`，理由是扩展需要在用户访问的网页中提取可读文本、生成 anchor，并把译文注入原文下方。
-- 明确说明 `<all_urls>` 只是页面读取与注入能力，不表示自动发送数据。
+- 继续保留 `<all_urls>`，理由是扩展需要页面访问能力：运行 content script、读取可见正文、生成 anchor，并把译文节点注入原文下方。
+- 明确说明 `<all_urls>` 只是页面访问能力，不表示自动发送数据。
 - 继续保留 `storage`，用于 provider profile、API key、语言偏好和本地配置。
 - `contextMenus` 用于右键触发全文翻译。
-- `notifications` 用于右键菜单触发失败时提示，例如未配置 Provider 或页面不可翻译。
+- `notifications` 如实现右键失败通知则保留，否则移除。典型用途是右键菜单触发失败时提示未配置 Provider 或页面不可翻译。
 - `activeTab` 和 `scripting` 是 1.1 必须审计项：如果当前实现不依赖，就在 implementation plan 阶段移除；如果保留，必须写清用途。
 
 文档侧新增或更新：
@@ -135,6 +135,7 @@ Manifest 权限策略：
   - 页面文本何时读取、何时发送、发送到哪里、不发送到哪里。
   - API key 保存在 `chrome.storage.local`，不跨设备同步，不进入 content script，不注入网页。
   - Provider test 只发送固定 `Reply with exactly: ok`。
+  - Chrome Web Store privacy / Limited Use 披露必须与实际数据流一致。
 - `docs/qa/manual-mvp-checklist.md`
   - 扩展为 beta checklist。
   - 加入 first-run、popup 状态重建、已有译文状态、权限/隐私检查、Chrome Web Store submission 前检查。
@@ -181,21 +182,23 @@ Chrome Web Store 文案围绕三个事实写：
 手动验收作为 beta checklist 固化：
 
 - Chrome 加载 `build/chrome-mv3` unpacked build。
-- Chrome Web Store 提交前检查 zip、图标、名称、描述、权限理由、隐私文案。
+- Chrome Web Store 提交前检查 zip、图标、名称、描述、权限理由、隐私文案和 privacy / Limited Use 披露。
 - 验证未配置 Provider 时的 first-run 路径。
 - 验证 Provider test 只发送固定 `Reply with exactly: ok`。
 - 验证全文翻译、取消、隐藏、显示、移除、重新翻译。
 - 验证页面文本不会在未触发翻译时发送到 Provider。
 - 验证 API key 不进入 content script message，不进入网页 DOM，不进入 `chrome.storage.sync`。
-- 验证 `<all_urls>` 的说明文案与实际行为一致。
+- 验证 `<all_urls>` 的说明文案与实际行为一致：页面访问能力包括运行 content script、读取可见正文、注入译文节点，不等于自动发送数据。
 
 ## 8. Privacy and Permission Verification
 
 权限审计必须成为 beta 发布前检查项：
 
 - `storage`、`contextMenus`、`notifications`、`scripting`、`activeTab` 和 `host_permissions` 均有对应调用或明确理由。
+- `notifications` 只有在实现右键失败通知时才保留；如果没有通知调用路径，manifest 必须移除该权限。
 - 未使用的权限必须移除，或在 release 文档中标记为 blocking issue。
-- `<all_urls>` 的理由必须与实际行为一致：页面读取与注入能力，不代表自动发送数据。
+- `<all_urls>` 的理由必须与实际行为一致：页面访问能力包括运行 content script、读取可见正文、注入译文节点，不代表自动发送数据。
+- Chrome Web Store privacy / Limited Use 披露必须与实际数据流一致，不能暗示项目自有云端会接收 provider 配置或网页正文。
 
 zip 结构检查必须覆盖：
 
@@ -215,6 +218,7 @@ zip 结构检查必须覆盖：
 - `pnpm verify:extension`
 - beta checklist 全部通过。
 - README、privacy、release 文档与 manifest 权限保持一致。
+- Chrome Web Store privacy / Limited Use 披露与实际数据流保持一致。
 
 已知限制必须明确写出：
 
@@ -233,4 +237,6 @@ zip 结构检查必须覆盖：
 - manifest 中存在无法解释或未使用的高敏权限。
 - Provider 未配置时仍触发 page estimate 或页面正文提取。
 - popup 在 background 状态丢失且页面已有译文时显示错误态或卡死。
+- `activeTab` 或 `scripting` 无实际调用路径但仍保留在 manifest 中。
 - zip 结构不满足 Chrome Web Store 上传要求。
+- Chrome Web Store privacy / Limited Use 披露与实际数据流不一致。
