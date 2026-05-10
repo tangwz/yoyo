@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildProviderStatusResponse,
+  getStoredProviderState,
   selectReadyProviderProfile,
   selectStoredActiveProviderId,
 } from "@/background/providerStatus";
@@ -51,6 +52,23 @@ describe("provider status", () => {
     ];
 
     expect(selectStoredActiveProviderId(profiles, "deleted-provider")).toBe("ready");
+  });
+
+  it("keeps returning migrated provider state when persistence fails", async () => {
+    const profiles = [profile({ id: "ready" })];
+    const persistActiveProviderId = vi.fn().mockRejectedValue(new Error("storage unavailable"));
+
+    await expect(
+      getStoredProviderState({
+        loadActiveProviderId: async () => undefined,
+        loadProfiles: async () => profiles,
+        persistActiveProviderId,
+      }),
+    ).resolves.toEqual({
+      activeProviderId: "ready",
+      profiles,
+    });
+    expect(persistActiveProviderId).toHaveBeenCalledWith("ready");
   });
 
   it("returns configured status for a ready active provider", () => {

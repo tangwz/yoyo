@@ -2,8 +2,8 @@ import { onTranslatePageMenuClick, registerContextMenus } from "@/background/con
 import { notifyPageCannotTranslate, notifyProviderMissing } from "@/background/notifications";
 import {
   buildProviderStatusResponse,
+  getStoredProviderState,
   selectReadyProviderProfile,
-  selectStoredActiveProviderId,
 } from "@/background/providerStatus";
 import { TranslationTaskOrchestrator } from "@/background/taskOrchestrator";
 import { openOptionsPage } from "@/browser/browserApi";
@@ -37,25 +37,20 @@ export default defineBackground(() => {
     return storage.providers.listProfiles();
   }
 
-  async function getStoredProviderState(): Promise<{
+  async function loadStoredProviderState(): Promise<{
     activeProviderId: string | undefined;
     profiles: ProviderProfile[];
   }> {
-    const [storedActiveProviderId, profiles] = await Promise.all([
-      storage.providers.getActiveProviderId(),
-      listProfiles(),
-    ]);
-    const activeProviderId = selectStoredActiveProviderId(profiles, storedActiveProviderId);
-
-    if (activeProviderId && activeProviderId !== storedActiveProviderId) {
-      await storage.providers.setActiveProviderId(activeProviderId);
-    }
-
-    return { activeProviderId, profiles };
+    return getStoredProviderState({
+      loadActiveProviderId: () => storage.providers.getActiveProviderId(),
+      loadProfiles: listProfiles,
+      persistActiveProviderId: (activeProviderId) =>
+        storage.providers.setActiveProviderId(activeProviderId),
+    });
   }
 
   async function getActiveProfile(): Promise<ProviderProfile | undefined> {
-    const { activeProviderId, profiles } = await getStoredProviderState();
+    const { activeProviderId, profiles } = await loadStoredProviderState();
 
     return selectReadyProviderProfile(profiles, activeProviderId);
   }
@@ -133,7 +128,7 @@ export default defineBackground(() => {
           return { type: "taskProgress", progress };
         }
         case "getProviderStatus": {
-          const { activeProviderId, profiles } = await getStoredProviderState();
+          const { activeProviderId, profiles } = await loadStoredProviderState();
           return buildProviderStatusResponse(profiles, activeProviderId);
         }
         case "openOptions":
