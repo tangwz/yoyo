@@ -44,6 +44,15 @@ describe("provider status", () => {
     ).toBeUndefined();
   });
 
+  it("falls back to a complete profile when the stored active id is stale", () => {
+    const profiles = [
+      profile({ id: "incomplete", apiKey: "" }),
+      profile({ id: "ready", displayName: "Ready Provider" }),
+    ];
+
+    expect(selectStoredActiveProviderId(profiles, "deleted-provider")).toBe("ready");
+  });
+
   it("returns configured status for a ready active provider", () => {
     const profiles = [profile()];
 

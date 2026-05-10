@@ -18,7 +18,7 @@ export function selectStoredActiveProviderId(
   profiles: ProviderProfile[],
   activeProviderId: string | undefined,
 ): string | undefined {
-  if (hasText(activeProviderId)) {
+  if (hasText(activeProviderId) && profiles.some((profile) => profile.id === activeProviderId)) {
     return activeProviderId;
   }
 
