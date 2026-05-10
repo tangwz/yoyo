@@ -6,6 +6,25 @@ import {
 } from "@/provider/readiness";
 import type { ProviderProfile } from "@/provider/types";
 
+function hasText(value: string | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isCompleteProfile(profile: ProviderProfile): boolean {
+  return hasText(profile.apiKey) && hasText(profile.baseURL) && hasText(profile.textModel);
+}
+
+export function selectStoredActiveProviderId(
+  profiles: ProviderProfile[],
+  activeProviderId: string | undefined,
+): string | undefined {
+  if (hasText(activeProviderId)) {
+    return activeProviderId;
+  }
+
+  return profiles.find(isCompleteProfile)?.id;
+}
+
 export function selectReadyProviderProfile(
   profiles: ProviderProfile[],
   activeProviderId: string | undefined,

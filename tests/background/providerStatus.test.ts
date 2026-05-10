@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildProviderStatusResponse,
   selectReadyProviderProfile,
+  selectStoredActiveProviderId,
 } from "@/background/providerStatus";
 import type { ProviderProfile } from "@/provider/types";
 
@@ -28,6 +29,19 @@ describe("provider status", () => {
       readiness: "missingProvider",
       providerLabel: "未配置翻译服务",
     });
+  });
+
+  it("selects the first complete profile only for legacy storage without an active id", () => {
+    const profiles = [
+      profile({ id: "incomplete", apiKey: "" }),
+      profile({ id: "ready", displayName: "Ready Provider" }),
+    ];
+
+    expect(selectStoredActiveProviderId(profiles, undefined)).toBe("ready");
+    expect(selectStoredActiveProviderId(profiles, "incomplete")).toBe("incomplete");
+    expect(
+      selectStoredActiveProviderId([profile({ id: "incomplete", textModel: " " })], undefined),
+    ).toBeUndefined();
   });
 
   it("returns configured status for a ready active provider", () => {

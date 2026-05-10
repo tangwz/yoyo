@@ -3,6 +3,7 @@ import { notifyPageCannotTranslate, notifyProviderMissing } from "@/background/n
 import {
   buildProviderStatusResponse,
   selectReadyProviderProfile,
+  selectStoredActiveProviderId,
 } from "@/background/providerStatus";
 import { TranslationTaskOrchestrator } from "@/background/taskOrchestrator";
 import { openOptionsPage } from "@/browser/browserApi";
@@ -36,11 +37,25 @@ export default defineBackground(() => {
     return storage.providers.listProfiles();
   }
 
-  async function getActiveProfile(): Promise<ProviderProfile | undefined> {
-    const [activeProviderId, profiles] = await Promise.all([
+  async function getStoredProviderState(): Promise<{
+    activeProviderId: string | undefined;
+    profiles: ProviderProfile[];
+  }> {
+    const [storedActiveProviderId, profiles] = await Promise.all([
       storage.providers.getActiveProviderId(),
       listProfiles(),
     ]);
+    const activeProviderId = selectStoredActiveProviderId(profiles, storedActiveProviderId);
+
+    if (activeProviderId && activeProviderId !== storedActiveProviderId) {
+      await storage.providers.setActiveProviderId(activeProviderId);
+    }
+
+    return { activeProviderId, profiles };
+  }
+
+  async function getActiveProfile(): Promise<ProviderProfile | undefined> {
+    const { activeProviderId, profiles } = await getStoredProviderState();
 
     return selectReadyProviderProfile(profiles, activeProviderId);
   }
@@ -118,10 +133,7 @@ export default defineBackground(() => {
           return { type: "taskProgress", progress };
         }
         case "getProviderStatus": {
-          const [activeProviderId, profiles] = await Promise.all([
-            storage.providers.getActiveProviderId(),
-            listProfiles(),
-          ]);
+          const { activeProviderId, profiles } = await getStoredProviderState();
           return buildProviderStatusResponse(profiles, activeProviderId);
         }
         case "openOptions":
