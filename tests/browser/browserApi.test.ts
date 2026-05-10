@@ -83,7 +83,13 @@ describe("browserApi", () => {
   });
 
   it("reuses an existing options tab when routing input is provided", async () => {
-    queryTabs.mockResolvedValue([{ id: 42, windowId: 7 }]);
+    queryTabs.mockResolvedValue([
+      {
+        id: 42,
+        url: "chrome-extension://id/options.html?section=provider",
+        windowId: 7,
+      },
+    ]);
 
     await openOptionsPage({ section: "provider", source: "first-run" });
 
@@ -93,5 +99,17 @@ describe("browserApi", () => {
       url: "chrome-extension://id/options.html?section=provider&source=first-run",
     });
     expect(updateWindow).toHaveBeenCalledWith(7, { focused: true });
+  });
+
+  it("does not update arbitrary tabs when routed options lookup returns unfiltered results", async () => {
+    queryTabs.mockResolvedValue([{ id: 12, url: "https://example.com/article", windowId: 7 }]);
+
+    await openOptionsPage({ section: "provider", source: "first-run" });
+
+    expect(updateTab).not.toHaveBeenCalled();
+    expect(updateWindow).not.toHaveBeenCalled();
+    expect(createTab).toHaveBeenCalledWith({
+      url: "chrome-extension://id/options.html?section=provider&source=first-run",
+    });
   });
 });

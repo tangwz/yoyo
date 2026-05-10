@@ -29,10 +29,26 @@ export type OpenOptionsPageInput = {
   source?: OptionsOpenSource;
 };
 
+function isExtensionOptionsUrl(url: string | undefined, extensionOrigin: string): boolean {
+  if (!url) {
+    return false;
+  }
+
+  try {
+    const parsedUrl = new URL(url);
+    return parsedUrl.origin === extensionOrigin && parsedUrl.pathname === "/options.html";
+  } catch {
+    return false;
+  }
+}
+
 async function openRoutedOptionsPage(url: string): Promise<void> {
-  const [existingTab] = await browser.tabs.query({
-    url: browser.runtime.getURL("/options.html*" as never),
+  const optionsUrlPattern = browser.runtime.getURL("/options.html*" as never);
+  const optionsOrigin = new URL(browser.runtime.getURL("/" as never)).origin;
+  const tabs = await browser.tabs.query({
+    url: optionsUrlPattern,
   });
+  const existingTab = tabs.find((tab) => isExtensionOptionsUrl(tab.url, optionsOrigin));
 
   if (existingTab?.id === undefined) {
     await browser.tabs.create({ url });
