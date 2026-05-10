@@ -41,6 +41,13 @@ const total = ref(0);
 const failed = ref(0);
 const errorMessage = ref("");
 const pageTranslationsVisible = ref(true);
+const providerOnboardingAutoOpenKey = "yoyo.providerOnboardingAutoOpened";
+
+type SessionStorageArea = {
+  get(key: string): Promise<Record<string, unknown>>;
+  remove(key: string): Promise<void>;
+  set(items: Record<string, unknown>): Promise<void>;
+};
 
 const primaryLabel = computed(() => {
   if (state.value === "onboarding" || !isProviderConfigured.value) {
@@ -180,6 +187,37 @@ async function openSettings(
   }
 }
 
+function getSessionStorage(): SessionStorageArea | undefined {
+  return (browser.storage as { session?: SessionStorageArea }).session;
+}
+
+async function hasAutoOpenedProviderOnboarding(): Promise<boolean> {
+  const sessionStorage = getSessionStorage();
+  if (!sessionStorage) {
+    return false;
+  }
+
+  const result = await sessionStorage.get(providerOnboardingAutoOpenKey);
+  return result[providerOnboardingAutoOpenKey] === true;
+}
+
+async function markProviderOnboardingAutoOpened(): Promise<void> {
+  await getSessionStorage()?.set({ [providerOnboardingAutoOpenKey]: true });
+}
+
+async function clearProviderOnboardingAutoOpened(): Promise<void> {
+  await getSessionStorage()?.remove(providerOnboardingAutoOpenKey);
+}
+
+async function maybeOpenProviderOnboardingSettings(): Promise<void> {
+  if (await hasAutoOpenedProviderOnboarding()) {
+    return;
+  }
+
+  await markProviderOnboardingAutoOpened();
+  await openSettings("provider", "first-run");
+}
+
 async function loadPageRuntimeState(activeTabId: number): Promise<boolean> {
   const runtimeState = await sendTabMessage<ContentRequest, ContentResponse>(activeTabId, {
     type: "getPageRuntimeState",
@@ -224,12 +262,14 @@ onMounted(async () => {
 
     applyProviderStatus(providerStatus);
     if (!providerStatus.configured) {
-      await openSettings("provider", "first-run").catch((error: unknown) => {
+      await maybeOpenProviderOnboardingSettings().catch((error: unknown) => {
         errorMessage.value =
           error instanceof Error ? error.message : "无法自动打开设置页面，请点击打开设置。";
       });
       return;
     }
+
+    await clearProviderOnboardingAutoOpened();
 
     const [activeTab] = await browser.tabs.query({
       active: true,

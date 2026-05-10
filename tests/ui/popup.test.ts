@@ -29,6 +29,9 @@ const browserMock = vi.hoisted(() => ({
   runtimeListeners: new Set<(message: unknown) => void>(),
   runtimeOpenOptionsPage: vi.fn(),
   runtimeSendMessage: vi.fn(),
+  sessionStorageGet: vi.fn(),
+  sessionStorageRemove: vi.fn(),
+  sessionStorageSet: vi.fn(),
   tabsQuery: vi.fn(),
   tabsSendMessage: vi.fn(),
 }));
@@ -69,6 +72,13 @@ vi.mock("wxt/browser", () => ({
         },
       },
     },
+    storage: {
+      session: {
+        get: browserMock.sessionStorageGet,
+        remove: browserMock.sessionStorageRemove,
+        set: browserMock.sessionStorageSet,
+      },
+    },
     tabs: {
       query: browserMock.tabsQuery,
       sendMessage: browserMock.tabsSendMessage,
@@ -81,8 +91,26 @@ describe("popup app", () => {
     browserMock.runtimeListeners.clear();
     browserMock.runtimeOpenOptionsPage.mockReset();
     browserMock.runtimeSendMessage.mockReset();
+    browserMock.sessionStorageGet.mockReset();
+    browserMock.sessionStorageRemove.mockReset();
+    browserMock.sessionStorageSet.mockReset();
     browserMock.tabsQuery.mockReset();
     browserMock.tabsSendMessage.mockReset();
+
+    const sessionValues = new Map<string, unknown>();
+    browserMock.sessionStorageGet.mockImplementation(async (key: string) =>
+      sessionValues.has(key) ? { [key]: sessionValues.get(key) } : {},
+    );
+    browserMock.sessionStorageSet.mockImplementation(async (items: Record<string, unknown>) => {
+      for (const [key, value] of Object.entries(items)) {
+        sessionValues.set(key, value);
+      }
+    });
+    browserMock.sessionStorageRemove.mockImplementation(async (keys: string | string[]) => {
+      for (const key of Array.isArray(keys) ? keys : [keys]) {
+        sessionValues.delete(key);
+      }
+    });
 
     browserMock.tabsQuery.mockResolvedValue([{ id: 123 }]);
     browserMock.tabsSendMessage.mockImplementation(
@@ -262,11 +290,58 @@ describe("popup app", () => {
       });
     });
 
-    expect(screen.getByRole("button", { name: "打开设置" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "打开设置" })).toBeVisible();
     expect(browserMock.tabsQuery).not.toHaveBeenCalled();
     expect(browserMock.tabsSendMessage).not.toHaveBeenCalledWith(expect.any(Number), {
       type: "estimatePage",
     });
+  });
+
+  it("does not automatically reopen first-run settings after the first redirect attempt", async () => {
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return {
+          type: "providerStatus",
+          configured: false,
+          readiness: "missingApiKey",
+          providerLabel: "未配置翻译服务",
+        };
+      }
+
+      if (message.type === "openOptions") {
+        return { type: "backgroundActionResult", success: true };
+      }
+
+      throw new Error(`Unexpected runtime message: ${message.type}`);
+    });
+
+    const firstPopup = render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
+        type: "openOptions",
+        section: "provider",
+        source: "first-run",
+      });
+    });
+
+    firstPopup.unmount();
+    browserMock.runtimeSendMessage.mockClear();
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
+        type: "getProviderStatus",
+      });
+    });
+    expect(browserMock.runtimeSendMessage).not.toHaveBeenCalledWith({
+      type: "openOptions",
+      section: "provider",
+      source: "first-run",
+    });
+    expect(await screen.findByRole("button", { name: "打开设置" })).toBeVisible();
+    expect(browserMock.tabsQuery).not.toHaveBeenCalled();
   });
 
   it("keeps first-run routing when the onboarding fallback button opens settings", async () => {
