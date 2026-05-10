@@ -252,7 +252,6 @@ describe("popup app", () => {
 
     expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
       type: "openOptions",
-      source: "popup",
     });
     expect(browserMock.runtimeOpenOptionsPage).not.toHaveBeenCalled();
   });

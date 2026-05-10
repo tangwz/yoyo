@@ -175,11 +175,13 @@ function isRunningTask(
 
 async function openSettings(
   section?: "provider",
-  source: "first-run" | "popup" = "popup",
+  source?: "first-run" | "popup",
 ): Promise<void> {
   const request: BackgroundRequest = section
-    ? { type: "openOptions", section, source }
-    : { type: "openOptions", source };
+    ? { type: "openOptions", section, source: source ?? "popup" }
+    : source
+      ? { type: "openOptions", source }
+      : { type: "openOptions" };
   const response = await sendRuntimeMessage<BackgroundRequest, BackgroundResponse>(request);
 
   if (response.type === "backgroundError") {
@@ -400,7 +402,7 @@ async function onPrimaryAction(): Promise<void> {
 
 async function onOpenSettings(): Promise<void> {
   try {
-    await openSettings(undefined, "popup");
+    await openSettings();
   } catch (error: unknown) {
     state.value = "error";
     errorMessage.value = error instanceof Error ? error.message : "无法打开设置页面。";

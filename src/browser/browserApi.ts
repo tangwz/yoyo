@@ -29,6 +29,26 @@ export type OpenOptionsPageInput = {
   source?: OptionsOpenSource;
 };
 
+async function openRoutedOptionsPage(url: string): Promise<void> {
+  const [existingTab] = await browser.tabs.query({
+    url: browser.runtime.getURL("/options.html*" as never),
+  });
+
+  if (existingTab?.id === undefined) {
+    await browser.tabs.create({ url });
+    return;
+  }
+
+  await browser.tabs.update(existingTab.id, {
+    active: true,
+    url,
+  });
+
+  if (existingTab.windowId !== undefined) {
+    await browser.windows.update(existingTab.windowId, { focused: true });
+  }
+}
+
 export async function openOptionsPage(input: OpenOptionsPageInput = {}): Promise<void> {
   const params = new URLSearchParams();
 
@@ -41,9 +61,9 @@ export async function openOptionsPage(input: OpenOptionsPageInput = {}): Promise
   }
 
   if (params.size > 0) {
-    await browser.tabs.create({
-      url: browser.runtime.getURL(`/options.html?${params.toString()}` as never),
-    });
+    await openRoutedOptionsPage(
+      browser.runtime.getURL(`/options.html?${params.toString()}` as never),
+    );
     return;
   }
 
