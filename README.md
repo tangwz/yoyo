@@ -4,7 +4,7 @@
 
 Yoyo Reading Assistant is a Chrome / Edge reading assistant extension for bilingual long-form reading. It lets users configure their own OpenAI-compatible LLM provider, then manually translate the current page with progressive result injection and task state tracking.
 
-This project is not positioned as a page-cleaning tool. It is designed to preserve the original page structure as much as possible: it does not replace source text, does not expose API keys to content scripts, and does not automatically collect page text by default. The current MVP focuses on the full-page translation workflow. Future versions can extend the same provider and task orchestration foundation to support selection translation, image translation, video translation, and page summaries.
+This project is not positioned as a page-cleaning tool. It is designed to preserve the original page structure as much as possible: it does not replace source text, does not expose API keys to content scripts, and does not automatically transmit page text. The current MVP focuses on the full-page translation workflow. Future versions can extend the same provider and task orchestration foundation to support selection translation, image translation, video translation, and page summaries.
 
 ## Features
 
@@ -123,15 +123,20 @@ YOYO_SMOKE_DETACH_BROWSER=1 pnpm verify:extension
 
 ## Privacy Boundaries
 
-- Page text is extracted only when the user manually starts translation.
-- Extracted page text is sent to the model provider configured by the user.
+- Visiting a page alone does not transmit page text.
+- Opening the popup may locally estimate readable text after a Provider is configured.
+- Extracted page text is sent to the configured Provider only when the user explicitly starts translation.
 - API keys are stored in browser extension local storage, do not enter content scripts, and are not injected into the page context.
 - The current version has no account system and does not upload configuration to a project-owned cloud service.
 - The current version does not store a persistent translation cache.
 
 ## Project Status
 
-This codebase is currently in the MVP phase. The priority is to validate the full-page translation workflow, provider configuration, privacy boundary, and MV3 task orchestration. See:
+This codebase is preparing for a Chrome Web Store beta. The current priority is to harden the full-page translation workflow, Provider onboarding, privacy boundary, permission disclosure, and MV3 task orchestration. See:
 
 - `docs/superpowers/specs/2026-05-08-yoyo-reading-assistant-design.md`
+- `docs/superpowers/specs/2026-05-10-chrome-web-store-beta-hardening-design.md`
+- `docs/superpowers/plans/2026-05-10-chrome-web-store-beta-hardening.md`
+- `docs/privacy/chrome-web-store-disclosure.md`
+- `docs/release/chrome-web-store-beta.md`
 - `docs/qa/manual-mvp-checklist.md`

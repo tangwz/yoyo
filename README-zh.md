@@ -4,7 +4,7 @@
 
 悠悠阅读助手是一个面向 Chrome / Edge 的浏览器阅读辅助插件。它允许用户配置自己的 OpenAI-compatible 大模型服务，并在用户手动触发后，对当前网页进行全文翻译、渐进式注入译文和任务状态管理。
 
-这个项目的产品定位不是“又一个网页清洗器”，而是一个尽量尊重原网页结构的双语阅读工具：插件不替换原文，不把 API Key 暴露给 content script，也不默认自动采集网页内容。当前 MVP 聚焦全文翻译主链路，后续会在同一套 provider 与任务调度框架上扩展划词翻译、图片翻译、视频翻译和全文总结。
+这个项目的产品定位不是“又一个网页清洗器”，而是一个尽量尊重原网页结构的双语阅读工具：插件不替换原文，不把 API Key 暴露给 content script，也不会自动传输网页文本。当前 MVP 聚焦全文翻译主链路，后续会在同一套 provider 与任务调度框架上扩展划词翻译、图片翻译、视频翻译和全文总结。
 
 ## 功能介绍
 
@@ -123,15 +123,20 @@ YOYO_SMOKE_DETACH_BROWSER=1 pnpm verify:extension
 
 ## 隐私边界
 
-- 只有用户手动触发翻译时，扩展才会提取当前页面文本。
-- 页面文本会发送到用户自己配置的模型服务商。
+- 仅访问页面不会传输网页文本。
+- Provider 配置完成后，打开 popup 可能会在本地估算当前页面的可读文本量。
+- 只有用户明确开始翻译时，提取出的网页文本才会发送到用户配置的 Provider。
 - API Key 保存在浏览器扩展本地存储，不进入 content script，也不会注入网页上下文。
 - 当前版本不提供账号系统，不上传配置到项目自有云端。
 - 当前版本不保存持久翻译缓存。
 
 ## 项目状态
 
-当前代码处于 MVP 阶段，重点验证全文翻译主链路、Provider 配置、安全边界和 MV3 任务调度可行性。设计文档和验收清单可参考：
+当前代码正在准备 Chrome Web Store beta，重点加固全文翻译主链路、Provider 首次配置、隐私边界、权限披露和 MV3 任务调度。相关设计、计划、隐私披露、发布清单和验收清单可参考：
 
 - `docs/superpowers/specs/2026-05-08-yoyo-reading-assistant-design.md`
+- `docs/superpowers/specs/2026-05-10-chrome-web-store-beta-hardening-design.md`
+- `docs/superpowers/plans/2026-05-10-chrome-web-store-beta-hardening.md`
+- `docs/privacy/chrome-web-store-disclosure.md`
+- `docs/release/chrome-web-store-beta.md`
 - `docs/qa/manual-mvp-checklist.md`
