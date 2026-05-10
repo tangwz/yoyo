@@ -33,16 +33,16 @@ const emit = defineEmits<{
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 10px;
-  padding-top: 12px;
+  gap: 8px;
+  padding-top: 10px;
   border-top: 1px solid #e4e7ec;
 }
 
 .popup-footer__button {
   width: fit-content;
-  min-width: 54px;
-  height: 32px;
-  padding: 0 10px;
+  min-width: 48px;
+  height: 30px;
+  padding: 0 8px;
   border: 0;
   border-radius: 8px;
   color: #4b5565;

@@ -19,9 +19,9 @@ defineProps<{
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  min-height: 62px;
-  padding: 14px 16px;
+  gap: 12px;
+  min-height: 56px;
+  padding: 12px 14px;
   border: 1px solid #e1e3e8;
   border-radius: 12px;
   background: #ffffff;
@@ -39,7 +39,7 @@ defineProps<{
   min-width: 0;
   overflow: hidden;
   color: #202431;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   text-align: right;
   text-overflow: ellipsis;

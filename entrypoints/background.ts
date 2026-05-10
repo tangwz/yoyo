@@ -24,6 +24,18 @@ function createErrorResponse(error: unknown): BackgroundResponse {
   };
 }
 
+function formatProviderLabel(profile: ProviderProfile | undefined): string {
+  if (!profile) {
+    return "未配置翻译服务";
+  }
+
+  try {
+    return `${profile.displayName} / ${new URL(profile.baseURL).host}`;
+  } catch {
+    return profile.displayName;
+  }
+}
+
 export default defineBackground(() => {
   const storage = createStorageRepositories();
   const provider = new OpenAiCompatibleProvider();
@@ -116,6 +128,14 @@ export default defineBackground(() => {
             failed: 0,
           };
           return { type: "taskProgress", progress };
+        }
+        case "getProviderStatus": {
+          const profile = await getActiveProfile();
+          return {
+            type: "providerStatus",
+            configured: profile !== undefined,
+            providerLabel: formatProviderLabel(profile),
+          };
         }
         case "openOptions":
           await openOptionsPage();

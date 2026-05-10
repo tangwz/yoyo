@@ -3,6 +3,7 @@ import { AnchorRegistry } from "@/content/anchors";
 import {
   applyTranslations,
   hideTranslations,
+  insertPendingTranslations,
   removeTranslations,
   showTranslations,
 } from "@/content/injection";
@@ -47,6 +48,38 @@ describe("translation injection", () => {
 
     removeTranslations("task-1");
     expect(document.querySelector("[data-yoyo-translation]")).toBeNull();
+  });
+
+  it("inserts pending indicators and replaces them with translated text", () => {
+    document.body.innerHTML = `<article><p id="source">Hello</p></article>`;
+    const source = document.querySelector("#source") as HTMLElement;
+    const anchors = new AnchorRegistry();
+    anchors.set({ segmentId: "seg_1", sourceNode: source, taskId: "task-1" });
+
+    const result = insertPendingTranslations(anchors, "task-1");
+
+    const pending = document.querySelector(
+      "[data-yoyo-translation][data-yoyo-pending='true']",
+    ) as HTMLElement;
+    expect(result).toEqual({
+      appliedSegmentIds: ["seg_1"],
+      failedSegmentIds: [],
+    });
+    expect(pending.previousElementSibling).toBe(source);
+    expect(pending.dataset.yoyoSegmentId).toBe("seg_1");
+    expect(pending.dataset.yoyoTaskId).toBe("task-1");
+    expect(
+      pending.querySelector("[data-yoyo-translation-spinner]"),
+    ).not.toBeNull();
+
+    applyTranslations(anchors, "task-1", [
+      { segmentId: "seg_1", translatedText: "Bonjour" },
+    ]);
+
+    expect(document.querySelector("[data-yoyo-pending='true']")).toBeNull();
+    expect(document.querySelector("[data-yoyo-translation]")?.textContent).toBe(
+      "Bonjour",
+    );
   });
 
   it("replaces an existing inserted node for the same segment", () => {

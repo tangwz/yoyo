@@ -43,9 +43,11 @@ export type BackgroundRequest =
     }
   | { type: "cancelTask"; taskId: string; reason: CancelReason }
   | { type: "getTaskForTab"; tabId: number }
+  | { type: "getProviderStatus" }
   | { type: "openOptions" };
 
 export type BackgroundResponse =
   | { type: "taskProgress"; progress: TranslationProgress }
+  | { type: "providerStatus"; configured: boolean; providerLabel: string }
   | { type: "backgroundActionResult"; success: true }
   | { type: "backgroundError"; message: string };

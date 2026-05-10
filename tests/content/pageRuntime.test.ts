@@ -30,4 +30,27 @@ describe("page runtime", () => {
       reason: "Unsupported page URL.",
     });
   });
+
+  it("inserts pending indicators for collected segments", async () => {
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+      </article>
+    `;
+
+    const segments = await collectSegments("task-1");
+
+    expect(segments.map((segment) => segment.id)).toEqual(["seg_1", "seg_2"]);
+    expect(
+      document.querySelectorAll(
+        "[data-yoyo-translation][data-yoyo-pending='true']",
+      ),
+    ).toHaveLength(2);
+    expect(
+      document.querySelector(
+        "[data-yoyo-translation][data-yoyo-segment-id='seg_1']",
+      )?.previousElementSibling,
+    ).toBe(document.querySelector("#first"));
+  });
 });

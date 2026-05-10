@@ -56,6 +56,25 @@ describe("options app", () => {
   it("renders provider, translation, privacy, and advanced settings", () => {
     render(OptionsApp);
 
+    const navigation = screen.getByRole("navigation", { name: "Settings sections" });
+    expect(navigation).toBeVisible();
+    expect(screen.getByRole("link", { name: "Provider" })).toHaveAttribute(
+      "href",
+      "#provider-heading",
+    );
+    expect(screen.getByRole("link", { name: "Translation" })).toHaveAttribute(
+      "href",
+      "#translation-heading",
+    );
+    expect(screen.getByRole("link", { name: "Privacy" })).toHaveAttribute(
+      "href",
+      "#privacy-heading",
+    );
+    expect(screen.getByRole("link", { name: "Advanced" })).toHaveAttribute(
+      "href",
+      "#advanced-heading",
+    );
+
     expect(screen.getByRole("heading", { name: "Provider" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Translation" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Privacy" })).toBeVisible();

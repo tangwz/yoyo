@@ -229,245 +229,274 @@ async function testConnection() {
 <template>
   <main class="yoyo-shell">
     <header class="page-header">
-      <h1>设置</h1>
+      <div class="page-header__inner">
+        <h1>设置</h1>
+      </div>
     </header>
 
-    <section
-      class="settings-section"
-      aria-labelledby="provider-heading"
-    >
-      <h2 id="provider-heading">
-        Provider
-      </h2>
+    <div class="settings-layout">
+      <nav
+        class="settings-nav"
+        aria-label="Settings sections"
+      >
+        <a href="#provider-heading">Provider</a>
+        <a href="#translation-heading">Translation</a>
+        <a href="#privacy-heading">Privacy</a>
+        <a href="#advanced-heading">Advanced</a>
+      </nav>
 
-      <div class="settings-grid">
-        <label class="field">
-          <span>Preset</span>
-          <select
-            v-model="selectedPresetId"
-            @change="applySelectedPreset"
-          >
-            <option
-              v-for="preset in providerPresets"
-              :key="preset.id"
-              :value="preset.id"
+      <div class="settings-content">
+        <section
+          class="settings-section"
+          aria-labelledby="provider-heading"
+        >
+          <h2 id="provider-heading">
+            Provider
+          </h2>
+
+          <div class="settings-grid">
+            <label class="field">
+              <span>Preset</span>
+              <select
+                v-model="selectedPresetId"
+                @change="applySelectedPreset"
+              >
+                <option
+                  v-for="preset in providerPresets"
+                  :key="preset.id"
+                  :value="preset.id"
+                >
+                  {{ preset.name }}
+                </option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Display Name</span>
+              <input
+                v-model="displayName"
+                type="text"
+                autocomplete="off"
+              >
+            </label>
+
+            <label class="field field-wide">
+              <span>Base URL</span>
+              <input
+                v-model="baseUrl"
+                type="url"
+                inputmode="url"
+                autocomplete="off"
+              >
+            </label>
+
+            <div class="field field-wide">
+              <label for="api-key">API Key</label>
+              <input
+                id="api-key"
+                v-model="apiKey"
+                type="password"
+                autocomplete="off"
+              >
+              <small>API Key 保存在浏览器扩展本地存储，不跨设备同步。</small>
+            </div>
+
+            <label class="field">
+              <span>Text Model</span>
+              <input
+                v-model="textModel"
+                type="text"
+                autocomplete="off"
+              >
+            </label>
+
+            <label class="field">
+              <span>Vision Model</span>
+              <input
+                v-model="visionModel"
+                type="text"
+                autocomplete="off"
+              >
+            </label>
+          </div>
+
+          <div class="button-row">
+            <button
+              class="primary-button"
+              type="button"
+              @click="saveProviderProfile"
             >
-              {{ preset.name }}
-            </option>
-          </select>
-        </label>
+              保存翻译服务
+            </button>
+            <button
+              class="secondary-button"
+              type="button"
+              :disabled="isTestInFlight"
+              @click="testConnection"
+            >
+              {{ isTestInFlight ? "测试中..." : "测试连接" }}
+            </button>
+          </div>
 
-        <label class="field">
-          <span>Display Name</span>
-          <input
-            v-model="displayName"
-            type="text"
-            autocomplete="off"
+          <p
+            v-if="saveState === 'saved'"
+            class="save-feedback success"
+            role="status"
           >
-        </label>
-
-        <label class="field field-wide">
-          <span>Base URL</span>
-          <input
-            v-model="baseUrl"
-            type="url"
-            inputmode="url"
-            autocomplete="off"
+            已保存翻译服务。
+          </p>
+          <p
+            v-else-if="saveState === 'error'"
+            class="save-feedback error"
+            role="alert"
           >
-        </label>
+            保存失败，请稍后重试。
+          </p>
 
-        <div class="field field-wide">
-          <label for="api-key">API Key</label>
-          <input
-            id="api-key"
-            v-model="apiKey"
-            type="password"
-            autocomplete="off"
+          <p
+            v-if="testState === 'testing'"
+            class="save-feedback"
+            role="status"
           >
-          <small>API Key 保存在浏览器扩展本地存储，不跨设备同步。</small>
-        </div>
-
-        <label class="field">
-          <span>Text Model</span>
-          <input
-            v-model="textModel"
-            type="text"
-            autocomplete="off"
+            正在测试连接...
+          </p>
+          <p
+            v-else-if="testState === 'success'"
+            class="save-feedback success"
+            role="status"
           >
-        </label>
-
-        <label class="field">
-          <span>Vision Model</span>
-          <input
-            v-model="visionModel"
-            type="text"
-            autocomplete="off"
+            {{ testMessage }}
+          </p>
+          <p
+            v-else-if="testState === 'failed'"
+            class="save-feedback error"
+            role="alert"
           >
-        </label>
-      </div>
+            {{ testMessage }}
+          </p>
+        </section>
 
-      <div class="button-row">
-        <button
-          class="primary-button"
-          type="button"
-          @click="saveProviderProfile"
+        <section
+          class="settings-section"
+          aria-labelledby="translation-heading"
         >
-          保存翻译服务
-        </button>
-        <button
-          class="secondary-button"
-          type="button"
-          :disabled="isTestInFlight"
-          @click="testConnection"
+          <h2 id="translation-heading">
+            Translation
+          </h2>
+
+          <div class="settings-grid">
+            <label class="field">
+              <span>Target Language</span>
+              <select v-model="targetLanguage">
+                <option value="zh-CN">简体中文</option>
+                <option value="zh-TW">繁體中文</option>
+                <option value="en">English</option>
+                <option value="ja">日本語</option>
+                <option value="ko">한국어</option>
+              </select>
+            </label>
+          </div>
+
+          <p class="section-note">
+            显示方式：原文下方显示译文，并尽量保持与原段落一致的排版样式。
+          </p>
+        </section>
+
+        <section
+          class="settings-section"
+          aria-labelledby="privacy-heading"
         >
-          {{ isTestInFlight ? "测试中..." : "测试连接" }}
-        </button>
+          <h2 id="privacy-heading">
+            Privacy
+          </h2>
+
+          <ul class="privacy-list">
+            <li>Page text is extracted only when you manually start translation.</li>
+            <li>Extracted text is sent to your configured model provider during translation.</li>
+            <li>API key does not enter content script or page</li>
+            <li>First version has no persistent translation cache</li>
+          </ul>
+        </section>
+
+        <section
+          class="settings-section"
+          aria-labelledby="advanced-heading"
+        >
+          <h2 id="advanced-heading">
+            Advanced
+          </h2>
+
+          <div class="settings-grid">
+            <label class="field">
+              <span>Timeout</span>
+              <input
+                v-model.number="timeoutMs"
+                type="number"
+                min="1000"
+                step="1000"
+              >
+            </label>
+
+            <label class="field">
+              <span>Temperature</span>
+              <input
+                v-model.number="temperature"
+                type="number"
+                min="0"
+                max="2"
+                step="0.1"
+              >
+            </label>
+
+            <label class="field">
+              <span>Max Tokens</span>
+              <input
+                v-model.number="maxTokens"
+                type="number"
+                min="1"
+                step="1"
+              >
+            </label>
+
+            <div class="field static-field">
+              <span>Prompt version</span>
+              <strong>v1</strong>
+            </div>
+          </div>
+        </section>
       </div>
-
-      <p
-        v-if="saveState === 'saved'"
-        class="save-feedback success"
-        role="status"
-      >
-        已保存翻译服务。
-      </p>
-      <p
-        v-else-if="saveState === 'error'"
-        class="save-feedback error"
-        role="alert"
-      >
-        保存失败，请稍后重试。
-      </p>
-
-      <p
-        v-if="testState === 'testing'"
-        class="save-feedback"
-        role="status"
-      >
-        正在测试连接...
-      </p>
-      <p
-        v-else-if="testState === 'success'"
-        class="save-feedback success"
-        role="status"
-      >
-        {{ testMessage }}
-      </p>
-      <p
-        v-else-if="testState === 'failed'"
-        class="save-feedback error"
-        role="alert"
-      >
-        {{ testMessage }}
-      </p>
-    </section>
-
-    <section
-      class="settings-section"
-      aria-labelledby="translation-heading"
-    >
-      <h2 id="translation-heading">
-        Translation
-      </h2>
-
-      <div class="settings-grid">
-        <label class="field">
-          <span>Target Language</span>
-          <select v-model="targetLanguage">
-            <option value="zh-CN">简体中文</option>
-            <option value="zh-TW">繁體中文</option>
-            <option value="en">English</option>
-            <option value="ja">日本語</option>
-            <option value="ko">한국어</option>
-          </select>
-        </label>
-      </div>
-
-      <p class="section-note">
-        显示方式：原文下方显示译文，并尽量保持与原段落一致的排版样式。
-      </p>
-    </section>
-
-    <section
-      class="settings-section"
-      aria-labelledby="privacy-heading"
-    >
-      <h2 id="privacy-heading">
-        Privacy
-      </h2>
-
-      <ul class="privacy-list">
-        <li>Page text is extracted only when you manually start translation.</li>
-        <li>Extracted text is sent to your configured model provider during translation.</li>
-        <li>API key does not enter content script or page</li>
-        <li>First version has no persistent translation cache</li>
-      </ul>
-    </section>
-
-    <section
-      class="settings-section"
-      aria-labelledby="advanced-heading"
-    >
-      <h2 id="advanced-heading">
-        Advanced
-      </h2>
-
-      <div class="settings-grid">
-        <label class="field">
-          <span>Timeout</span>
-          <input
-            v-model.number="timeoutMs"
-            type="number"
-            min="1000"
-            step="1000"
-          >
-        </label>
-
-        <label class="field">
-          <span>Temperature</span>
-          <input
-            v-model.number="temperature"
-            type="number"
-            min="0"
-            max="2"
-            step="0.1"
-          >
-        </label>
-
-        <label class="field">
-          <span>Max Tokens</span>
-          <input
-            v-model.number="maxTokens"
-            type="number"
-            min="1"
-            step="1"
-          >
-        </label>
-
-        <div class="field static-field">
-          <span>Prompt version</span>
-          <strong>v1</strong>
-        </div>
-      </div>
-    </section>
+    </div>
   </main>
 </template>
 
 <style scoped>
+:global(html),
+:global(body),
+:global(#app) {
+  min-height: 100%;
+  margin: 0;
+  background: #f4f6fa;
+}
+
 .yoyo-shell {
   box-sizing: border-box;
-  width: min(920px, 100%);
   min-height: 100vh;
-  margin: 0 auto;
-  padding: 32px 24px 48px;
   color: #172033;
-  background: #f7f8fb;
+  background: #f4f6fa;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 .page-header {
-  margin-bottom: 24px;
+  background: #ffffff;
+  border-bottom: 1px solid #e1e5ee;
+}
+
+.page-header__inner {
+  box-sizing: border-box;
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 24px 32px;
 }
 
 .page-header h1 {
@@ -476,12 +505,54 @@ async function testConnection() {
   line-height: 1.2;
 }
 
-.settings-section {
-  padding: 20px;
-  margin-bottom: 16px;
-  background: #ffffff;
-  border: 1px solid #d9deea;
+.settings-layout {
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr);
+  gap: 28px;
+  box-sizing: border-box;
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 28px 32px 56px;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 24px;
+  align-self: start;
+  display: grid;
+  gap: 4px;
+}
+
+.settings-nav a {
+  padding: 9px 12px;
   border-radius: 8px;
+  color: #4d586b;
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.settings-nav a:hover,
+.settings-nav a:focus-visible {
+  color: #172033;
+  background: #e9edf5;
+  outline: none;
+}
+
+.settings-content {
+  background: #ffffff;
+  border: 1px solid #e1e5ee;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
+}
+
+.settings-section {
+  padding: 28px 32px;
+  border-bottom: 1px solid #edf0f5;
+}
+
+.settings-section:last-child {
+  border-bottom: 0;
 }
 
 .settings-section h2 {
@@ -592,9 +663,31 @@ async function testConnection() {
   font-size: 15px;
 }
 
-@media (max-width: 720px) {
-  .yoyo-shell {
-    padding: 24px 16px 40px;
+@media (max-width: 820px) {
+  .page-header__inner {
+    padding: 22px 18px;
+  }
+
+  .settings-layout {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    padding: 18px 16px 40px;
+  }
+
+  .settings-nav {
+    position: static;
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .settings-nav a {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .settings-section {
+    padding: 22px 18px;
   }
 
   .settings-grid {

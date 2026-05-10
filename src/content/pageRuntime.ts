@@ -4,6 +4,7 @@ import { isPageUrlSupported } from "@/content/domEligibility";
 import {
   applyTranslations,
   hideTranslations,
+  insertPendingTranslations,
   removeTranslations,
   showTranslations,
 } from "@/content/injection";
@@ -45,6 +46,7 @@ export async function collectSegments(taskId: string) {
   const { segments, anchors } = await collectPageSegments(taskId);
   currentAnchors = anchors;
   activeTaskId = taskId;
+  insertPendingTranslations(currentAnchors, taskId);
 
   return segments;
 }

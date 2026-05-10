@@ -15,8 +15,8 @@ import type {
   TranslationResultItem,
 } from "@/translation/types";
 
-const maxCharsPerBatch = 6000;
-const maxSegmentsPerBatch = 12;
+const maxCharsPerBatch = 2400;
+const maxSegmentsPerBatch = 5;
 const maxBatchAttempts = 2;
 const translationStyle = "default";
 

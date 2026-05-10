@@ -308,6 +308,73 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("translates page content in small ordered batches and applies each batch before requesting the next one", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+    const collectedSegments = Array.from({ length: 6 }, (_value, index) =>
+      segment({
+        id: `segment-${index + 1}`,
+        order: index + 1,
+        sourceText: `Paragraph ${index + 1}.`,
+        textHash: `hash-${index + 1}`,
+      }),
+    );
+    const events: string[] = [];
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: collectedSegments,
+        };
+      }
+
+      if (message.type !== "applyTranslations") {
+        throw new Error(`Unexpected content message: ${message.type}`);
+      }
+
+      const segmentIds = message.items.map((item) => item.segmentId);
+      events.push(`apply:${segmentIds.join(",")}`);
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockImplementation(async (request) => {
+      const segmentIds = collectedSegments
+        .filter((candidate) => request.prompt.includes(candidate.id))
+        .map((candidate) => candidate.id);
+
+      events.push(`request:${segmentIds.join(",")}`);
+      return {
+        text: JSON.stringify({
+          items: segmentIds.map((segmentId) => ({
+            segmentId,
+            translatedText: `Translated ${segmentId}`,
+          })),
+        }),
+        model: "gpt-4.1-mini",
+      };
+    });
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    expect(events).toEqual([
+      "request:segment-1,segment-2,segment-3,segment-4,segment-5",
+      "apply:segment-1,segment-2,segment-3,segment-4,segment-5",
+      "request:segment-6",
+      "apply:segment-6",
+    ]);
+    expect(progress).toEqual({
+      taskId: "task-1",
+      state: "completed",
+      total: 6,
+      translated: 6,
+      failed: 0,
+    });
+  });
+
   it("completes with errors when a provider batch rejects after collection succeeds", async () => {
     const { orchestrator, generateText, sendToContent } = createOrchestrator();
 

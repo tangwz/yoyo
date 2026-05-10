@@ -21,7 +21,8 @@ import TaskProgress from "@/ui/components/TaskProgress.vue";
 
 const sourceLanguage = ref("auto");
 const targetLanguage = ref("zh-CN");
-const providerLabel = ref("OpenAI Compatible / api.example.com");
+const providerLabel = ref("正在读取翻译服务...");
+const isProviderConfigured = ref(true);
 const tabId = ref<number>();
 const isInitializing = ref(true);
 const canTranslate = ref(true);
@@ -33,6 +34,10 @@ const failed = ref(0);
 const errorMessage = ref("");
 
 const primaryLabel = computed(() => {
+  if (!isProviderConfigured.value) {
+    return "去配置大模型 Provider";
+  }
+
   if (state.value === "translating") {
     return "取消翻译";
   }
@@ -45,7 +50,9 @@ const primaryLabel = computed(() => {
 });
 
 const isPrimaryDisabled = computed(
-  () => isInitializing.value || (!canTranslate.value && state.value !== "translating"),
+  () =>
+    isProviderConfigured.value &&
+    (isInitializing.value || (!canTranslate.value && state.value !== "translating")),
 );
 
 function isRuntimeResponse(message: unknown): message is BackgroundResponse {
@@ -54,6 +61,15 @@ function isRuntimeResponse(message: unknown): message is BackgroundResponse {
 
 function applyProgress(response: BackgroundResponse): void {
   if (response.type === "backgroundError") {
+    if (response.message === "No active provider profile.") {
+      applyProviderStatus({
+        type: "providerStatus",
+        configured: false,
+        providerLabel: "未配置翻译服务",
+      });
+      return;
+    }
+
     state.value = "error";
     errorMessage.value = response.message;
     return;
@@ -102,6 +118,19 @@ function applyProgress(response: BackgroundResponse): void {
   state.value = "translating";
 }
 
+function applyProviderStatus(response: Extract<BackgroundResponse, { type: "providerStatus" }>) {
+  isProviderConfigured.value = response.configured;
+  providerLabel.value = response.providerLabel;
+
+  if (!response.configured) {
+    state.value = "idle";
+    currentTaskId.value = "";
+    errorMessage.value = "首次使用前，请先配置大模型 Provider。";
+  } else if (errorMessage.value === "首次使用前，请先配置大模型 Provider。") {
+    errorMessage.value = "";
+  }
+}
+
 function handleRuntimeMessage(message: unknown): void {
   if (isRuntimeResponse(message)) {
     applyProgress(message);
@@ -112,6 +141,16 @@ onMounted(async () => {
   browser.runtime.onMessage.addListener(handleRuntimeMessage);
 
   try {
+    const providerStatus = await sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
+      type: "getProviderStatus",
+    });
+    if (providerStatus.type === "providerStatus") {
+      applyProviderStatus(providerStatus);
+      if (!providerStatus.configured) {
+        return;
+      }
+    }
+
     const [activeTab] = await browser.tabs.query({
       active: true,
       currentWindow: true,
@@ -165,6 +204,11 @@ onUnmounted(() => {
 
 async function onPrimaryAction(): Promise<void> {
   if (isInitializing.value) {
+    return;
+  }
+
+  if (!isProviderConfigured.value) {
+    await onOpenSettings();
     return;
   }
 
@@ -266,9 +310,9 @@ async function onOpenSettings(): Promise<void> {
 :global(html),
 :global(body),
 :global(#app) {
-  width: 392px;
-  min-width: 392px;
-  max-width: 392px;
+  width: 340px;
+  min-width: 340px;
+  max-width: 340px;
   margin: 0;
   overflow-x: hidden;
 }
@@ -276,7 +320,7 @@ async function onOpenSettings(): Promise<void> {
 .yoyo-shell {
   width: 100%;
   min-height: 300px;
-  padding: 22px;
+  padding: 18px;
   color: #202431;
   background:
     linear-gradient(180deg, #f8f8fa 0%, #ffffff 38%),
@@ -284,33 +328,33 @@ async function onOpenSettings(): Promise<void> {
 }
 
 .popup-header {
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
 
 .popup-header h1 {
   margin: 0;
   color: #171b26;
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 750;
   line-height: 1.2;
 }
 
 .popup-content {
   display: grid;
-  gap: 16px;
-  margin-bottom: 18px;
+  gap: 14px;
+  margin-bottom: 16px;
 }
 
 .primary-action {
   width: 100%;
-  min-height: 52px;
-  padding: 0 18px;
+  min-height: 48px;
+  padding: 0 16px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 12px;
   color: #ffffff;
   background: linear-gradient(180deg, #6157f4 0%, #4f46d8 100%);
   box-shadow: 0 10px 20px rgb(79 70 216 / 22%);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 750;
   cursor: pointer;
 }

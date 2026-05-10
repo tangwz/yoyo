@@ -61,21 +61,21 @@ const emit = defineEmits<{
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .language-selector__select {
   min-width: 0;
   width: 100%;
-  height: 38px;
-  padding: 0 34px 0 12px;
+  height: 36px;
+  padding: 0 30px 0 10px;
   border: 1px solid #d6d9e0;
   border-radius: 10px;
   color: #202431;
   background:
-    linear-gradient(45deg, transparent 50%, #606879 50%) calc(100% - 17px)
+    linear-gradient(45deg, transparent 50%, #606879 50%) calc(100% - 15px)
       50% / 6px 6px no-repeat,
-    linear-gradient(135deg, #606879 50%, transparent 50%) calc(100% - 13px)
+    linear-gradient(135deg, #606879 50%, transparent 50%) calc(100% - 11px)
       50% / 6px 6px no-repeat,
     #f5f6f8;
   appearance: none;

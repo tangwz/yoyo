@@ -1,5 +1,10 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
+import type {
+  BackgroundRequest,
+  BackgroundResponse,
+  ContentRequest,
+  ContentResponse,
+} from "@/messaging/contracts";
 
 describe("messaging contracts", () => {
   it("supports collecting page segments from the content entrypoint", () => {
@@ -44,5 +49,17 @@ describe("messaging contracts", () => {
 
     expectTypeOf(response).toMatchTypeOf<ContentResponse>();
     expect(response.message).toBe("Failed to handle message.");
+  });
+
+  it("supports querying provider configuration state from the popup", () => {
+    const request = { type: "getProviderStatus" } satisfies BackgroundRequest;
+    const response = {
+      type: "providerStatus",
+      configured: false,
+      providerLabel: "未配置翻译服务",
+    } satisfies BackgroundResponse;
+
+    expect(request.type).toBe("getProviderStatus");
+    expect(response.configured).toBe(false);
   });
 });

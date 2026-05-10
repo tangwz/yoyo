@@ -85,6 +85,14 @@ describe("popup app", () => {
       },
     });
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return {
+          type: "providerStatus",
+          configured: true,
+          providerLabel: "OpenAI / api.openai.com",
+        };
+      }
+
       if (message.type === "getTaskForTab") {
         return idleTaskProgress();
       }
@@ -113,6 +121,7 @@ describe("popup app", () => {
       "简体中文",
     );
     expect(screen.getByText("翻译服务")).toBeVisible();
+    expect(await screen.findByText("OpenAI / api.openai.com")).toBeVisible();
     expect(screen.getByText("翻译当前页面")).toBeVisible();
     expect(screen.getByText("设置")).toBeVisible();
     expect(screen.getByText("0.1.0")).toBeVisible();
@@ -135,7 +144,9 @@ describe("popup app", () => {
 
     await fireEvent.click(primaryButton);
 
-    expect(browserMock.runtimeSendMessage).not.toHaveBeenCalled();
+    expect(browserMock.runtimeSendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "translatePage" }),
+    );
     expect(screen.queryByText("无法获取当前标签页。")).not.toBeInTheDocument();
 
     activeTabQuery.resolve([{ id: 123 }]);
@@ -151,6 +162,40 @@ describe("popup app", () => {
     await fireEvent.click(screen.getByRole("button", { name: "设置" }));
 
     expect(browserMock.runtimeOpenOptionsPage).toHaveBeenCalledOnce();
+  });
+
+  it("shows a provider setup prompt for first-time users", async () => {
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return {
+          type: "providerStatus",
+          configured: false,
+          providerLabel: "未配置翻译服务",
+        };
+      }
+
+      if (message.type === "getTaskForTab") {
+        return idleTaskProgress();
+      }
+
+      return {
+        type: "backgroundError",
+        message: "Provider should be configured before translating.",
+      };
+    });
+
+    render(PopupApp);
+
+    expect(await screen.findByText("未配置翻译服务")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "首次使用前，请先配置大模型 Provider。",
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "去配置大模型 Provider" }));
+
+    expect(browserMock.runtimeOpenOptionsPage).toHaveBeenCalledOnce();
+    expect(browserMock.runtimeSendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "translatePage" }),
+    );
   });
 
   it("requests page translation for the active tab and shows completed progress", async () => {
@@ -455,5 +500,24 @@ describe("task progress", () => {
     expect(screen.getByText("5")).toBeVisible();
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getByText("1")).toBeVisible();
+  });
+
+  it("shows failed and completed items as processed progress", () => {
+    render(TaskProgress, {
+      props: {
+        completed: 3,
+        total: 5,
+        failed: 1,
+      },
+    });
+
+    const progressBar = screen.getByRole("progressbar", {
+      name: "Translation progress",
+    });
+
+    expect(progressBar).toHaveAttribute("aria-valuemin", "0");
+    expect(progressBar).toHaveAttribute("aria-valuemax", "100");
+    expect(progressBar).toHaveAttribute("aria-valuenow", "80");
+    expect(screen.getByText("4 / 5")).toBeVisible();
   });
 });
