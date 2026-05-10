@@ -26,7 +26,17 @@ function canRetryWithNextModelCandidate(error: ProviderError): boolean {
 
 export class OpenAiCompatibleProvider {
   async testConnection(profile: GenerateTextRequest["profile"]): Promise<GenerateTextResponse> {
-    const response = await this.generateText({ profile, prompt: "Reply with exactly: ok" });
+    const response = await this.generateText({
+      profile: {
+        ...profile,
+        requestParams: {
+          ...profile.requestParams,
+          temperature: 0,
+          maxTokens: 32,
+        },
+      },
+      prompt: "Reply with exactly: ok",
+    });
 
     if (response.text.trim().toLowerCase() !== "ok") {
       throw new ProviderError(

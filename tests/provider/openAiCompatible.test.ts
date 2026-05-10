@@ -126,6 +126,36 @@ describe("OpenAiCompatibleProvider", () => {
     );
   });
 
+  it("bounds provider connection tests to a short deterministic completion", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "ok" } }],
+          model: "model-a",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    await provider.testConnection({
+      ...profile,
+      requestParams: {
+        timeoutMs: 45000,
+        temperature: 1.2,
+        maxTokens: 4096,
+      },
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      model: "model-a",
+      messages: [{ role: "user", content: "Reply with exactly: ok" }],
+      temperature: 0,
+      max_tokens: 32,
+    });
+  });
+
   it("rejects provider connection tests that do not return ok", async () => {
     vi.stubGlobal(
       "fetch",

@@ -280,8 +280,8 @@ describe("options app", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
       model: "deepseek-chat",
       messages: [{ role: "user", content: "Reply with exactly: ok" }],
-      temperature: 0.7,
-      max_tokens: 2048,
+      temperature: 0,
+      max_tokens: 32,
     });
     expect(saveProfile).not.toHaveBeenCalled();
     expect(setActiveProviderId).not.toHaveBeenCalled();
