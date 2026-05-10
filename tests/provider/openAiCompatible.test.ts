@@ -79,14 +79,14 @@ describe("OpenAiCompatibleProvider", () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("model-a");
   });
 
-  it("uses the preset canonical model candidate before generic lower-case fallback", async () => {
+  it("uses the preset canonical model candidate after the original model during translation", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response("model not found", { status: 404 }))
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            choices: [{ message: { content: "ok" } }],
+            choices: [{ message: { content: "translated text" } }],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -94,14 +94,18 @@ describe("OpenAiCompatibleProvider", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const provider = new OpenAiCompatibleProvider();
-    const response = await provider.testConnection({
-      ...profile,
-      presetId: "openai",
-      textModel: "GPT-4.1-MINI",
+    const response = await provider.generateText({
+      profile: {
+        ...profile,
+        presetId: "openai",
+        textModel: "GPT-4.1-MINI",
+      },
+      prompt: "Translate me",
     });
 
-    expect(response.model).toBe("gpt-4.1-mini");
+    expect(response).toEqual({ text: "translated text", model: "gpt-4.1-mini" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("GPT-4.1-MINI");
     expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("gpt-4.1-mini");
   });
 
@@ -154,6 +158,55 @@ describe("OpenAiCompatibleProvider", () => {
       temperature: 0,
       max_tokens: 32,
     });
+  });
+
+  it("tests MiMo mixed-case input with the lower-case model candidate first", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "ok" } }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    const response = await provider.testConnection({
+      ...profile,
+      baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
+      textModel: "MiMo-V2.5",
+    });
+
+    expect(response.model).toBe("mimo-v2.5");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("mimo-v2.5");
+  });
+
+  it("falls back to the original mixed-case model during connection tests when lower-case is rejected", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("model not found", { status: 400 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "ok" } }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    const response = await provider.testConnection({
+      ...profile,
+      textModel: "Custom-Model",
+    });
+
+    expect(response.model).toBe("Custom-Model");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("custom-model");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("Custom-Model");
   });
 
   it("rejects provider connection tests that do not return ok", async () => {

@@ -2,6 +2,9 @@ import { providerPresets } from "@/provider/presets";
 import type { ProviderProfile } from "@/provider/types";
 
 type ProviderModelContext = Pick<ProviderProfile, "id" | "presetId">;
+type ModelCandidateOptions = {
+  preferLowerCase?: boolean;
+};
 
 function findPreset(context: ProviderModelContext) {
   return providerPresets.find((preset) => preset.id === (context.presetId ?? context.id));
@@ -31,13 +34,23 @@ export function normalizeModelNameForProfile(
   return trimmed;
 }
 
-export function createTextModelCandidates(profile: ProviderProfile): string[] {
+export function createTextModelCandidates(
+  profile: ProviderProfile,
+  options: ModelCandidateOptions = {},
+): string[] {
   const candidates: string[] = [];
   const normalizedModel = normalizeModelNameForProfile(profile, profile.textModel);
+  const lowerCaseModel = profile.textModel.toLowerCase();
 
-  appendUniqueModelName(candidates, profile.textModel);
-  appendUniqueModelName(candidates, normalizedModel);
-  appendUniqueModelName(candidates, profile.textModel.toLowerCase());
+  if (options.preferLowerCase) {
+    appendUniqueModelName(candidates, lowerCaseModel);
+    appendUniqueModelName(candidates, normalizedModel);
+    appendUniqueModelName(candidates, profile.textModel);
+  } else {
+    appendUniqueModelName(candidates, profile.textModel);
+    appendUniqueModelName(candidates, normalizedModel);
+    appendUniqueModelName(candidates, lowerCaseModel);
+  }
 
   return candidates.length > 0 ? candidates : [profile.textModel];
 }

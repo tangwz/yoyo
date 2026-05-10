@@ -288,7 +288,7 @@ describe("options app", () => {
     expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
   });
 
-  it("quietly updates the text model to the provider-accepted fallback after a successful test", async () => {
+  it("keeps the original text model when lower-case probing is rejected during a successful test", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response("model not found", { status: 400 }))
@@ -308,8 +308,40 @@ describe("options app", () => {
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
     expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
-    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue("custom-model");
+    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue("Custom-Model");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("custom-model");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("Custom-Model");
+  });
+
+  it("tests MiMo mixed-case input using lower-case model casing without surfacing casing details", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "ok" } }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(OptionsApp);
+
+    await fireEvent.update(
+      screen.getByRole("textbox", { name: "Base URL" }),
+      "https://token-plan-cn.xiaomimimo.com/v1",
+    );
+    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "MiMo-V2.5");
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      model: "mimo-v2.5",
+      messages: [{ role: "user", content: "Reply with exactly: ok" }],
+      temperature: 0,
+      max_tokens: 32,
+    });
+    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue("mimo-v2.5");
+    expect(screen.queryByText(/大小写/)).not.toBeInTheDocument();
   });
 
   it("shows error feedback when testing the provider connection fails", async () => {

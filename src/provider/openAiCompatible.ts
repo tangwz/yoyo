@@ -26,17 +26,21 @@ function canRetryWithNextModelCandidate(error: ProviderError): boolean {
 
 export class OpenAiCompatibleProvider {
   async testConnection(profile: GenerateTextRequest["profile"]): Promise<GenerateTextResponse> {
-    const response = await this.generateText({
-      profile: {
-        ...profile,
-        requestParams: {
-          ...profile.requestParams,
-          temperature: 0,
-          maxTokens: 32,
-        },
+    const testProfile = {
+      ...profile,
+      requestParams: {
+        ...profile.requestParams,
+        temperature: 0,
+        maxTokens: 32,
       },
-      prompt: "Reply with exactly: ok",
-    });
+    };
+    const response = await this.generateText(
+      {
+        profile: testProfile,
+        prompt: "Reply with exactly: ok",
+      },
+      createTextModelCandidates(testProfile, { preferLowerCase: true }),
+    );
 
     if (response.text.trim().toLowerCase() !== "ok") {
       throw new ProviderError(
@@ -48,7 +52,10 @@ export class OpenAiCompatibleProvider {
     return response;
   }
 
-  async generateText(request: GenerateTextRequest): Promise<GenerateTextResponse> {
+  async generateText(
+    request: GenerateTextRequest,
+    modelCandidates = createTextModelCandidates(request.profile),
+  ): Promise<GenerateTextResponse> {
     if (request.abortSignal?.aborted) {
       throw new ProviderError("aborted", "Provider request was aborted.");
     }
@@ -66,8 +73,6 @@ export class OpenAiCompatibleProvider {
     request.abortSignal?.addEventListener("abort", abortForwarder, { once: true });
 
     try {
-      const modelCandidates = createTextModelCandidates(request.profile);
-
       for (let index = 0; index < modelCandidates.length; index += 1) {
         const model = modelCandidates[index];
         if (model === undefined) {
