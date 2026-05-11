@@ -38,10 +38,11 @@ const rateLimitBackoffMs = 250;
 
 export type TranslationTaskOrchestratorDependencies = {
   getActiveProfile: () => Promise<ProviderProfile | undefined>;
+  getProviderProfile: (providerId: string) => Promise<ProviderProfile | undefined>;
   provider: Pick<OpenAiCompatibleProvider, "generateText"> &
     Partial<Pick<OpenAiCompatibleProvider, "streamText">>;
   sendToContent: (tabId: number, message: ContentRequest) => Promise<ContentResponse>;
-  emitProgress?: (progress: TranslationProgress) => void | Promise<void>;
+  emitProgress?: (progress: TranslationProgress, tabId: number) => void | Promise<void>;
   now: () => number;
   createTaskId: () => string;
 };
@@ -126,7 +127,20 @@ export class TranslationTaskOrchestrator {
 
     this.markSegmentsFailed(task, failedSegmentIds, segmentIds);
 
-    const segments = [...new Set(segmentIds)]
+    const segmentIdsToProcess = new Set(segmentIds);
+    if (recovery) {
+      for (const segment of task.segmentsById.values()) {
+        if (
+          segment.priority !== "normal" &&
+          !task.processedSegmentIds.has(segment.id) &&
+          !task.inFlightSegmentIds.has(segment.id)
+        ) {
+          segmentIdsToProcess.add(segment.id);
+        }
+      }
+    }
+
+    const segments = [...segmentIdsToProcess]
       .map((segmentId) => task.segmentsById.get(segmentId))
       .filter((segment): segment is PageSegment => segment !== undefined);
 
@@ -143,7 +157,7 @@ export class TranslationTaskOrchestrator {
       return undefined;
     }
 
-    const profile = await this.dependencies.getActiveProfile();
+    const profile = await this.getRecoveryProfile(recovery);
     if (!profile) {
       return undefined;
     }
@@ -180,6 +194,24 @@ export class TranslationTaskOrchestrator {
     });
 
     return task;
+  }
+
+  private async getRecoveryProfile(
+    recovery: LazySegmentRecoverySnapshot,
+  ): Promise<ProviderProfile | undefined> {
+    if (!recovery.providerId) {
+      return this.dependencies.getActiveProfile();
+    }
+
+    const profile = await this.dependencies.getProviderProfile(recovery.providerId);
+    if (!profile) {
+      return undefined;
+    }
+
+    return {
+      ...profile,
+      textModel: recovery.textModel ?? profile.textModel,
+    };
   }
 
   private mergeLazyRecoverySnapshot(
@@ -271,6 +303,8 @@ export class TranslationTaskOrchestrator {
         translationMode,
         sourceLanguage: input.sourceLanguage,
         targetLanguage: input.targetLanguage,
+        providerId: profile.id,
+        textModel: profile.textModel,
       });
 
       if (
@@ -577,6 +611,10 @@ export class TranslationTaskOrchestrator {
         if (await this.applyAndCacheRepresentativeItem(input, item)) {
           appliedRepresentativeIds.add(item.segmentId);
         }
+      }
+
+      if (!sawValidItem) {
+        return undefined;
       }
 
       return {
@@ -966,7 +1004,7 @@ export class TranslationTaskOrchestrator {
       ...progress,
     };
     task.updatedAt = this.dependencies.now();
-    void this.dependencies.emitProgress?.(this.cloneProgress(task.progress));
+    void this.dependencies.emitProgress?.(this.cloneProgress(task.progress), task.tabId);
   }
 
   private incrementProgress(

@@ -23,6 +23,8 @@ export type LazySegmentRecoverySnapshot = {
   targetLanguage: string;
   translationMode: TranslationMode;
   collectionComplete?: boolean;
+  providerId?: string;
+  textModel?: string;
   segments: PageSegment[];
   processedSegmentIds: string[];
   failedSegmentIds?: string[];
@@ -36,8 +38,11 @@ export type ContentRequest =
       translationMode: TranslationMode;
       sourceLanguage: string;
       targetLanguage: string;
+      providerId?: string;
+      textModel?: string;
     }
   | { type: "applyTranslations"; taskId: string; items: TranslationResultItem[] }
+  | { type: "taskProgress"; progress: TranslationProgress }
   | { type: "hideTranslations"; taskId?: string }
   | { type: "showTranslations"; taskId?: string }
   | { type: "removeTranslations"; taskId?: string }

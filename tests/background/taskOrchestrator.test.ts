@@ -49,6 +49,9 @@ function createOrchestrator(
   const getActiveProfile = vi.fn<() => Promise<ProviderProfile | undefined>>(
     async () => providerProfile(),
   );
+  const getProviderProfile = vi.fn<(providerId: string) => Promise<ProviderProfile | undefined>>(
+    async (providerId) => providerProfile({ id: providerId }),
+  );
   const sendToContent = vi.fn<
     (tabId: number, message: ContentRequest) => Promise<ContentResponse>
   >();
@@ -57,6 +60,7 @@ function createOrchestrator(
 
   const orchestrator = new TranslationTaskOrchestrator({
     getActiveProfile,
+    getProviderProfile,
     provider: { generateText, streamText },
     sendToContent,
     now,
@@ -69,6 +73,7 @@ function createOrchestrator(
     generateText,
     streamText,
     getActiveProfile,
+    getProviderProfile,
     sendToContent,
     now,
     createTaskId,
@@ -145,6 +150,8 @@ describe("TranslationTaskOrchestrator", () => {
       translationMode: "lazyViewport",
       sourceLanguage: "en",
       targetLanguage: "zh-CN",
+      providerId: "profile-1",
+      textModel: "gpt-4.1-mini",
     });
     expect(generateText).toHaveBeenCalledTimes(1);
     expect(generateText.mock.calls[0]?.[0]).toMatchObject({
@@ -859,6 +866,123 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("retries unprocessed visible segments when recovering from a lazy snapshot", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type !== "applyTranslations") {
+        throw new Error(`Unexpected content message: ${message.type}`);
+      }
+
+      expect(message.items).toEqual([
+        { segmentId: "segment-1", translatedText: "Translated visible." },
+        { segmentId: "segment-2", translatedText: "Translated near." },
+      ]);
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockResolvedValue({
+      text: JSON.stringify({
+        items: [
+          { id: "segment-1", text: "Translated visible." },
+          { id: "segment-2", text: "Translated near." },
+        ],
+      }),
+      model: "gpt-4.1-mini",
+    });
+
+    const progress = await orchestrator.enqueueLazySegments("task-1", [], [], {
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({ id: "segment-1", sourceText: "Visible.", priority: "viewport" }),
+        segment({
+          id: "segment-2",
+          order: 2,
+          sourceText: "Near.",
+          textHash: "hash-2",
+          priority: "nearViewport",
+        }),
+        segment({
+          id: "segment-3",
+          order: 3,
+          sourceText: "Far.",
+          textHash: "hash-3",
+          priority: "normal",
+        }),
+      ],
+      processedSegmentIds: [],
+    });
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generateText.mock.calls[0]?.[0].prompt).toContain("segment-1");
+    expect(generateText.mock.calls[0]?.[0].prompt).toContain("segment-2");
+    expect(generateText.mock.calls[0]?.[0].prompt).not.toContain("segment-3");
+    expect(progress).toMatchObject({
+      state: "waitingForViewport",
+      total: 3,
+      translated: 2,
+      failed: 0,
+    });
+  });
+
+  it("recovers a missing lazy task with the original provider context", async () => {
+    const originalProfile = providerProfile({
+      id: "original-provider",
+      textModel: "original-model",
+    });
+    const activeProfile = providerProfile({
+      id: "active-provider",
+      textModel: "active-model",
+    });
+    const generateText = vi.fn<
+      (request: GenerateTextRequest) => Promise<{ text: string; model: string }>
+    >();
+    const { orchestrator, sendToContent } = createOrchestrator({
+      getActiveProfile: vi.fn(async () => activeProfile),
+      getProviderProfile: vi.fn(async (providerId) =>
+        providerId === originalProfile.id ? originalProfile : undefined,
+      ),
+      provider: { generateText },
+    });
+
+    sendToContent.mockResolvedValue({ type: "contentActionResult", success: true });
+    generateText.mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ id: "segment-2", text: "Translated paragraph 2." }],
+      }),
+      model: "original-model",
+    });
+
+    await orchestrator.enqueueLazySegments("task-1", ["segment-2"], [], {
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      providerId: originalProfile.id,
+      textModel: originalProfile.textModel,
+      segments: [
+        segment({ id: "segment-1", sourceText: "Visible.", priority: "viewport" }),
+        segment({
+          id: "segment-2",
+          order: 2,
+          sourceText: "Later.",
+          textHash: "hash-2",
+          priority: "normal",
+        }),
+      ],
+      processedSegmentIds: ["segment-1"],
+    });
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generateText.mock.calls[0]?.[0].profile).toMatchObject({
+      id: "original-provider",
+      textModel: "original-model",
+    });
+  });
+
   it("counts disconnected lazy segments as processed failures", async () => {
     const { orchestrator, generateText, sendToContent } = createOrchestrator();
 
@@ -1069,6 +1193,42 @@ describe("TranslationTaskOrchestrator", () => {
     expect(progress).toMatchObject({
       state: "completed",
       translated: 1,
+    });
+  });
+
+  it("falls back to non-streaming translation when stream completes without valid items", async () => {
+    const { orchestrator, generateText, streamText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [segment()],
+        };
+      }
+      return { type: "contentActionResult", success: true };
+    });
+    streamText.mockReturnValue(streamChunks(["not json\n"]));
+    generateText.mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ id: "segment-1", text: "你好，世界。" }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    expect(streamText).toHaveBeenCalledTimes(1);
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(progress).toMatchObject({
+      state: "completed",
+      translated: 1,
+      failed: 0,
     });
   });
 
@@ -1505,6 +1665,7 @@ describe("TranslationTaskOrchestrator", () => {
     });
     expect(emitProgress).toHaveBeenCalledWith(
       expect.objectContaining({ taskId: "task-1", state: "completed" }),
+      7,
     );
   });
 

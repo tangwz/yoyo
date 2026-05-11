@@ -127,6 +127,27 @@ describe("OpenAiCompatibleProvider", () => {
     expect(chunks).toEqual(["Hello"]);
   });
 
+  it("rejects non-SSE streaming responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "buffered response" } }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    const provider = new OpenAiCompatibleProvider();
+    const stream = provider.streamText({ profile, prompt: "Translate me" });
+
+    await expect(stream.next()).rejects.toMatchObject({
+      code: "invalidResponse",
+    });
+  });
+
   it("maps streaming HTTP errors to provider errors", async () => {
     vi.stubGlobal(
       "fetch",

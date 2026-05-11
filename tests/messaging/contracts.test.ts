@@ -17,6 +17,8 @@ describe("messaging contracts", () => {
       translationMode: "lazyViewport",
       sourceLanguage: "auto",
       targetLanguage: "zh-CN",
+      providerId: "profile-1",
+      textModel: "gpt-4.1-mini",
     } satisfies ContentRequest;
 
     expect(request).toEqual({
@@ -25,6 +27,8 @@ describe("messaging contracts", () => {
       translationMode: "lazyViewport",
       sourceLanguage: "auto",
       targetLanguage: "zh-CN",
+      providerId: "profile-1",
+      textModel: "gpt-4.1-mini",
     });
   });
 
@@ -37,8 +41,20 @@ describe("messaging contracts", () => {
         translationMode: "lazyViewport",
         sourceLanguage: "auto",
         targetLanguage: "zh-CN",
+        providerId: "profile-1",
+        textModel: "gpt-4.1-mini",
       },
       { type: "applyTranslations", taskId: "task-1", items: [] },
+      {
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "cancelled",
+          total: 1,
+          translated: 0,
+          failed: 0,
+        },
+      },
       { type: "hideTranslations", taskId: "task-1" },
       { type: "showTranslations", taskId: "task-1" },
       { type: "removeTranslations", taskId: "task-1" },
@@ -49,6 +65,7 @@ describe("messaging contracts", () => {
       "estimatePage",
       "collectSegments",
       "applyTranslations",
+      "taskProgress",
       "hideTranslations",
       "showTranslations",
       "removeTranslations",
@@ -66,6 +83,8 @@ describe("messaging contracts", () => {
         sourceLanguage: "auto",
         targetLanguage: "zh-CN",
         translationMode: "lazyViewport",
+        providerId: "profile-1",
+        textModel: "gpt-4.1-mini",
         segments: [],
         processedSegmentIds: [],
         failedSegmentIds: ["seg_4"],
@@ -81,6 +100,8 @@ describe("messaging contracts", () => {
         sourceLanguage: "auto",
         targetLanguage: "zh-CN",
         translationMode: "lazyViewport",
+        providerId: "profile-1",
+        textModel: "gpt-4.1-mini",
         segments: [],
         processedSegmentIds: [],
         failedSegmentIds: ["seg_4"],

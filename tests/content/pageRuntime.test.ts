@@ -15,6 +15,7 @@ import {
   collectSegments,
   estimatePage,
   getPageRuntimeState,
+  handleTaskProgress,
   hidePageTranslations,
   removePageTranslations,
   showPageTranslations,
@@ -279,7 +280,9 @@ describe("page runtime", () => {
     });
   });
 
-  it("retries lazy segment reporting when the runtime enqueue returns terminal progress", async () => {
+  it.each(["cancelled", "failed"] as const)(
+    "stops lazy segment reporting when enqueue returns %s progress",
+    async (terminalState) => {
     vi.useFakeTimers();
     const originalInnerHeight = window.innerHeight;
     Object.defineProperty(window, "innerHeight", {
@@ -321,7 +324,7 @@ describe("page runtime", () => {
         type: "taskProgress",
         progress: {
           taskId: "task-1",
-          state: "cancelled",
+          state: terminalState,
           total: 0,
           translated: 0,
           failed: 0,
@@ -345,9 +348,8 @@ describe("page runtime", () => {
     window.dispatchEvent(new Event("scroll"));
     await vi.advanceTimersByTimeAsync(150);
 
-    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledTimes(2);
-    expect(runtimeMock.sendRuntimeMessage).toHaveBeenNthCalledWith(
-      2,
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledTimes(1);
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "enqueueLazySegments",
         taskId: "task-1",
@@ -359,7 +361,69 @@ describe("page runtime", () => {
       configurable: true,
       value: originalInnerHeight,
     });
-  });
+    },
+  );
+
+  it.each(["cancelled", "failed"] as const)(
+    "stops lazy segment reporting when broadcast progress is %s",
+    async (terminalState) => {
+      vi.useFakeTimers();
+      const originalInnerHeight = window.innerHeight;
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: 100,
+      });
+      document.body.innerHTML = `
+        <article>
+          <p id="first">First readable paragraph.</p>
+          <p id="second">Second readable paragraph.</p>
+        </article>
+      `;
+
+      const rects: Record<string, { top: number; bottom: number }> = {
+        first: { top: 10, bottom: 30 },
+        second: { top: 420, bottom: 450 },
+      };
+
+      for (const id of Object.keys(rects)) {
+        const element = document.querySelector(`#${id}`) as HTMLElement;
+        element.getBoundingClientRect = () =>
+          ({
+            x: 0,
+            y: rects[id].top,
+            top: rects[id].top,
+            bottom: rects[id].bottom,
+            left: 0,
+            right: 100,
+            width: 100,
+            height: rects[id].bottom - rects[id].top,
+            toJSON: () => ({}),
+          }) as DOMRect;
+      }
+
+      await collectSegments("task-1", "lazyViewport");
+      await flushDeferredLazyCollection();
+
+      handleTaskProgress({
+        taskId: "task-1",
+        state: terminalState,
+        total: 2,
+        translated: 1,
+        failed: terminalState === "failed" ? 1 : 0,
+      });
+
+      rects.second = { top: 80, bottom: 96 };
+      window.dispatchEvent(new Event("scroll"));
+      await vi.advanceTimersByTimeAsync(150);
+
+      expect(runtimeMock.sendRuntimeMessage).not.toHaveBeenCalled();
+
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: originalInnerHeight,
+      });
+    },
+  );
 
   it("ignores stale lazy enqueue responses after a new translation starts", async () => {
     vi.useFakeTimers();

@@ -277,6 +277,11 @@ export class OpenAiCompatibleProvider {
       throw new ProviderError("invalidResponse", "Provider response did not include a stream.");
     }
 
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().includes("text/event-stream")) {
+      throw new ProviderError("invalidResponse", "Provider streaming response was not SSE.");
+    }
+
     const decoder = new TextDecoder();
     const reader = response.body.getReader();
     let buffer = "";

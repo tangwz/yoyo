@@ -55,13 +55,22 @@ export default defineBackground(() => {
     return selectReadyProviderProfile(profiles, activeProviderId);
   }
 
+  async function getProviderProfile(providerId: string): Promise<ProviderProfile | undefined> {
+    return selectReadyProviderProfile(await listProfiles(), providerId);
+  }
+
   const orchestrator = new TranslationTaskOrchestrator({
     getActiveProfile,
+    getProviderProfile,
     provider,
     sendToContent: (tabId, message) =>
       sendTabMessage<ContentRequest, ContentResponse>(tabId, message),
-    emitProgress: (progress) => {
+    emitProgress: (progress, tabId) => {
       void browser.runtime.sendMessage({ type: "taskProgress", progress });
+      void sendTabMessage<ContentRequest, ContentResponse>(tabId, {
+        type: "taskProgress",
+        progress,
+      }).catch(() => undefined);
     },
     now: () => Date.now(),
     createTaskId,

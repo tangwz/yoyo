@@ -21,8 +21,10 @@ import type {
 } from "@/messaging/contracts";
 import { sendRuntimeMessage } from "@/messaging/runtime";
 import {
+  isTerminalTaskState,
   type PageSegment,
   type TranslationMode,
+  type TranslationProgress,
   type TranslationResultItem,
 } from "@/translation/types";
 
@@ -143,12 +145,12 @@ async function reportVisibleLazySegments(
     return;
   }
 
-  if (
-    !response ||
-    response.type !== "taskProgress" ||
-    response.progress.state === "cancelled" ||
-    response.progress.state === "failed"
-  ) {
+  if (!response || response.type !== "taskProgress") {
+    return;
+  }
+
+  if (isTerminalTaskState(response.progress.state)) {
+    stopLazySegmentReporting();
     return;
   }
 
@@ -254,6 +256,8 @@ export async function collectSegments(
   translationMode: TranslationMode = "fullPage",
   sourceLanguage = "auto",
   targetLanguage = "zh-CN",
+  providerId?: string,
+  textModel?: string,
 ) {
   if (!isPageUrlSupported(location.href)) {
     throw new Error("Unsupported page URL.");
@@ -285,6 +289,8 @@ export async function collectSegments(
       sourceLanguage,
       targetLanguage,
       translationMode,
+      providerId,
+      textModel,
       segments,
     });
     scheduleDeferredLazyCollection(taskId);
@@ -298,6 +304,16 @@ export function applyTranslationResults(
   items: TranslationResultItem[],
 ): ReturnType<typeof applyTranslations> {
   return applyTranslations(currentAnchors, taskId, items);
+}
+
+export function handleTaskProgress(progress: TranslationProgress): void {
+  if (progress.taskId !== lazyReportTaskId) {
+    return;
+  }
+
+  if (isTerminalTaskState(progress.state)) {
+    stopLazySegmentReporting();
+  }
 }
 
 export function hidePageTranslations(taskId?: string): void {
