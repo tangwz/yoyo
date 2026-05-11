@@ -62,6 +62,17 @@ describe("storage repositories", () => {
     expect(await local.get("yoyo.translationPreferences")).toEqual({});
   });
 
+  it("falls back to default translation preferences for corrupt sync storage data", async () => {
+    const sync = createInMemoryStorageArea();
+    const repository = translationPreferenceRepository({ syncedStorage: sync });
+
+    for (const storedValue of [null, "fullPage", 1, true, ["fullPage"], { mode: "unknown" }]) {
+      await sync.set({ "yoyo.translationPreferences": storedValue });
+
+      await expect(repository.get()).resolves.toEqual({ mode: "lazyViewport" });
+    }
+  });
+
   it("stores active provider id in local storage", async () => {
     const local = createInMemoryStorageArea();
     const sync = createInMemoryStorageArea();

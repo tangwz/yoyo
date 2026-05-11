@@ -40,6 +40,10 @@ function cloneStorageValue<T>(value: T): T {
   return structuredClone(value);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function createInMemoryStorageArea(): StorageArea {
   const values = new Map<string, unknown>();
 
@@ -145,9 +149,10 @@ export function translationPreferenceRepository({
     const result = await syncedStorage.get({
       [storageKeys.translationPreferences]: defaultTranslationPreferences,
     });
-    const preferences = result[storageKeys.translationPreferences] as Partial<TranslationPreferences>;
+    const preferences = result[storageKeys.translationPreferences];
 
-    return preferences.mode === "fullPage" || preferences.mode === "lazyViewport"
+    return isRecord(preferences) &&
+      (preferences.mode === "fullPage" || preferences.mode === "lazyViewport")
       ? { mode: preferences.mode }
       : defaultTranslationPreferences;
   }
