@@ -639,6 +639,19 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("returns failed progress when lazy enqueue references a missing task", async () => {
+    const { orchestrator } = createOrchestrator();
+
+    await expect(orchestrator.enqueueLazySegments("missing-task", ["segment-1"])).resolves.toEqual({
+      taskId: "missing-task",
+      state: "failed",
+      total: 0,
+      translated: 0,
+      failed: 0,
+      errorMessage: "Translation task is no longer available. Start translation again.",
+    });
+  });
+
   it("applies streamed translation items as soon as each record is parsed", async () => {
     const { orchestrator, generateText, streamText, sendToContent } = createOrchestrator();
     const applyEvents: string[] = [];

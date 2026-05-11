@@ -15,7 +15,11 @@ import type {
   PageTranslationEstimate,
 } from "@/messaging/contracts";
 import { sendRuntimeMessage } from "@/messaging/runtime";
-import type { TranslationMode, TranslationResultItem } from "@/translation/types";
+import {
+  isTerminalTaskState,
+  type TranslationMode,
+  type TranslationResultItem,
+} from "@/translation/types";
 
 let currentAnchors = new AnchorRegistry();
 let activeTaskId: string | undefined;
@@ -101,7 +105,11 @@ async function reportVisibleLazySegments(): Promise<void> {
     }),
   ).catch(() => undefined);
 
-  if (!response || response.type !== "taskProgress") {
+  if (
+    !response ||
+    response.type !== "taskProgress" ||
+    isTerminalTaskState(response.progress.state)
+  ) {
     return;
   }
 

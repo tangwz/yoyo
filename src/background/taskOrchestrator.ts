@@ -101,7 +101,7 @@ export class TranslationTaskOrchestrator {
   ): Promise<TranslationProgress> {
     const task = this.tasks.get(taskId);
     if (!task || !task.context || this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state)) {
-      return task ? this.cloneProgress(task.progress) : this.emptyProgress(taskId, "completed");
+      return task ? this.cloneProgress(task.progress) : this.missingTaskProgress(taskId);
     }
 
     const segments = [...new Set(segmentIds)]
@@ -819,6 +819,13 @@ export class TranslationTaskOrchestrator {
       total: 0,
       translated: 0,
       failed: 0,
+    };
+  }
+
+  private missingTaskProgress(taskId: string): TranslationProgress {
+    return {
+      ...this.emptyProgress(taskId, "failed"),
+      errorMessage: "Translation task is no longer available. Start translation again.",
     };
   }
 
