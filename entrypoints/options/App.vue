@@ -33,7 +33,7 @@ const temperature = ref(0.3);
 const maxTokens = ref(4096);
 const saveState = ref<"idle" | "saved" | "error">("idle");
 const testState = ref<"untested" | "testing" | "success" | "failed">("untested");
-const testMessage = ref("");
+const testMessageKey = ref<OptionsMessageKey>();
 const isTestInFlight = ref(false);
 const testRequestId = ref(0);
 const providerSectionRef = ref<HTMLElement>();
@@ -64,6 +64,10 @@ const uiLanguageOptions = computed(() => [
   { value: "zh-CN", label: t("uiLanguage.zhCN") },
   { value: "en-US", label: t("uiLanguage.enUS") },
 ]);
+
+const testFeedbackMessage = computed(() =>
+  testMessageKey.value ? t(testMessageKey.value) : "",
+);
 
 function t(key: OptionsMessageKey): string {
   return messages.value[key];
@@ -147,17 +151,17 @@ const providerProfileSignature = computed(() => getProviderProfileSignature(buil
 
 function resetTestFeedback() {
   testState.value = "untested";
-  testMessage.value = "";
+  testMessageKey.value = undefined;
 }
 
 watch(providerProfileSignature, resetTestFeedback);
 
-function getProviderTestErrorMessage(error: unknown): string {
+function getProviderTestErrorMessageKey(error: unknown): OptionsMessageKey {
   if (error instanceof ProviderError) {
-    return t(providerErrorMessageKeys[error.code]);
+    return providerErrorMessageKeys[error.code];
   }
 
-  return t(providerErrorMessageKeys.unknown);
+  return providerErrorMessageKeys.unknown;
 }
 
 function applySelectedPreset() {
@@ -296,7 +300,7 @@ async function testConnection() {
 
   isTestInFlight.value = true;
   testState.value = "testing";
-  testMessage.value = "";
+  testMessageKey.value = undefined;
 
   try {
     const provider = new OpenAiCompatibleProvider();
@@ -319,7 +323,7 @@ async function testConnection() {
     }
 
     testState.value = "success";
-    testMessage.value = t("test.success");
+    testMessageKey.value = "test.success";
   } catch (error) {
     if (
       requestId !== testRequestId.value ||
@@ -329,7 +333,7 @@ async function testConnection() {
     }
 
     testState.value = "failed";
-    testMessage.value = getProviderTestErrorMessage(error);
+    testMessageKey.value = getProviderTestErrorMessageKey(error);
   } finally {
     if (requestId === testRequestId.value) {
       isTestInFlight.value = false;
@@ -485,14 +489,14 @@ async function testConnection() {
             class="save-feedback success"
             role="status"
           >
-            {{ testMessage }}
+            {{ testFeedbackMessage }}
           </p>
           <p
             v-else-if="testState === 'failed'"
             class="save-feedback error"
             role="alert"
           >
-            {{ testMessage }}
+            {{ testFeedbackMessage }}
           </p>
         </section>
 

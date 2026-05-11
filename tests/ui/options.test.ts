@@ -377,6 +377,31 @@ describe("options app", () => {
     expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
   });
 
+  it("rerenders successful provider test feedback when the UI language changes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "ok" } }],
+            model: "gpt-4.1-mini",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    render(OptionsApp);
+
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "界面语言" }), "en-US");
+
+    expect(await screen.findByText("Test succeeded.")).toHaveAttribute("role", "status");
+    expect(screen.queryByText("测试成功。")).not.toBeInTheDocument();
+  });
+
   it("keeps the original text model when lower-case probing is rejected during a successful test", async () => {
     const fetchMock = vi
       .fn()
@@ -444,6 +469,26 @@ describe("options app", () => {
     );
     expect(saveProfile).not.toHaveBeenCalled();
     expect(setActiveProviderId).not.toHaveBeenCalled();
+  });
+
+  it("rerenders failed provider test feedback when the UI language changes", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
+    render(OptionsApp);
+
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "无法连接到服务，请检查接口地址和网络后重试。",
+    );
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "界面语言" }), "en-US");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Cannot connect to the provider. Check the Base URL and network, then try again.",
+    );
+    expect(
+      screen.queryByText("无法连接到服务，请检查接口地址和网络后重试。"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows model-specific feedback when the provider rejects the request", async () => {
