@@ -35,6 +35,7 @@ let lazyRecoverySnapshot:
   | Omit<LazySegmentRecoverySnapshot, "processedSegmentIds">
   | undefined;
 let lazyReportTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+let lazyDeferredCollectionTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
 let reportedLazySegmentIds = new Set<string>();
 let failedLazySegmentIds = new Set<string>();
 let currentSegmentsById = new Map<string, PageSegment>();
@@ -66,6 +67,11 @@ function stopLazySegmentReporting(): void {
   if (lazyReportTimer !== undefined) {
     globalThis.clearTimeout(lazyReportTimer);
     lazyReportTimer = undefined;
+  }
+
+  if (lazyDeferredCollectionTimer !== undefined) {
+    globalThis.clearTimeout(lazyDeferredCollectionTimer);
+    lazyDeferredCollectionTimer = undefined;
   }
 
   window.removeEventListener("scroll", scheduleLazySegmentReport);
@@ -202,12 +208,21 @@ function startLazySegmentReporting(
 }
 
 function scheduleDeferredLazyCollection(taskId: string): void {
-  globalThis.setTimeout(() => {
+  if (lazyDeferredCollectionTimer !== undefined) {
+    globalThis.clearTimeout(lazyDeferredCollectionTimer);
+  }
+
+  lazyDeferredCollectionTimer = globalThis.setTimeout(() => {
+    lazyDeferredCollectionTimer = undefined;
     void collectDeferredLazySegments(taskId);
   }, 0);
 }
 
 async function collectDeferredLazySegments(taskId: string): Promise<void> {
+  if (activeTaskId !== taskId || lazyReportTaskId !== taskId) {
+    return;
+  }
+
   const collection = await collectPageSegments(taskId);
   if (activeTaskId !== taskId || lazyReportTaskId !== taskId) {
     return;

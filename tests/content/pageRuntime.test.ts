@@ -269,6 +269,62 @@ describe("page runtime", () => {
     });
   });
 
+  it("cancels deferred lazy collection when the task is removed before the scan starts", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+        <p id="third">Third readable paragraph.</p>
+      </article>
+    `;
+
+    let rectReadCount = 0;
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 420, bottom: 450 },
+      third: { top: 520, bottom: 550 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () => {
+        rectReadCount += 1;
+        return {
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        } as DOMRect;
+      };
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+    rectReadCount = 0;
+
+    removePageTranslations("task-1");
+    await vi.advanceTimersByTimeAsync(1);
+    const deferredRectReadCount = rectReadCount;
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+
+    expect(deferredRectReadCount).toBe(0);
+  });
+
   it("retries lazy segment reporting when the runtime enqueue fails", async () => {
     vi.useFakeTimers();
     const originalInnerHeight = window.innerHeight;
