@@ -36,6 +36,7 @@ let lazyRecoverySnapshot:
   | undefined;
 let lazyReportTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
 let lazyDeferredCollectionTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+let lazyForcedRecoveryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
 let reportedLazySegmentIds = new Set<string>();
 let failedLazySegmentIds = new Set<string>();
 let currentSegmentsById = new Map<string, PageSegment>();
@@ -74,6 +75,11 @@ function stopLazySegmentReporting(): void {
     lazyDeferredCollectionTimer = undefined;
   }
 
+  if (lazyForcedRecoveryTimer !== undefined) {
+    globalThis.clearTimeout(lazyForcedRecoveryTimer);
+    lazyForcedRecoveryTimer = undefined;
+  }
+
   window.removeEventListener("scroll", scheduleLazySegmentReport);
   window.removeEventListener("resize", scheduleLazySegmentReport);
   lazyReportTaskId = undefined;
@@ -95,6 +101,19 @@ function scheduleLazySegmentReport(): void {
   lazyReportTimer = globalThis.setTimeout(() => {
     lazyReportTimer = undefined;
     void reportVisibleLazySegments();
+  }, 100);
+}
+
+function scheduleForcedRecoveryRetry(taskId: string): void {
+  if (lazyForcedRecoveryTimer !== undefined) {
+    globalThis.clearTimeout(lazyForcedRecoveryTimer);
+  }
+
+  lazyForcedRecoveryTimer = globalThis.setTimeout(() => {
+    lazyForcedRecoveryTimer = undefined;
+    if (lazyReportTaskId === taskId) {
+      void reportVisibleLazySegments({ forceRecovery: true });
+    }
   }, 100);
 }
 
@@ -152,6 +171,9 @@ async function reportVisibleLazySegments(
   }
 
   if (!response || response.type !== "taskProgress") {
+    if (options.forceRecovery) {
+      scheduleForcedRecoveryRetry(taskId);
+    }
     return;
   }
 
