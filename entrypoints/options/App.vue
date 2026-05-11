@@ -26,6 +26,7 @@ const textModel = ref(defaultPreset.defaultTextModel ?? "");
 const visionModel = ref("");
 const targetLanguage = ref("zh-CN");
 const translationMode = ref<TranslationMode>("lazyViewport");
+const isUiPreferencesLoaded = ref(false);
 const uiTheme = ref<UiPreferences["theme"]>(defaultUiPreferences.theme);
 const uiLanguage = ref(defaultUiPreferences.uiLanguage);
 const timeoutMs = ref(30000);
@@ -187,6 +188,8 @@ async function loadUiPreferences() {
   } catch {
     uiTheme.value = defaultUiPreferences.theme;
     uiLanguage.value = defaultUiPreferences.uiLanguage;
+  } finally {
+    isUiPreferencesLoaded.value = true;
   }
 }
 
@@ -343,7 +346,10 @@ async function testConnection() {
 </script>
 
 <template>
-  <main class="yoyo-shell">
+  <main
+    v-if="isUiPreferencesLoaded"
+    class="yoyo-shell"
+  >
     <header class="page-header">
       <div class="page-header__inner">
         <h1>{{ t("settings.title") }}</h1>

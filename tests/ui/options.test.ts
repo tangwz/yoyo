@@ -50,6 +50,14 @@ function mockStorageRepositories() {
   });
 }
 
+async function renderReady(navigationName = "设置分区") {
+  const result = render(OptionsApp);
+
+  await screen.findByRole("navigation", { name: navigationName });
+
+  return result;
+}
+
 describe("options app", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -69,8 +77,8 @@ describe("options app", () => {
     window.history.pushState({}, "", "/options.html");
   });
 
-  it("renders provider, translation, privacy, and advanced settings", () => {
-    render(OptionsApp);
+  it("renders provider, translation, privacy, and advanced settings", async () => {
+    await renderReady();
 
     const navigation = screen.getByRole("navigation", { name: "设置分区" });
     expect(navigation).toBeVisible();
@@ -110,7 +118,7 @@ describe("options app", () => {
   it("renders options messages from the saved UI language", async () => {
     getUiPreferences.mockResolvedValue({ theme: "light", uiLanguage: "en-US" });
 
-    render(OptionsApp);
+    await renderReady("Settings sections");
 
     expect(
       await screen.findByRole("navigation", { name: "Settings sections" }),
@@ -128,10 +136,28 @@ describe("options app", () => {
     expect(screen.getByRole("option", { name: "Custom OpenAI compatible" })).toBeInTheDocument();
   });
 
+  it("does not render settings text before the stored UI language is loaded", async () => {
+    const uiPreferences = createDeferred<{ theme: "light"; uiLanguage: "en-US" }>();
+    getUiPreferences.mockReturnValue(uiPreferences.promise);
+
+    render(OptionsApp);
+
+    expect(screen.queryByRole("navigation", { name: "设置分区" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "设置" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Settings sections" })).not.toBeInTheDocument();
+
+    uiPreferences.resolve({ theme: "light", uiLanguage: "en-US" });
+
+    expect(
+      await screen.findByRole("navigation", { name: "Settings sections" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("navigation", { name: "设置分区" })).not.toBeInTheDocument();
+  });
+
   it("falls back to the default UI language when stored preferences are corrupted", async () => {
     getUiPreferences.mockResolvedValue({ theme: "light", uiLanguage: "fr-FR" });
 
-    render(OptionsApp);
+    await renderReady();
 
     expect(await screen.findByRole("navigation", { name: "设置分区" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "模型服务" })).toBeVisible();
@@ -141,15 +167,15 @@ describe("options app", () => {
   it("falls back to the default UI language when stored preferences are missing it", async () => {
     getUiPreferences.mockResolvedValue({ theme: "light" });
 
-    render(OptionsApp);
+    await renderReady();
 
     expect(await screen.findByRole("navigation", { name: "设置分区" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "模型服务" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "界面语言" })).toHaveValue("zh-CN");
   });
 
-  it("renders provider form fields and advanced controls", () => {
-    render(OptionsApp);
+  it("renders provider form fields and advanced controls", async () => {
+    await renderReady();
 
     expect(screen.getByRole("combobox", { name: "服务预设" })).toHaveDisplayValue("OpenAI");
     expect(screen.getByRole("textbox", { name: "显示名称" })).toHaveValue("OpenAI");
@@ -175,7 +201,7 @@ describe("options app", () => {
   });
 
   it("saves the selected UI language and rerenders options messages", async () => {
-    render(OptionsApp);
+    await renderReady();
 
     const languageSelect = await screen.findByRole("combobox", { name: "界面语言" });
     expect(languageSelect).toHaveValue("zh-CN");
@@ -196,7 +222,7 @@ describe("options app", () => {
   it("loads and saves translation preferences", async () => {
     getTranslationPreferences.mockResolvedValue({ mode: "fullPage" });
 
-    render(OptionsApp);
+    await renderReady();
 
     const modeSelect = await screen.findByRole("combobox", { name: "翻译模式" });
     await waitFor(() => {
@@ -217,7 +243,7 @@ describe("options app", () => {
     );
     Element.prototype.scrollIntoView = scrollIntoView;
 
-    render(OptionsApp);
+    await renderReady();
 
     expect(screen.getByText("首次使用前，请先配置模型服务。")).toBeVisible();
 
@@ -251,7 +277,7 @@ describe("options app", () => {
     ]);
     getActiveProviderId.mockResolvedValue("openai");
 
-    render(OptionsApp);
+    await renderReady();
 
     expect(await screen.findByDisplayValue("Custom Provider")).toBeVisible();
     expect(screen.getByRole("combobox", { name: "服务预设" })).toHaveDisplayValue(
@@ -273,7 +299,7 @@ describe("options app", () => {
   });
 
   it("fills provider fields from the selected preset", async () => {
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "deepseek");
 
@@ -285,7 +311,7 @@ describe("options app", () => {
   });
 
   it("saves the selected provider profile and activates it", async () => {
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "deepseek");
     await fireEvent.update(screen.getByRole("textbox", { name: "显示名称" }), "DeepSeek Work");
@@ -319,7 +345,7 @@ describe("options app", () => {
   });
 
   it("normalizes known preset model casing before saving", async () => {
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "openai");
     await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), " GPT-4.1-MINI ");
@@ -346,7 +372,7 @@ describe("options app", () => {
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "deepseek");
     await fireEvent.update(screen.getByRole("textbox", { name: "显示名称" }), "DeepSeek Work");
@@ -390,7 +416,7 @@ describe("options app", () => {
         ),
       ),
     );
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
@@ -415,7 +441,7 @@ describe("options app", () => {
         ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "custom");
     await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "Custom-Model");
@@ -438,7 +464,7 @@ describe("options app", () => {
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.update(
       screen.getByRole("textbox", { name: "接口地址" }),
@@ -460,7 +486,7 @@ describe("options app", () => {
 
   it("shows error feedback when testing the provider connection fails", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
@@ -473,7 +499,7 @@ describe("options app", () => {
 
   it("rerenders failed provider test feedback when the UI language changes", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
@@ -501,7 +527,7 @@ describe("options app", () => {
         }),
       ),
     );
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
@@ -525,7 +551,7 @@ describe("options app", () => {
         ),
       ),
     );
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
@@ -539,7 +565,7 @@ describe("options app", () => {
   it("ignores provider test results when the form changes before the request completes", async () => {
     const response = createDeferred<Response>();
     vi.stubGlobal("fetch", vi.fn().mockReturnValue(response.promise));
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
     await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "gpt-4.1");
@@ -569,7 +595,7 @@ describe("options app", () => {
         }),
       ),
     );
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
@@ -579,7 +605,7 @@ describe("options app", () => {
   });
 
   it("normalizes blank numeric request params before saving", async () => {
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.update(screen.getByRole("spinbutton", { name: "超时时间" }), "");
     await fireEvent.update(screen.getByRole("spinbutton", { name: "温度" }), "");
@@ -600,7 +626,7 @@ describe("options app", () => {
 
   it("shows error feedback when saving a provider profile fails", async () => {
     saveProfile.mockRejectedValueOnce(new Error("storage failed"));
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "保存翻译服务" }));
 
