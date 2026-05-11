@@ -128,6 +128,26 @@ describe("options app", () => {
     expect(screen.getByRole("option", { name: "Custom OpenAI compatible" })).toBeInTheDocument();
   });
 
+  it("falls back to the default UI language when stored preferences are corrupted", async () => {
+    getUiPreferences.mockResolvedValue({ theme: "light", uiLanguage: "fr-FR" });
+
+    render(OptionsApp);
+
+    expect(await screen.findByRole("navigation", { name: "设置分区" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "模型服务" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "界面语言" })).toHaveValue("zh-CN");
+  });
+
+  it("falls back to the default UI language when stored preferences are missing it", async () => {
+    getUiPreferences.mockResolvedValue({ theme: "light" });
+
+    render(OptionsApp);
+
+    expect(await screen.findByRole("navigation", { name: "设置分区" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "模型服务" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "界面语言" })).toHaveValue("zh-CN");
+  });
+
   it("renders provider form fields and advanced controls", () => {
     render(OptionsApp);
 

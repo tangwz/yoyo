@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 
 import {
+  isOptionsUiLanguage,
   optionsMessages,
   providerErrorMessageKeys,
   type OptionsMessageKey,
@@ -175,8 +176,10 @@ async function loadUiPreferences() {
   try {
     const storage = createStorageRepositories();
     const preferences = await storage.uiPreferences.get();
-    uiTheme.value = preferences.theme;
-    uiLanguage.value = preferences.uiLanguage;
+    uiTheme.value = preferences.theme === "light" ? preferences.theme : defaultUiPreferences.theme;
+    uiLanguage.value = isOptionsUiLanguage(preferences.uiLanguage)
+      ? preferences.uiLanguage
+      : defaultUiPreferences.uiLanguage;
   } catch {
     uiTheme.value = defaultUiPreferences.theme;
     uiLanguage.value = defaultUiPreferences.uiLanguage;

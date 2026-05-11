@@ -3,6 +3,10 @@ import type { UiPreferences } from "@/storage/defaults";
 
 export type OptionsUiLanguage = UiPreferences["uiLanguage"];
 
+export function isOptionsUiLanguage(value: unknown): value is OptionsUiLanguage {
+  return value === "zh-CN" || value === "en-US";
+}
+
 export const optionsMessages = {
   "zh-CN": {
     "settings.title": "设置",
