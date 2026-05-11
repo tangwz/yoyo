@@ -1,5 +1,9 @@
 import { AnchorRegistry } from "@/content/anchors";
-import { collectPageSegments, priorityForElement } from "@/content/domExtraction";
+import {
+  type SegmentCollection,
+  collectPageSegments,
+  priorityForElement,
+} from "@/content/domExtraction";
 import { isPageUrlSupported } from "@/content/domEligibility";
 import {
   applyTranslations,
@@ -32,6 +36,7 @@ let lazyReportTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
 let reportedLazySegmentIds = new Set<string>();
 let failedLazySegmentIds = new Set<string>();
 let currentSegmentsById = new Map<string, PageSegment>();
+let lazyCollectionComplete = true;
 
 export async function estimatePage(): Promise<PageTranslationEstimate> {
   if (!isPageUrlSupported(location.href)) {
@@ -65,6 +70,7 @@ function stopLazySegmentReporting(): void {
   window.removeEventListener("resize", scheduleLazySegmentReport);
   lazyReportTaskId = undefined;
   lazyRecoverySnapshot = undefined;
+  lazyCollectionComplete = true;
   reportedLazySegmentIds = new Set();
   failedLazySegmentIds = new Set();
 }
@@ -84,7 +90,9 @@ function scheduleLazySegmentReport(): void {
   }, 100);
 }
 
-async function reportVisibleLazySegments(): Promise<void> {
+async function reportVisibleLazySegments(
+  options: { forceRecovery?: boolean } = {},
+): Promise<void> {
   const taskId = lazyReportTaskId;
   if (!taskId) {
     return;
@@ -106,7 +114,12 @@ async function reportVisibleLazySegments(): Promise<void> {
     .filter((anchor) => !anchor.sourceNode.isConnected)
     .map((anchor) => anchor.segmentId);
 
-  if (segmentIds.length === 0 && failedSegmentIds.length === 0) {
+  const recovery = buildLazyRecoverySnapshot(taskId);
+  if (
+    segmentIds.length === 0 &&
+    failedSegmentIds.length === 0 &&
+    !(options.forceRecovery && recovery)
+  ) {
     return;
   }
 
@@ -118,7 +131,6 @@ async function reportVisibleLazySegments(): Promise<void> {
   if (failedSegmentIds.length > 0) {
     request.failedSegmentIds = failedSegmentIds;
   }
-  const recovery = buildLazyRecoverySnapshot(taskId);
   if (recovery) {
     request.recovery = recovery;
   }
@@ -163,6 +175,7 @@ function buildLazyRecoverySnapshot(taskId: string): LazySegmentRecoverySnapshot 
 
   return {
     ...lazyRecoverySnapshot,
+    collectionComplete: lazyCollectionComplete,
     segments: [...currentSegmentsById.values()],
     processedSegmentIds,
     failedSegmentIds: [...failedLazySegmentIds],
@@ -175,6 +188,7 @@ function startLazySegmentReporting(
 ): void {
   lazyReportTaskId = taskId;
   lazyRecoverySnapshot = recoverySnapshot;
+  lazyCollectionComplete = false;
   reportedLazySegmentIds = new Set(
     currentAnchors
       .listByTask(taskId)
@@ -183,6 +197,56 @@ function startLazySegmentReporting(
   );
   window.addEventListener("scroll", scheduleLazySegmentReport, { passive: true });
   window.addEventListener("resize", scheduleLazySegmentReport, { passive: true });
+}
+
+function scheduleDeferredLazyCollection(taskId: string): void {
+  globalThis.setTimeout(() => {
+    void collectDeferredLazySegments(taskId);
+  }, 0);
+}
+
+async function collectDeferredLazySegments(taskId: string): Promise<void> {
+  const collection = await collectPageSegments(taskId);
+  if (activeTaskId !== taskId || lazyReportTaskId !== taskId) {
+    return;
+  }
+
+  mergeLazySegmentCollection(taskId, collection);
+  lazyCollectionComplete = true;
+  await reportVisibleLazySegments({ forceRecovery: true });
+}
+
+function mergeLazySegmentCollection(
+  taskId: string,
+  collection: SegmentCollection,
+): void {
+  const existingAnchorsByNode = new Map(
+    currentAnchors
+      .listByTask(taskId)
+      .map((anchor) => [anchor.sourceNode, anchor]),
+  );
+  const nextSegmentsById = new Map(currentSegmentsById);
+
+  for (const segment of collection.segments) {
+    const anchor = collection.anchors.get(segment.id);
+    if (!anchor) {
+      continue;
+    }
+
+    const existingAnchor = existingAnchorsByNode.get(anchor.sourceNode);
+    if (existingAnchor) {
+      nextSegmentsById.set(existingAnchor.segmentId, {
+        ...segment,
+        id: existingAnchor.segmentId,
+      });
+      continue;
+    }
+
+    currentAnchors.set(anchor);
+    nextSegmentsById.set(segment.id, segment);
+  }
+
+  currentSegmentsById = nextSegmentsById;
 }
 
 export async function collectSegments(
@@ -198,11 +262,23 @@ export async function collectSegments(
   stopLazySegmentReporting();
   removeTranslations();
 
-  const { segments, anchors } = await collectPageSegments(taskId);
+  const { segments, anchors } = await collectPageSegments(
+    taskId,
+    translationMode === "lazyViewport" ? { visibleRangeOnly: true } : undefined,
+  );
   currentSegmentsById = new Map(segments.map((segment) => [segment.id, segment]));
   currentAnchors = anchors;
   activeTaskId = taskId;
-  insertPendingTranslations(currentAnchors, taskId);
+
+  const initialPendingSegmentIds =
+    translationMode === "lazyViewport"
+      ? new Set(
+          segments
+            .filter((segment) => segment.priority !== "normal")
+            .map((segment) => segment.id),
+        )
+      : undefined;
+  insertPendingTranslations(currentAnchors, taskId, initialPendingSegmentIds);
 
   if (translationMode === "lazyViewport") {
     startLazySegmentReporting(taskId, {
@@ -211,6 +287,7 @@ export async function collectSegments(
       translationMode,
       segments,
     });
+    scheduleDeferredLazyCollection(taskId);
   }
 
   return segments;

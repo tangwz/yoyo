@@ -22,6 +22,7 @@ export type LazySegmentRecoverySnapshot = {
   sourceLanguage: string;
   targetLanguage: string;
   translationMode: TranslationMode;
+  collectionComplete?: boolean;
   segments: PageSegment[];
   processedSegmentIds: string[];
   failedSegmentIds?: string[];
@@ -44,7 +45,12 @@ export type ContentRequest =
 
 export type ContentResponse =
   | { type: "estimatePageResult"; estimate: PageTranslationEstimate }
-  | { type: "collectSegmentsResult"; taskId: string; segments: PageSegment[] }
+  | {
+      type: "collectSegmentsResult";
+      taskId: string;
+      segments: PageSegment[];
+      collectionComplete?: boolean;
+    }
   | {
       type: "contentActionResult";
       success: boolean;

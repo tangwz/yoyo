@@ -119,6 +119,45 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("can collect only viewport and near-viewport segments", async () => {
+    document.body.innerHTML = `
+      <article>
+        <p id="visible">Visible paragraph.</p>
+        <p id="near">Near paragraph.</p>
+        <p id="far">Far paragraph.</p>
+      </article>
+    `;
+
+    const rects: Record<string, Partial<DOMRect>> = {
+      visible: { top: 10, bottom: 30 },
+      near: { top: 180, bottom: 210 },
+      far: { top: 420, bottom: 450 },
+    };
+
+    for (const [id, rect] of Object.entries(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rect.top ?? 0,
+          top: rect.top ?? 0,
+          bottom: rect.bottom ?? 0,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: (rect.bottom ?? 0) - (rect.top ?? 0),
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    const result = await collectPageSegments("task-1", { visibleRangeOnly: true });
+
+    expect(result.segments.map((segment) => [segment.id, segment.priority])).toEqual([
+      ["seg_1", "viewport"],
+      ["seg_2", "nearViewport"],
+    ]);
+  });
+
   it("preserves inline child punctuation spacing", async () => {
     document.body.innerHTML = `
       <article>

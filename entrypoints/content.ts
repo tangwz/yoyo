@@ -44,15 +44,17 @@ export default defineContentScript({
               ContentRequest,
               { type: "collectSegments" }
             >;
+            const segments = await collectSegments(
+              request.taskId,
+              request.translationMode,
+              request.sourceLanguage,
+              request.targetLanguage,
+            );
             return {
               type: "collectSegmentsResult",
               taskId: request.taskId,
-              segments: await collectSegments(
-                request.taskId,
-                request.translationMode,
-                request.sourceLanguage,
-                request.targetLanguage,
-              ),
+              segments,
+              collectionComplete: request.translationMode !== "lazyViewport",
             };
           }
           case "applyTranslations": {

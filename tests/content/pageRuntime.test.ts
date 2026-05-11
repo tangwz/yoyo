@@ -26,6 +26,17 @@ describe("page runtime", () => {
       .happyDOM.setURL(url);
   };
 
+  async function flushDeferredLazyCollection(): Promise<void> {
+    const previousCallCount = runtimeMock.sendRuntimeMessage.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage.mock.calls.length).toBeGreaterThan(
+        previousCallCount,
+      );
+    });
+    runtimeMock.sendRuntimeMessage.mockClear();
+  }
+
   beforeEach(() => {
     removePageTranslations();
     document.body.innerHTML = "";
@@ -86,6 +97,57 @@ describe("page runtime", () => {
     ).toBe(document.querySelector("#first"));
   });
 
+  it("inserts lazy pending indicators only for viewport and near-viewport segments", async () => {
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+        <p id="third">Third readable paragraph.</p>
+      </article>
+    `;
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 180, bottom: 210 },
+      third: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+
+    expect(
+      [
+        ...document.querySelectorAll<HTMLElement>(
+          "[data-yoyo-translation][data-yoyo-pending='true']",
+        ),
+      ].map((node) => node.dataset.yoyoSegmentId),
+    ).toEqual(["seg_1", "seg_2"]);
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
   it("reports newly visible lazy segments after scrolling", async () => {
     vi.useFakeTimers();
     const originalInnerHeight = window.innerHeight;
@@ -125,7 +187,7 @@ describe("page runtime", () => {
     }
 
     await collectSegments("task-1", "lazyViewport");
-    runtimeMock.sendRuntimeMessage.mockClear();
+    await flushDeferredLazyCollection();
 
     rects.third = { top: 80, bottom: 96 };
     window.dispatchEvent(new Event("scroll"));
@@ -152,19 +214,6 @@ describe("page runtime", () => {
       configurable: true,
       value: 100,
     });
-    runtimeMock.sendRuntimeMessage
-      .mockRejectedValueOnce(new Error("temporary failure"))
-      .mockResolvedValueOnce({
-        type: "taskProgress",
-        progress: {
-          taskId: "task-1",
-          state: "waitingForViewport",
-          total: 2,
-          translated: 1,
-          failed: 0,
-        },
-      });
-
     document.body.innerHTML = `
       <article>
         <p id="first">First readable paragraph.</p>
@@ -194,7 +243,19 @@ describe("page runtime", () => {
     }
 
     await collectSegments("task-1", "lazyViewport");
-    runtimeMock.sendRuntimeMessage.mockClear();
+    await flushDeferredLazyCollection();
+    runtimeMock.sendRuntimeMessage
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce({
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "waitingForViewport",
+          total: 2,
+          translated: 1,
+          failed: 0,
+        },
+      });
 
     rects.second = { top: 80, bottom: 96 };
     window.dispatchEvent(new Event("scroll"));
@@ -225,29 +286,6 @@ describe("page runtime", () => {
       configurable: true,
       value: 100,
     });
-    runtimeMock.sendRuntimeMessage
-      .mockResolvedValueOnce({
-        type: "taskProgress",
-        progress: {
-          taskId: "task-1",
-          state: "cancelled",
-          total: 0,
-          translated: 0,
-          failed: 0,
-          errorMessage: "Translation task is no longer available. Start translation again.",
-        },
-      })
-      .mockResolvedValueOnce({
-        type: "taskProgress",
-        progress: {
-          taskId: "task-1",
-          state: "waitingForViewport",
-          total: 2,
-          translated: 1,
-          failed: 0,
-        },
-      });
-
     document.body.innerHTML = `
       <article>
         <p id="first">First readable paragraph.</p>
@@ -277,7 +315,29 @@ describe("page runtime", () => {
     }
 
     await collectSegments("task-1", "lazyViewport");
-    runtimeMock.sendRuntimeMessage.mockClear();
+    await flushDeferredLazyCollection();
+    runtimeMock.sendRuntimeMessage
+      .mockResolvedValueOnce({
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "cancelled",
+          total: 0,
+          translated: 0,
+          failed: 0,
+          errorMessage: "Translation task is no longer available. Start translation again.",
+        },
+      })
+      .mockResolvedValueOnce({
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "waitingForViewport",
+          total: 2,
+          translated: 1,
+          failed: 0,
+        },
+      });
 
     rects.second = { top: 80, bottom: 96 };
     window.dispatchEvent(new Event("scroll"));
@@ -358,7 +418,7 @@ describe("page runtime", () => {
     }
 
     await collectSegments("task-1", "lazyViewport");
-    runtimeMock.sendRuntimeMessage.mockClear();
+    await flushDeferredLazyCollection();
 
     rects.second = { top: 80, bottom: 96 };
     window.dispatchEvent(new Event("scroll"));
@@ -373,6 +433,7 @@ describe("page runtime", () => {
 
     rects.second = { top: 420, bottom: 450 };
     await collectSegments("task-2", "lazyViewport");
+    await flushDeferredLazyCollection();
     resolveFirstReport?.({
       type: "taskProgress",
       progress: {
@@ -384,14 +445,14 @@ describe("page runtime", () => {
       },
     });
     await Promise.resolve();
+    runtimeMock.sendRuntimeMessage.mockClear();
 
     rects.second = { top: 80, bottom: 96 };
     window.dispatchEvent(new Event("scroll"));
     await vi.advanceTimersByTimeAsync(150);
 
-    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledTimes(2);
-    expect(runtimeMock.sendRuntimeMessage).toHaveBeenNthCalledWith(
-      2,
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledTimes(1);
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "enqueueLazySegments",
         taskId: "task-2",
@@ -442,7 +503,7 @@ describe("page runtime", () => {
     }
 
     await collectSegments("task-1", "lazyViewport");
-    runtimeMock.sendRuntimeMessage.mockClear();
+    await flushDeferredLazyCollection();
 
     document.querySelector("#second")?.remove();
     window.dispatchEvent(new Event("scroll"));
@@ -506,6 +567,7 @@ describe("page runtime", () => {
     }
 
     await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
     applyTranslationResults("task-1", [
       { segmentId: "seg_1", translatedText: "第一段。" },
       { segmentId: "seg_2", translatedText: "第二段。" },

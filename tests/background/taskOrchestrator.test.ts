@@ -641,6 +641,160 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("requests current viewport segments before nearby segments from earlier DOM order", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+    const requestedIds: string[][] = [];
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({
+              id: "above-normal",
+              order: 1,
+              sourceText: "Far above.",
+              textHash: "hash-above-normal",
+              priority: "normal",
+            }),
+            segment({
+              id: "above-near",
+              order: 2,
+              sourceText: "Near above.",
+              textHash: "hash-above-near",
+              priority: "nearViewport",
+            }),
+            segment({
+              id: "current-viewport",
+              order: 3,
+              sourceText: "Current viewport.",
+              textHash: "hash-current-viewport",
+              priority: "viewport",
+            }),
+            segment({
+              id: "below-near",
+              order: 4,
+              sourceText: "Near below.",
+              textHash: "hash-below-near",
+              priority: "nearViewport",
+            }),
+            segment({
+              id: "below-normal",
+              order: 5,
+              sourceText: "Far below.",
+              textHash: "hash-below-normal",
+              priority: "normal",
+            }),
+          ],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+      const ids = input.items?.map((item) => item.id) ?? [];
+      requestedIds.push(ids);
+      return {
+        text: JSON.stringify({
+          items: ids.map((id) => ({ id, text: `Translated ${id}` })),
+        }),
+        model: "gpt-4.1-mini",
+      };
+    });
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+
+    expect(requestedIds).toEqual([["current-viewport", "above-near", "below-near"]]);
+    expect(progress).toMatchObject({
+      state: "waitingForViewport",
+      total: 5,
+      translated: 3,
+    });
+  });
+
+  it("merges lazy recovery segments into an active task before enqueueing", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          collectionComplete: false,
+          segments: [segment({ id: "visible", sourceText: "Visible.", priority: "viewport" })],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+      const ids = input.items?.map((item) => item.id) ?? [];
+      return {
+        text: JSON.stringify({
+          items: ids.map((id) => ({ id, text: `Translated ${id}` })),
+        }),
+        model: "gpt-4.1-mini",
+      };
+    });
+
+    const initialProgress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    expect(initialProgress).toMatchObject({
+      state: "waitingForViewport",
+      total: 1,
+      translated: 1,
+    });
+
+    const progress = await orchestrator.enqueueLazySegments(
+      "task-1",
+      ["normal"],
+      [],
+      {
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        collectionComplete: true,
+        processedSegmentIds: ["visible"],
+        segments: [
+          segment({ id: "visible", sourceText: "Visible.", priority: "viewport" }),
+          segment({
+            id: "normal",
+            order: 2,
+            sourceText: "Normal.",
+            textHash: "hash-normal",
+            priority: "normal",
+          }),
+        ],
+      },
+    );
+
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(generateText.mock.calls[1]?.[0].prompt).toContain("normal");
+    expect(progress).toMatchObject({
+      state: "completed",
+      total: 2,
+      translated: 2,
+      failed: 0,
+    });
+  });
+
   it("returns cancelled progress when lazy enqueue references a missing task", async () => {
     const { orchestrator } = createOrchestrator();
 
@@ -961,6 +1115,57 @@ describe("TranslationTaskOrchestrator", () => {
       translated: 2,
       failed: 0,
     });
+  });
+
+  it("backs off before retrying missing streamed items after a rate-limited partial stream", async () => {
+    const { orchestrator, generateText, streamText, sendToContent } = createOrchestrator();
+    let resolveFirstApply: (() => void) | undefined;
+    const firstApply = new Promise<void>((resolve) => {
+      resolveFirstApply = resolve;
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({ id: "segment-1", sourceText: "One." }),
+            segment({ id: "segment-2", order: 2, sourceText: "Two.", textHash: "hash-2" }),
+          ],
+        };
+      }
+      if (message.type === "applyTranslations" && message.items[0]?.segmentId === "segment-1") {
+        resolveFirstApply?.();
+      }
+      return { type: "contentActionResult", success: true };
+    });
+    streamText
+      .mockImplementationOnce(() =>
+        (async function* () {
+          yield { text: '{"id":"segment-1","text":"一。"}\n' };
+          throw new ProviderError("rateLimited", "Provider rate limit exceeded.", 429);
+        })(),
+      )
+      .mockImplementationOnce(() => streamChunks(['{"id":"segment-2","text":"二。"}\n']));
+
+    const running = orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    await firstApply;
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 100));
+    expect(streamText).toHaveBeenCalledTimes(1);
+
+    await expect(running).resolves.toMatchObject({
+      state: "completed",
+      translated: 2,
+      failed: 0,
+    });
+    expect(generateText).not.toHaveBeenCalled();
+    expect(streamText).toHaveBeenCalledTimes(2);
   });
 
   it("retries only failed fan-out members after a partial streaming apply", async () => {

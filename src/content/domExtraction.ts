@@ -8,6 +8,10 @@ export type SegmentCollection = {
   anchors: AnchorRegistry;
 };
 
+export type SegmentCollectionOptions = {
+  visibleRangeOnly?: boolean;
+};
+
 const leafReadableTags = new Set(["P", "LI", "BLOCKQUOTE"]);
 const headingTags = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
 const listTags = new Set(["UL", "OL"]);
@@ -119,8 +123,16 @@ export function priorityForElement(element: Element): SegmentPriority {
   return "normal";
 }
 
+function isOutsideVisibleCollectionRange(element: Element): boolean {
+  const rect = element.getBoundingClientRect();
+  const viewportHeight = Math.max(1, window.innerHeight || document.documentElement.clientHeight);
+
+  return rect.bottom <= -viewportHeight * 2 || rect.top >= viewportHeight * 3;
+}
+
 export async function collectPageSegments(
   taskId: string,
+  options: SegmentCollectionOptions = {},
 ): Promise<SegmentCollection> {
   const anchors = new AnchorRegistry();
   const segments: PageSegment[] = [];
@@ -130,13 +142,18 @@ export async function collectPageSegments(
     element: Element,
     sourceText: string,
   ): Promise<void> {
+    const priority = priorityForElement(element);
+    if (options.visibleRangeOnly && priority === "normal") {
+      return;
+    }
+
     const segmentId = `seg_${order}`;
     segments.push({
       id: segmentId,
       order,
       sourceText,
       kind: segmentKindFor(element),
-      priority: priorityForElement(element),
+      priority,
       pathHint: pathHintFor(element),
       textHash: await hashNormalizedText(sourceText),
     });
@@ -146,6 +163,9 @@ export async function collectPageSegments(
 
   async function walk(element: Element): Promise<void> {
     if (isElementSkippable(element)) return;
+    if (options.visibleRangeOnly && element !== document.body && isOutsideVisibleCollectionRange(element)) {
+      return;
+    }
 
     if (element.tagName === "LI" && hasNestedList(element)) {
       const sourceText = collectNestedListItemOwnText(element);

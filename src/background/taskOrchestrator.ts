@@ -74,12 +74,18 @@ type RunningTask = {
   consecutiveSuccessfulBatches: number;
   activeProviderRequests: number;
   providerSlotWaiters: Array<() => void>;
+  collectionComplete: boolean;
 };
 
 type TranslationBatchInput = TaskTranslationContext & {
   task: RunningTask;
   segments: PageSegment[];
   fanOutGroups: Map<string, PageSegment[]>;
+};
+
+type TranslationBatchResult = {
+  missingSegments: PageSegment[];
+  error?: unknown;
 };
 
 type ApplyTranslationsOptions = {
@@ -110,6 +116,10 @@ export class TranslationTaskOrchestrator {
     recovery?: LazySegmentRecoverySnapshot & { tabId: number },
   ): Promise<TranslationProgress> {
     const task = this.tasks.get(taskId) ?? (await this.recoverLazyTask(taskId, recovery));
+    if (task && recovery) {
+      this.mergeLazyRecoverySnapshot(task, recovery);
+    }
+
     if (!task || !task.context || this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state)) {
       return task ? this.cloneProgress(task.progress) : this.missingTaskProgress(taskId);
     }
@@ -140,6 +150,7 @@ export class TranslationTaskOrchestrator {
 
     const task = this.createTask(taskId, recovery.tabId);
     task.segmentsById = new Map(recovery.segments.map((segment) => [segment.id, segment]));
+    task.collectionComplete = recovery.collectionComplete ?? true;
     task.context = {
       profile,
       sourceLanguage: recovery.sourceLanguage,
@@ -169,6 +180,47 @@ export class TranslationTaskOrchestrator {
     });
 
     return task;
+  }
+
+  private mergeLazyRecoverySnapshot(
+    task: RunningTask,
+    recovery: LazySegmentRecoverySnapshot,
+  ): void {
+    const previousTotal = task.segmentsById.size;
+
+    for (const segment of recovery.segments) {
+      task.segmentsById.set(segment.id, segment);
+    }
+
+    for (const segmentId of recovery.processedSegmentIds) {
+      if (task.segmentsById.has(segmentId)) {
+        task.processedSegmentIds.add(segmentId);
+      }
+    }
+
+    const failedIds = [...new Set(recovery.failedSegmentIds ?? [])].filter(
+      (segmentId) =>
+        task.segmentsById.has(segmentId) &&
+        !task.processedSegmentIds.has(segmentId),
+    );
+    for (const segmentId of failedIds) {
+      task.processedSegmentIds.add(segmentId);
+    }
+
+    if (recovery.collectionComplete === true) {
+      task.collectionComplete = true;
+    }
+
+    const progress: Partial<TranslationProgress> = {};
+    if (task.segmentsById.size !== previousTotal) {
+      progress.total = task.segmentsById.size;
+    }
+    if (failedIds.length > 0) {
+      progress.failed = task.progress.failed + failedIds.length;
+    }
+    if (Object.keys(progress).length > 0) {
+      this.updateProgress(task, progress);
+    }
   }
 
   private markSegmentsFailed(
@@ -230,6 +282,7 @@ export class TranslationTaskOrchestrator {
 
       const segments = collectResponse.segments;
       task.segmentsById = new Map(segments.map((segment) => [segment.id, segment]));
+      task.collectionComplete = collectResponse.collectionComplete ?? true;
       task.context = {
         profile,
         sourceLanguage: input.sourceLanguage,
@@ -308,6 +361,7 @@ export class TranslationTaskOrchestrator {
       consecutiveSuccessfulBatches: 0,
       activeProviderRequests: 0,
       providerSlotWaiters: [],
+      collectionComplete: true,
       progress: {
         taskId,
         state: "collecting",
@@ -436,19 +490,23 @@ export class TranslationTaskOrchestrator {
     attempt: number,
   ): Promise<void> {
     try {
-      const missingSegments = await this.requestAndApplyBatch(input);
+      const result = await this.requestAndApplyBatch(input);
 
       if (this.isTaskCancelled(input.task)) {
         return;
       }
 
-      this.recordSuccessfulBatch(input.task);
+      if (result.error) {
+        await this.handleBatchError(input.task, result.error);
+      } else {
+        this.recordSuccessfulBatch(input.task);
+      }
 
-      if (missingSegments.length === 0) {
+      if (result.missingSegments.length === 0) {
         return;
       }
 
-      await this.retryOrDegradeBatch({ ...input, segments: missingSegments }, attempt);
+      await this.retryOrDegradeBatch({ ...input, segments: result.missingSegments }, attempt);
     } catch (error) {
       if (this.isTaskCancelled(input.task)) {
         return;
@@ -459,7 +517,9 @@ export class TranslationTaskOrchestrator {
     }
   }
 
-  private async requestAndApplyBatch(input: TranslationBatchInput): Promise<PageSegment[]> {
+  private async requestAndApplyBatch(
+    input: TranslationBatchInput,
+  ): Promise<TranslationBatchResult> {
     if (this.dependencies.provider.streamText) {
       const streamingResult = await this.requestAndApplyStreamingBatch(input);
       if (streamingResult) {
@@ -472,7 +532,7 @@ export class TranslationTaskOrchestrator {
 
   private async requestAndApplyStreamingBatch(
     input: TranslationBatchInput,
-  ): Promise<PageSegment[] | undefined> {
+  ): Promise<TranslationBatchResult | undefined> {
     const streamText = this.dependencies.provider.streamText;
     if (!streamText) {
       return undefined;
@@ -487,7 +547,7 @@ export class TranslationTaskOrchestrator {
 
     try {
       if (!(await this.acquireProviderRequestSlot(input.task))) {
-        return [];
+        return { missingSegments: [] };
       }
       acquiredProviderSlot = true;
 
@@ -501,7 +561,7 @@ export class TranslationTaskOrchestrator {
         abortSignal: input.task.controller.signal,
       })) {
         if (this.isTaskCancelled(input.task)) {
-          return [];
+          return { missingSegments: [] };
         }
 
         for (const item of parser.push(chunk.text)) {
@@ -519,10 +579,14 @@ export class TranslationTaskOrchestrator {
         }
       }
 
-      return input.segments.filter((segment) => !appliedRepresentativeIds.has(segment.id));
+      return {
+        missingSegments: input.segments.filter(
+          (segment) => !appliedRepresentativeIds.has(segment.id),
+        ),
+      };
     } catch (error) {
       if (this.isTaskCancelled(input.task)) {
-        return [];
+        return { missingSegments: [] };
       }
 
       if (!sawValidItem) {
@@ -530,7 +594,12 @@ export class TranslationTaskOrchestrator {
         return undefined;
       }
 
-      return input.segments.filter((segment) => !appliedRepresentativeIds.has(segment.id));
+      return {
+        missingSegments: input.segments.filter(
+          (segment) => !appliedRepresentativeIds.has(segment.id),
+        ),
+        error,
+      };
     } finally {
       if (acquiredProviderSlot) {
         this.releaseProviderRequestSlot(input.task);
@@ -538,9 +607,11 @@ export class TranslationTaskOrchestrator {
     }
   }
 
-  private async requestAndApplyBufferedBatch(input: TranslationBatchInput): Promise<PageSegment[]> {
+  private async requestAndApplyBufferedBatch(
+    input: TranslationBatchInput,
+  ): Promise<TranslationBatchResult> {
     if (!(await this.acquireProviderRequestSlot(input.task))) {
-      return [];
+      return { missingSegments: [] };
     }
 
     let response: Awaited<ReturnType<TranslationTaskOrchestratorDependencies["provider"]["generateText"]>>;
@@ -559,14 +630,14 @@ export class TranslationTaskOrchestrator {
     }
 
     if (this.isTaskCancelled(input.task)) {
-      return [];
+      return { missingSegments: [] };
     }
 
     const expectedSegmentIds = input.segments.map((segment) => segment.id);
     const parsed = parseTranslationBatchResult(response.text, expectedSegmentIds);
 
     if (this.isTaskCancelled(input.task)) {
-      return [];
+      return { missingSegments: [] };
     }
 
     if (parsed.items.length > 0) {
@@ -581,7 +652,9 @@ export class TranslationTaskOrchestrator {
     }
 
     const missingIds = new Set(parsed.missingSegmentIds);
-    return input.segments.filter((segment) => missingIds.has(segment.id));
+    return {
+      missingSegments: input.segments.filter((segment) => missingIds.has(segment.id)),
+    };
   }
 
   private async applyAndCacheRepresentativeItem(
@@ -828,6 +901,11 @@ export class TranslationTaskOrchestrator {
 
     if (task.inFlightSegmentIds.size > 0) {
       this.updateProgress(task, { state: "translating" });
+      return;
+    }
+
+    if (task.context?.translationMode === "lazyViewport" && !task.collectionComplete) {
+      this.updateProgress(task, { state: "waitingForViewport" });
       return;
     }
 
