@@ -632,53 +632,50 @@ export class TranslationTaskOrchestrator {
   ): Promise<void> {
     let nextIndex = 0;
     let activeCount = 0;
-    const waiters: Array<() => void> = [];
-    const wakeWorkers = () => {
-      for (const wake of waiters.splice(0)) {
-        wake();
-      }
-    };
-    const waitForCapacity = () =>
-      new Promise<void>((resolve) => {
-        waiters.push(resolve);
-      });
 
-    const runNext = async (workerIndex: number): Promise<void> => {
-      while (!this.isTaskCancelled(task)) {
-        while (
-          !this.isTaskCancelled(task) &&
-          (workerIndex >= task.currentConcurrency || activeCount >= task.currentConcurrency)
-        ) {
-          if (workerIndex >= task.currentConcurrency) {
-            return;
-          }
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = () => {
+        settled = true;
+        resolve();
+      };
+      const fail = (error: unknown) => {
+        settled = true;
+        reject(error);
+      };
 
-          await waitForCapacity();
-        }
-
-        const index = nextIndex;
-        nextIndex += 1;
-        const batch = batches[index];
-
-        if (!batch) {
+      const schedule = () => {
+        if (settled) {
           return;
         }
 
-        activeCount += 1;
-        try {
-          await worker(batch);
-        } finally {
-          activeCount -= 1;
-          wakeWorkers();
+        if (this.isTaskCancelled(task)) {
+          if (activeCount === 0) {
+            finish();
+          }
+          return;
         }
-      }
-    };
 
-    await Promise.all(
-      Array.from({ length: Math.min(task.currentConcurrency, batches.length) }, (_value, index) =>
-        runNext(index),
-      ),
-    );
+        while (activeCount < task.currentConcurrency && nextIndex < batches.length) {
+          const batch = batches[nextIndex];
+          nextIndex += 1;
+          activeCount += 1;
+
+          Promise.resolve(worker(batch))
+            .catch(fail)
+            .finally(() => {
+              activeCount -= 1;
+              schedule();
+            });
+        }
+
+        if (activeCount === 0 && nextIndex >= batches.length) {
+          finish();
+        }
+      };
+
+      schedule();
+    });
   }
 
   private async handleBatchError(task: RunningTask, error: unknown): Promise<void> {
