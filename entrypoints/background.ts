@@ -121,6 +121,7 @@ export default defineBackground(() => {
             progress: await orchestrator.enqueueLazySegments(
               request.taskId,
               request.segmentIds,
+              request.failedSegmentIds,
             ),
           };
         case "cancelTask":

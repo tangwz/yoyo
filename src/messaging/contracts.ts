@@ -60,7 +60,12 @@ export type BackgroundRequest =
       section?: OptionsSection;
       source?: OptionsOpenSource;
     }
-  | { type: "enqueueLazySegments"; taskId: string; segmentIds: string[] };
+  | {
+      type: "enqueueLazySegments";
+      taskId: string;
+      segmentIds: string[];
+      failedSegmentIds?: string[];
+    };
 
 export type BackgroundResponse =
   | { type: "taskProgress"; progress: TranslationProgress }

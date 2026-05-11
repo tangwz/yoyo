@@ -98,11 +98,14 @@ export class TranslationTaskOrchestrator {
   async enqueueLazySegments(
     taskId: string,
     segmentIds: readonly string[],
+    failedSegmentIds: readonly string[] = [],
   ): Promise<TranslationProgress> {
     const task = this.tasks.get(taskId);
     if (!task || !task.context || this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state)) {
       return task ? this.cloneProgress(task.progress) : this.missingTaskProgress(taskId);
     }
+
+    this.markSegmentsFailed(task, failedSegmentIds, segmentIds);
 
     const segments = [...new Set(segmentIds)]
       .map((segmentId) => task.segmentsById.get(segmentId))
@@ -111,6 +114,30 @@ export class TranslationTaskOrchestrator {
     await this.processSegmentsForTask(task, segments);
     this.finishOrWaitForLazySegments(task);
     return this.cloneProgress(task.progress);
+  }
+
+  private markSegmentsFailed(
+    task: RunningTask,
+    segmentIds: readonly string[],
+    excludedSegmentIds: readonly string[] = [],
+  ): void {
+    const excludedIds = new Set(excludedSegmentIds);
+    const failedIds = [...new Set(segmentIds)].filter(
+      (segmentId) =>
+        task.segmentsById.has(segmentId) &&
+        !excludedIds.has(segmentId) &&
+        !task.processedSegmentIds.has(segmentId) &&
+        !task.inFlightSegmentIds.has(segmentId),
+    );
+
+    if (failedIds.length === 0) {
+      return;
+    }
+
+    for (const segmentId of failedIds) {
+      task.processedSegmentIds.add(segmentId);
+    }
+    this.incrementProgress(task, { failed: failedIds.length });
   }
 
   private createTranslatePageTask(input: TranslatePageInput): RunningTask {

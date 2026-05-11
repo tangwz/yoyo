@@ -16,7 +16,6 @@ import type {
 } from "@/messaging/contracts";
 import { sendRuntimeMessage } from "@/messaging/runtime";
 import {
-  isTerminalTaskState,
   type TranslationMode,
   type TranslationResultItem,
 } from "@/translation/types";
@@ -82,38 +81,49 @@ async function reportVisibleLazySegments(): Promise<void> {
     return;
   }
 
-  const segmentIds = currentAnchors
+  const reportableAnchors = currentAnchors
     .listByTask(taskId)
     .filter((anchor) => {
-      if (reportedLazySegmentIds.has(anchor.segmentId) || !anchor.sourceNode.isConnected) {
+      if (reportedLazySegmentIds.has(anchor.segmentId)) {
         return false;
       }
 
-      return priorityForElement(anchor.sourceNode) !== "normal";
-    })
+      return !anchor.sourceNode.isConnected || priorityForElement(anchor.sourceNode) !== "normal";
+    });
+  const segmentIds = reportableAnchors
+    .filter((anchor) => anchor.sourceNode.isConnected)
+    .map((anchor) => anchor.segmentId);
+  const failedSegmentIds = reportableAnchors
+    .filter((anchor) => !anchor.sourceNode.isConnected)
     .map((anchor) => anchor.segmentId);
 
-  if (segmentIds.length === 0) {
+  if (segmentIds.length === 0 && failedSegmentIds.length === 0) {
     return;
   }
 
+  const request: BackgroundRequest = {
+    type: "enqueueLazySegments",
+    taskId,
+    segmentIds,
+  };
+  if (failedSegmentIds.length > 0) {
+    request.failedSegmentIds = failedSegmentIds;
+  }
+
   const response = await Promise.resolve(
-    sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
-      type: "enqueueLazySegments",
-      taskId,
-      segmentIds,
-    }),
+    sendRuntimeMessage<BackgroundRequest, BackgroundResponse>(request),
   ).catch(() => undefined);
 
   if (
     !response ||
     response.type !== "taskProgress" ||
-    isTerminalTaskState(response.progress.state)
+    response.progress.state === "cancelled" ||
+    response.progress.state === "failed"
   ) {
     return;
   }
 
-  for (const segmentId of segmentIds) {
+  for (const segmentId of [...segmentIds, ...failedSegmentIds]) {
     reportedLazySegmentIds.add(segmentId);
   }
 }

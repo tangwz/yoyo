@@ -51,12 +51,14 @@ describe("messaging contracts", () => {
       type: "enqueueLazySegments",
       taskId: "task-1",
       segmentIds: ["seg_3"],
+      failedSegmentIds: ["seg_4"],
     } satisfies BackgroundRequest;
 
     expect(request).toEqual({
       type: "enqueueLazySegments",
       taskId: "task-1",
       segmentIds: ["seg_3"],
+      failedSegmentIds: ["seg_4"],
     });
   });
 

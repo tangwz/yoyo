@@ -652,6 +652,60 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("counts disconnected lazy segments as processed failures", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({ id: "segment-1", sourceText: "Visible.", priority: "viewport" }),
+            segment({
+              id: "segment-2",
+              order: 2,
+              sourceText: "Gone.",
+              textHash: "hash-2",
+              priority: "normal",
+            }),
+          ],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ id: "segment-1", text: "Translated visible." }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+
+    const initialProgress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+
+    expect(initialProgress).toMatchObject({
+      state: "waitingForViewport",
+      translated: 1,
+      failed: 0,
+    });
+
+    const afterDisconnect = await orchestrator.enqueueLazySegments("task-1", [], ["segment-2"]);
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(afterDisconnect).toMatchObject({
+      state: "completedWithErrors",
+      total: 2,
+      translated: 1,
+      failed: 1,
+    });
+  });
+
   it("applies streamed translation items as soon as each record is parsed", async () => {
     const { orchestrator, generateText, streamText, sendToContent } = createOrchestrator();
     const applyEvents: string[] = [];
