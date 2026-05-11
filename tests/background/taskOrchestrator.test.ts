@@ -815,6 +815,413 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("rejects stale lazy recovery when the same tab already has an active task", async () => {
+    let nextNow = 1000;
+    const createTaskId = vi.fn(() => "new-task");
+    const sendToContent = vi.fn<
+      (tabId: number, message: ContentRequest) => Promise<ContentResponse>
+    >();
+    const generateText = vi.fn<
+      (request: GenerateTextRequest) => Promise<{ text: string; model: string }>
+    >();
+    const { orchestrator } = createOrchestrator({
+      createTaskId,
+      now: vi.fn(() => {
+        nextNow += 1;
+        return nextNow;
+      }),
+      provider: { generateText },
+      sendToContent,
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          collectionComplete: false,
+          segments: [],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+
+    orchestrator.startTranslatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    await vi.waitFor(() => {
+      expect(orchestrator.getTaskForTab(7)).toMatchObject({
+        taskId: "new-task",
+        state: "waitingForViewport",
+      });
+    });
+
+    const staleProgress = await orchestrator.enqueueLazySegments(
+      "old-task",
+      ["segment-2"],
+      [],
+      {
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        segments: [
+          segment({ id: "segment-1", sourceText: "Old visible.", priority: "viewport" }),
+          segment({
+            id: "segment-2",
+            order: 2,
+            sourceText: "Old later.",
+            textHash: "hash-2",
+            priority: "normal",
+          }),
+        ],
+        processedSegmentIds: ["segment-1"],
+      },
+    );
+
+    expect(staleProgress).toMatchObject({
+      taskId: "old-task",
+      state: "cancelled",
+      total: 0,
+      translated: 0,
+      failed: 0,
+    });
+    expect(generateText).not.toHaveBeenCalled();
+    expect(orchestrator.getTaskForTab(7)).toMatchObject({
+      taskId: "new-task",
+      state: "waitingForViewport",
+    });
+  });
+
+  it("rejects stale lazy recovery when a task starts while loading the recovery profile", async () => {
+    let nextNow = 1000;
+    let resolveRecoveryProfile:
+      | ((profile: ProviderProfile | undefined) => void)
+      | undefined;
+    const createTaskId = vi.fn(() => "new-task");
+    const getProviderProfile = vi.fn(
+      () =>
+        new Promise<ProviderProfile | undefined>((resolve) => {
+          resolveRecoveryProfile = resolve;
+        }),
+    );
+    const sendToContent = vi.fn<
+      (tabId: number, message: ContentRequest) => Promise<ContentResponse>
+    >();
+    const generateText = vi.fn<
+      (request: GenerateTextRequest) => Promise<{ text: string; model: string }>
+    >();
+    const { orchestrator } = createOrchestrator({
+      createTaskId,
+      getProviderProfile,
+      now: vi.fn(() => {
+        nextNow += 1;
+        return nextNow;
+      }),
+      provider: { generateText },
+      sendToContent,
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          collectionComplete: false,
+          segments: [],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+
+    const staleRecovery = orchestrator.enqueueLazySegments(
+      "old-task",
+      ["segment-2"],
+      [],
+      {
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        providerId: "old-provider",
+        segments: [
+          segment({ id: "segment-1", sourceText: "Old visible.", priority: "viewport" }),
+          segment({
+            id: "segment-2",
+            order: 2,
+            sourceText: "Old later.",
+            textHash: "hash-2",
+            priority: "normal",
+          }),
+        ],
+        processedSegmentIds: ["segment-1"],
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(getProviderProfile).toHaveBeenCalledWith("old-provider");
+    });
+
+    orchestrator.startTranslatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    await vi.waitFor(() => {
+      expect(orchestrator.getTaskForTab(7)).toMatchObject({
+        taskId: "new-task",
+        state: "waitingForViewport",
+      });
+    });
+
+    resolveRecoveryProfile?.(providerProfile({ id: "old-provider" }));
+    const staleProgress = await staleRecovery;
+
+    expect(staleProgress).toMatchObject({
+      taskId: "old-task",
+      state: "cancelled",
+      total: 0,
+      translated: 0,
+      failed: 0,
+    });
+    expect(generateText).not.toHaveBeenCalled();
+    expect(orchestrator.getTaskForTab(7)).toMatchObject({
+      taskId: "new-task",
+      state: "waitingForViewport",
+    });
+  });
+
+  it("rejects stale lazy recovery when a task completes while loading the recovery profile", async () => {
+    let resolveRecoveryProfile:
+      | ((profile: ProviderProfile | undefined) => void)
+      | undefined;
+    const createTaskId = vi.fn(() => "new-task");
+    const getProviderProfile = vi.fn(
+      () =>
+        new Promise<ProviderProfile | undefined>((resolve) => {
+          resolveRecoveryProfile = resolve;
+        }),
+    );
+    const sendToContent = vi.fn<
+      (tabId: number, message: ContentRequest) => Promise<ContentResponse>
+    >();
+    const generateText = vi.fn<
+      (request: GenerateTextRequest) => Promise<{ text: string; model: string }>
+    >();
+    const { orchestrator } = createOrchestrator({
+      createTaskId,
+      getProviderProfile,
+      provider: { generateText },
+      sendToContent,
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({ id: "new-segment", sourceText: "New page.", priority: "viewport" }),
+          ],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+      return {
+        text: JSON.stringify({
+          items: (input.items ?? []).map((item) => ({
+            id: item.id,
+            text: `Translated ${item.id}`,
+          })),
+        }),
+        model: "gpt-4.1-mini",
+      };
+    });
+
+    const staleRecovery = orchestrator.enqueueLazySegments(
+      "old-task",
+      ["old-segment"],
+      [],
+      {
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        providerId: "old-provider",
+        segments: [
+          segment({ id: "old-visible", sourceText: "Old visible.", priority: "viewport" }),
+          segment({
+            id: "old-segment",
+            order: 2,
+            sourceText: "Old later.",
+            textHash: "hash-old",
+            priority: "normal",
+          }),
+        ],
+        processedSegmentIds: ["old-visible"],
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(getProviderProfile).toHaveBeenCalledWith("old-provider");
+    });
+
+    await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    expect(orchestrator.getTaskForTab(7)).toMatchObject({
+      taskId: "new-task",
+      state: "completed",
+    });
+
+    resolveRecoveryProfile?.(providerProfile({ id: "old-provider" }));
+    const staleProgress = await staleRecovery;
+
+    expect(staleProgress).toMatchObject({
+      taskId: "old-task",
+      state: "cancelled",
+      total: 0,
+      translated: 0,
+      failed: 0,
+    });
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(orchestrator.getTaskForTab(7)).toMatchObject({
+      taskId: "new-task",
+      state: "completed",
+    });
+  });
+
+  it("prefers the active tab task over a cancelled task created in the same millisecond", async () => {
+    const createTaskId = vi.fn()
+      .mockReturnValueOnce("new-task");
+    const { orchestrator, sendToContent } = createOrchestrator({
+      createTaskId,
+      now: vi.fn(() => 1000),
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          collectionComplete: false,
+          segments: [],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+
+    await orchestrator.enqueueLazySegments("old-task", [], [], {
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({ id: "segment-1", sourceText: "Old visible.", priority: "viewport" }),
+      ],
+      processedSegmentIds: ["segment-1"],
+    });
+
+    expect(orchestrator.getTaskForTab(7)).toMatchObject({
+      taskId: "old-task",
+      state: "waitingForViewport",
+    });
+
+    orchestrator.startTranslatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    await vi.waitFor(() => {
+      expect(orchestrator.getTaskForTab(7)).toMatchObject({
+        taskId: "new-task",
+        state: "waitingForViewport",
+      });
+    });
+  });
+
+  it("prefers the later tab task when terminal tasks share a timestamp", async () => {
+    const createTaskId = vi.fn()
+      .mockReturnValueOnce("new-task");
+    const { orchestrator, generateText, sendToContent } = createOrchestrator({
+      createTaskId,
+      now: vi.fn(() => 1000),
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({ id: "new-segment", sourceText: "New page.", priority: "viewport" }),
+          ],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+      return {
+        text: JSON.stringify({
+          items: (input.items ?? []).map((item) => ({
+            id: item.id,
+            text: `Translated ${item.id}`,
+          })),
+        }),
+        model: "gpt-4.1-mini",
+      };
+    });
+
+    await orchestrator.enqueueLazySegments("old-task", [], [], {
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: true,
+      segments: [
+        segment({ id: "old-segment", sourceText: "Old visible.", priority: "viewport" }),
+      ],
+      processedSegmentIds: ["old-segment"],
+    });
+    expect(orchestrator.getTaskForTab(7)).toMatchObject({
+      taskId: "old-task",
+      state: "completed",
+    });
+
+    await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+
+    expect(orchestrator.getTaskForTab(7)).toMatchObject({
+      taskId: "new-task",
+      state: "completed",
+    });
+  });
+
   it("recovers a missing lazy task from a long-page recovery snapshot", async () => {
     const { orchestrator, generateText, sendToContent } = createOrchestrator();
     const longSegments = Array.from({ length: 12 }, (_value, index) =>

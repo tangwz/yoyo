@@ -63,6 +63,7 @@ type TaskTranslationContext = {
 
 type RunningTask = {
   tabId: number;
+  sequence: number;
   controller: AbortController;
   progress: TranslationProgress;
   createdAt: number;
@@ -96,6 +97,7 @@ type ApplyTranslationsOptions = {
 export class TranslationTaskOrchestrator {
   private readonly tasks = new Map<string, RunningTask>();
   private readonly cache = new SessionTranslationCache();
+  private nextTaskSequence = 0;
 
   constructor(private readonly dependencies: TranslationTaskOrchestratorDependencies) {}
 
@@ -157,8 +159,21 @@ export class TranslationTaskOrchestrator {
       return undefined;
     }
 
+    if (this.hasTaskForTab(recovery.tabId)) {
+      return undefined;
+    }
+
     const profile = await this.getRecoveryProfile(recovery);
     if (!profile) {
+      return undefined;
+    }
+
+    const existingTask = this.tasks.get(taskId);
+    if (existingTask) {
+      return existingTask;
+    }
+
+    if (this.hasTaskForTab(recovery.tabId)) {
       return undefined;
     }
 
@@ -376,7 +391,15 @@ export class TranslationTaskOrchestrator {
   getTaskForTab(tabId: number): TranslationProgress | undefined {
     const task = [...this.tasks.values()]
       .filter((candidate) => candidate.tabId === tabId)
-      .sort((left, right) => right.createdAt - left.createdAt)[0];
+      .sort((left, right) => {
+        const leftTerminal = isTerminalTaskState(left.progress.state);
+        const rightTerminal = isTerminalTaskState(right.progress.state);
+        if (leftTerminal !== rightTerminal) {
+          return leftTerminal ? 1 : -1;
+        }
+
+        return right.createdAt - left.createdAt || right.sequence - left.sequence;
+      })[0];
 
     return task ? this.cloneProgress(task.progress) : undefined;
   }
@@ -385,6 +408,7 @@ export class TranslationTaskOrchestrator {
     const timestamp = this.dependencies.now();
     const task: RunningTask = {
       tabId,
+      sequence: ++this.nextTaskSequence,
       controller: new AbortController(),
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -415,6 +439,12 @@ export class TranslationTaskOrchestrator {
         this.cancelTask(task.progress.taskId, reason);
       }
     }
+  }
+
+  private hasTaskForTab(tabId: number): boolean {
+    return [...this.tasks.values()].some(
+      (task) => task.tabId === tabId,
+    );
   }
 
   private async processSegmentsForTask(
