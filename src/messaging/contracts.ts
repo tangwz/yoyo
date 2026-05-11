@@ -24,6 +24,7 @@ export type LazySegmentRecoverySnapshot = {
   translationMode: TranslationMode;
   segments: PageSegment[];
   processedSegmentIds: string[];
+  failedSegmentIds?: string[];
 };
 
 export type ContentRequest =

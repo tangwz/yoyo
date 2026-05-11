@@ -68,6 +68,7 @@ describe("messaging contracts", () => {
         translationMode: "lazyViewport",
         segments: [],
         processedSegmentIds: [],
+        failedSegmentIds: ["seg_4"],
       },
     } satisfies BackgroundRequest;
 
@@ -82,6 +83,7 @@ describe("messaging contracts", () => {
         translationMode: "lazyViewport",
         segments: [],
         processedSegmentIds: [],
+        failedSegmentIds: ["seg_4"],
       },
     });
   });

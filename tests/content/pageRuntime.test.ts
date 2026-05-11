@@ -408,6 +408,19 @@ describe("page runtime", () => {
     ]);
     runtimeMock.sendRuntimeMessage.mockClear();
 
+    document.querySelector("#paragraph-3")?.remove();
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: [],
+        failedSegmentIds: ["seg_3"],
+      }),
+    );
+    runtimeMock.sendRuntimeMessage.mockClear();
+
     rects["paragraph-10"] = { top: 80, bottom: 96 };
     window.dispatchEvent(new Event("scroll"));
     await vi.advanceTimersByTimeAsync(150);
@@ -422,6 +435,7 @@ describe("page runtime", () => {
           targetLanguage: "zh-CN",
           translationMode: "lazyViewport",
           processedSegmentIds: ["seg_1", "seg_2"],
+          failedSegmentIds: ["seg_3"],
         }),
       }),
     );

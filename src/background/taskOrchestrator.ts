@@ -147,10 +147,17 @@ export class TranslationTaskOrchestrator {
       translationMode: recovery.translationMode,
     };
 
-    const processedIds = [...new Set(recovery.processedSegmentIds)].filter((segmentId) =>
+    const failedIds = [...new Set(recovery.failedSegmentIds ?? [])].filter((segmentId) =>
       task.segmentsById.has(segmentId),
     );
+    const failedIdSet = new Set(failedIds);
+    const processedIds = [...new Set(recovery.processedSegmentIds)].filter(
+      (segmentId) => task.segmentsById.has(segmentId) && !failedIdSet.has(segmentId),
+    );
     for (const segmentId of processedIds) {
+      task.processedSegmentIds.add(segmentId);
+    }
+    for (const segmentId of failedIds) {
       task.processedSegmentIds.add(segmentId);
     }
 
@@ -158,7 +165,7 @@ export class TranslationTaskOrchestrator {
       state: "translating",
       total: recovery.segments.length,
       translated: processedIds.length,
-      failed: 0,
+      failed: failedIds.length,
     });
 
     return task;

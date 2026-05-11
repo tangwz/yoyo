@@ -690,6 +690,7 @@ describe("TranslationTaskOrchestrator", () => {
       translationMode: "lazyViewport",
       segments: longSegments,
       processedSegmentIds: ["segment-1", "segment-2"],
+      failedSegmentIds: ["segment-3"],
     });
 
     expect(generateText).toHaveBeenCalledTimes(1);
@@ -700,7 +701,7 @@ describe("TranslationTaskOrchestrator", () => {
       state: "waitingForViewport",
       total: 12,
       translated: 3,
-      failed: 0,
+      failed: 1,
     });
   });
 

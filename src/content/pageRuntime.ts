@@ -30,6 +30,7 @@ let lazyRecoverySnapshot:
   | undefined;
 let lazyReportTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
 let reportedLazySegmentIds = new Set<string>();
+let failedLazySegmentIds = new Set<string>();
 let currentSegmentsById = new Map<string, PageSegment>();
 
 export async function estimatePage(): Promise<PageTranslationEstimate> {
@@ -65,6 +66,7 @@ function stopLazySegmentReporting(): void {
   lazyReportTaskId = undefined;
   lazyRecoverySnapshot = undefined;
   reportedLazySegmentIds = new Set();
+  failedLazySegmentIds = new Set();
 }
 
 function scheduleLazySegmentReport(): void {
@@ -137,6 +139,9 @@ async function reportVisibleLazySegments(): Promise<void> {
   for (const segmentId of [...segmentIds, ...failedSegmentIds]) {
     reportedLazySegmentIds.add(segmentId);
   }
+  for (const segmentId of failedSegmentIds) {
+    failedLazySegmentIds.add(segmentId);
+  }
 }
 
 function buildLazyRecoverySnapshot(taskId: string): LazySegmentRecoverySnapshot | undefined {
@@ -156,6 +161,7 @@ function buildLazyRecoverySnapshot(taskId: string): LazySegmentRecoverySnapshot 
     ...lazyRecoverySnapshot,
     segments: [...currentSegmentsById.values()],
     processedSegmentIds,
+    failedSegmentIds: [...failedLazySegmentIds],
   };
 }
 
