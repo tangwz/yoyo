@@ -93,6 +93,40 @@ describe("OpenAiCompatibleProvider", () => {
     });
   });
 
+  it("aggregates multi-line SSE data fields before parsing streamed JSON", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"choices":',
+              'data: [{"delta":{"content":"Hello"}}]}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+      ),
+    );
+
+    const provider = new OpenAiCompatibleProvider();
+    const chunks: string[] = [];
+    for await (const chunk of provider.streamText({ profile, prompt: "Translate me" })) {
+      chunks.push(chunk.text);
+    }
+
+    expect(chunks).toEqual(["Hello"]);
+  });
+
   it("maps streaming HTTP errors to provider errors", async () => {
     vi.stubGlobal(
       "fetch",

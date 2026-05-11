@@ -289,11 +289,11 @@ export class OpenAiCompatibleProvider {
         }
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop() ?? "";
+        const events = buffer.split(/\r?\n\r?\n/);
+        buffer = events.pop() ?? "";
 
-        for (const line of lines) {
-          const chunk = parseStreamLine(line);
+        for (const event of events) {
+          const chunk = parseStreamEvent(event);
           if (chunk === "done") {
             return;
           }
@@ -304,9 +304,11 @@ export class OpenAiCompatibleProvider {
       }
 
       buffer += decoder.decode();
-      const chunk = parseStreamLine(buffer);
-      if (chunk && chunk !== "done") {
-        yield chunk;
+      if (buffer.trim()) {
+        const chunk = parseStreamEvent(buffer);
+        if (chunk && chunk !== "done") {
+          yield chunk;
+        }
       }
     } finally {
       reader.releaseLock();
@@ -314,13 +316,17 @@ export class OpenAiCompatibleProvider {
   }
 }
 
-function parseStreamLine(line: string): StreamTextChunk | "done" | undefined {
-  const trimmed = line.trim();
-  if (!trimmed || !trimmed.startsWith("data:")) {
+function parseStreamEvent(event: string): StreamTextChunk | "done" | undefined {
+  const dataLines = event
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trimStart());
+
+  if (dataLines.length === 0) {
     return undefined;
   }
 
-  const data = trimmed.slice("data:".length).trim();
+  const data = dataLines.join("\n").trimEnd();
   if (data === "[DONE]") {
     return "done";
   }
