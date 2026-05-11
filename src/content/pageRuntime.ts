@@ -127,6 +127,10 @@ async function reportVisibleLazySegments(): Promise<void> {
     sendRuntimeMessage<BackgroundRequest, BackgroundResponse>(request),
   ).catch(() => undefined);
 
+  if (lazyReportTaskId !== taskId) {
+    return;
+  }
+
   if (
     !response ||
     response.type !== "taskProgress" ||
