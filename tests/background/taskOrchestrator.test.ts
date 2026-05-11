@@ -639,12 +639,12 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
-  it("returns failed progress when lazy enqueue references a missing task", async () => {
+  it("returns cancelled progress when lazy enqueue references a missing task", async () => {
     const { orchestrator } = createOrchestrator();
 
     await expect(orchestrator.enqueueLazySegments("missing-task", ["segment-1"])).resolves.toEqual({
       taskId: "missing-task",
-      state: "failed",
+      state: "cancelled",
       total: 0,
       translated: 0,
       failed: 0,

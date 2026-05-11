@@ -824,7 +824,7 @@ export class TranslationTaskOrchestrator {
 
   private missingTaskProgress(taskId: string): TranslationProgress {
     return {
-      ...this.emptyProgress(taskId, "failed"),
+      ...this.emptyProgress(taskId, "cancelled"),
       errorMessage: "Translation task is no longer available. Start translation again.",
     };
   }

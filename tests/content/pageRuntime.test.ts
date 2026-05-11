@@ -213,7 +213,7 @@ describe("page runtime", () => {
     });
   });
 
-  it("retries lazy segment reporting when the runtime enqueue returns failed progress", async () => {
+  it("retries lazy segment reporting when the runtime enqueue returns terminal progress", async () => {
     vi.useFakeTimers();
     const originalInnerHeight = window.innerHeight;
     Object.defineProperty(window, "innerHeight", {
@@ -225,7 +225,7 @@ describe("page runtime", () => {
         type: "taskProgress",
         progress: {
           taskId: "task-1",
-          state: "failed",
+          state: "cancelled",
           total: 0,
           translated: 0,
           failed: 0,
