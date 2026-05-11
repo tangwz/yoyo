@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 
-import { ProviderError, type ProviderErrorCode } from "@/provider/errors";
+import {
+  optionsMessages,
+  providerErrorMessageKeys,
+  type OptionsMessageKey,
+} from "@/i18n/optionsMessages";
+import { ProviderError } from "@/provider/errors";
 import { normalizeModelNameForProfile } from "@/provider/modelNames";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
 import { providerPresets } from "@/provider/presets";
 import type { ProviderProfile } from "@/provider/types";
+import { defaultUiPreferences, type UiPreferences } from "@/storage/defaults";
 import { createStorageRepositories } from "@/storage/repositories";
 import type { TranslationMode } from "@/translation/types";
 
@@ -19,6 +25,8 @@ const textModel = ref(defaultPreset.defaultTextModel ?? "");
 const visionModel = ref("");
 const targetLanguage = ref("zh-CN");
 const translationMode = ref<TranslationMode>("lazyViewport");
+const uiTheme = ref<UiPreferences["theme"]>(defaultUiPreferences.theme);
+const uiLanguage = ref(defaultUiPreferences.uiLanguage);
 const timeoutMs = ref(30000);
 const temperature = ref(0.3);
 const maxTokens = ref(4096);
@@ -34,18 +42,35 @@ const shouldLandOnProvider = routeParams.get("section") === "provider";
 const isFirstRunProviderLanding =
   shouldLandOnProvider && routeParams.get("source") === "first-run";
 
-const providerErrorMessages: Record<ProviderErrorCode, string> = {
-  aborted: "测试已取消。",
-  invalidResponse: "服务返回格式不符合预期。",
-  invalidRequest: "模型名或请求参数无效，请检查后重试。",
-  networkError: "无法连接到服务，请检查 Base URL 和网络后重试。",
-  quotaExceeded: "服务额度不足。",
-  rateLimited: "服务请求过于频繁，请稍后重试。",
-  serverError: "服务暂时不可用，请稍后重试。",
-  timeout: "测试超时，请检查服务配置或稍后重试。",
-  unauthorized: "API Key 无效或无权限。",
-  unknown: "测试失败，请检查服务配置后重试。",
-};
+const messages = computed(() => optionsMessages[uiLanguage.value]);
+
+const providerPresetOptions = computed(() =>
+  providerPresets.map((preset) => ({
+    ...preset,
+    label: getPresetLabel(preset.id, preset.name),
+  })),
+);
+
+const targetLanguageOptions = computed(() => [
+  { value: "zh-CN", label: t("targetLanguage.zhCN") },
+  { value: "zh-TW", label: t("targetLanguage.zhTW") },
+  { value: "en", label: t("targetLanguage.en") },
+  { value: "ja", label: t("targetLanguage.ja") },
+  { value: "ko", label: t("targetLanguage.ko") },
+]);
+
+const uiLanguageOptions = computed(() => [
+  { value: "zh-CN", label: t("uiLanguage.zhCN") },
+  { value: "en-US", label: t("uiLanguage.enUS") },
+]);
+
+function t(key: OptionsMessageKey): string {
+  return messages.value[key];
+}
+
+function getPresetLabel(presetId: string, fallback: string): string {
+  return presetId === "custom" ? t("providerPreset.custom") : fallback;
+}
 
 function toFiniteNumber(value: unknown): number | undefined {
   if (typeof value === "number") {
@@ -128,10 +153,10 @@ watch(providerProfileSignature, resetTestFeedback);
 
 function getProviderTestErrorMessage(error: unknown): string {
   if (error instanceof ProviderError) {
-    return providerErrorMessages[error.code];
+    return t(providerErrorMessageKeys[error.code]);
   }
 
-  return providerErrorMessages.unknown;
+  return t(providerErrorMessageKeys.unknown);
 }
 
 function applySelectedPreset() {
@@ -141,9 +166,21 @@ function applySelectedPreset() {
     return;
   }
 
-  displayName.value = preset.name;
+  displayName.value = getPresetLabel(preset.id, preset.name);
   baseUrl.value = preset.defaultBaseUrl;
   textModel.value = preset.defaultTextModel ?? "";
+}
+
+async function loadUiPreferences() {
+  try {
+    const storage = createStorageRepositories();
+    const preferences = await storage.uiPreferences.get();
+    uiTheme.value = preferences.theme;
+    uiLanguage.value = preferences.uiLanguage;
+  } catch {
+    uiTheme.value = defaultUiPreferences.theme;
+    uiLanguage.value = defaultUiPreferences.uiLanguage;
+  }
 }
 
 function applyProviderProfile(profile: ProviderProfile) {
@@ -200,7 +237,11 @@ async function focusProviderLanding() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadActiveProviderProfile(), loadTranslationPreferences()]);
+  await Promise.all([
+    loadUiPreferences(),
+    loadActiveProviderProfile(),
+    loadTranslationPreferences(),
+  ]);
   await focusProviderLanding();
 });
 
@@ -225,6 +266,18 @@ async function saveTranslationMode() {
     await storage.translationPreferences.save({ mode: translationMode.value });
   } catch {
     // Translation mode is non-critical; keep the selected value visible.
+  }
+}
+
+async function saveUiLanguage() {
+  try {
+    const storage = createStorageRepositories();
+    await storage.uiPreferences.save({
+      theme: uiTheme.value,
+      uiLanguage: uiLanguage.value,
+    });
+  } catch {
+    // UI language is already applied locally; storage can retry on the next change.
   }
 }
 
@@ -263,7 +316,7 @@ async function testConnection() {
     }
 
     testState.value = "success";
-    testMessage.value = "测试成功。";
+    testMessage.value = t("test.success");
   } catch (error) {
     if (
       requestId !== testRequestId.value ||
@@ -286,19 +339,19 @@ async function testConnection() {
   <main class="yoyo-shell">
     <header class="page-header">
       <div class="page-header__inner">
-        <h1>设置</h1>
+        <h1>{{ t("settings.title") }}</h1>
       </div>
     </header>
 
     <div class="settings-layout">
       <nav
         class="settings-nav"
-        aria-label="Settings sections"
+        :aria-label="t('settings.navigationLabel')"
       >
-        <a href="#provider-heading">Provider</a>
-        <a href="#translation-heading">Translation</a>
-        <a href="#privacy-heading">Privacy</a>
-        <a href="#advanced-heading">Advanced</a>
+        <a href="#provider-heading">{{ t("section.provider") }}</a>
+        <a href="#translation-heading">{{ t("section.translation") }}</a>
+        <a href="#privacy-heading">{{ t("section.privacy") }}</a>
+        <a href="#advanced-heading">{{ t("section.advanced") }}</a>
       </nav>
 
       <div class="settings-content">
@@ -308,35 +361,35 @@ async function testConnection() {
           aria-labelledby="provider-heading"
         >
           <h2 id="provider-heading">
-            Provider
+            {{ t("section.provider") }}
           </h2>
           <p
             v-if="isFirstRunProviderLanding"
             class="section-note"
           >
-            首次使用前，请先配置模型服务。
+            {{ t("provider.firstRunNote") }}
           </p>
 
           <div class="settings-grid">
             <label class="field">
-              <span>Preset</span>
+              <span>{{ t("field.preset") }}</span>
               <select
                 ref="presetSelectRef"
                 v-model="selectedPresetId"
                 @change="applySelectedPreset"
               >
                 <option
-                  v-for="preset in providerPresets"
+                  v-for="preset in providerPresetOptions"
                   :key="preset.id"
                   :value="preset.id"
                 >
-                  {{ preset.name }}
+                  {{ preset.label }}
                 </option>
               </select>
             </label>
 
             <label class="field">
-              <span>Display Name</span>
+              <span>{{ t("field.displayName") }}</span>
               <input
                 v-model="displayName"
                 type="text"
@@ -345,7 +398,7 @@ async function testConnection() {
             </label>
 
             <label class="field field-wide">
-              <span>Base URL</span>
+              <span>{{ t("field.baseUrl") }}</span>
               <input
                 v-model="baseUrl"
                 type="url"
@@ -355,18 +408,18 @@ async function testConnection() {
             </label>
 
             <div class="field field-wide">
-              <label for="api-key">API Key</label>
+              <label for="api-key">{{ t("field.apiKey") }}</label>
               <input
                 id="api-key"
                 v-model="apiKey"
                 type="password"
                 autocomplete="off"
               >
-              <small>API Key 保存在浏览器扩展本地存储，不跨设备同步。</small>
+              <small>{{ t("field.apiKeyNote") }}</small>
             </div>
 
             <label class="field">
-              <span>Text Model</span>
+              <span>{{ t("field.textModel") }}</span>
               <input
                 v-model="textModel"
                 type="text"
@@ -375,7 +428,7 @@ async function testConnection() {
             </label>
 
             <label class="field">
-              <span>Vision Model</span>
+              <span>{{ t("field.visionModel") }}</span>
               <input
                 v-model="visionModel"
                 type="text"
@@ -390,7 +443,7 @@ async function testConnection() {
               type="button"
               @click="saveProviderProfile"
             >
-              保存翻译服务
+              {{ t("button.saveProvider") }}
             </button>
             <button
               class="secondary-button"
@@ -398,7 +451,7 @@ async function testConnection() {
               :disabled="isTestInFlight"
               @click="testConnection"
             >
-              {{ isTestInFlight ? "测试中..." : "测试连接" }}
+              {{ isTestInFlight ? t("button.testingConnection") : t("button.testConnection") }}
             </button>
           </div>
 
@@ -407,14 +460,14 @@ async function testConnection() {
             class="save-feedback success"
             role="status"
           >
-            已保存翻译服务。
+            {{ t("save.success") }}
           </p>
           <p
             v-else-if="saveState === 'error'"
             class="save-feedback error"
             role="alert"
           >
-            保存失败，请稍后重试。
+            {{ t("save.error") }}
           </p>
 
           <p
@@ -422,7 +475,7 @@ async function testConnection() {
             class="save-feedback"
             role="status"
           >
-            正在测试连接...
+            {{ t("test.testing") }}
           </p>
           <p
             v-else-if="testState === 'success'"
@@ -445,39 +498,41 @@ async function testConnection() {
           aria-labelledby="translation-heading"
         >
           <h2 id="translation-heading">
-            Translation
+            {{ t("section.translation") }}
           </h2>
 
           <div class="settings-grid">
             <label class="field">
-              <span>Target Language</span>
+              <span>{{ t("field.targetLanguage") }}</span>
               <select v-model="targetLanguage">
-                <option value="zh-CN">简体中文</option>
-                <option value="zh-TW">繁體中文</option>
-                <option value="en">English</option>
-                <option value="ja">日本語</option>
-                <option value="ko">한국어</option>
+                <option
+                  v-for="option in targetLanguageOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
               </select>
             </label>
 
             <label class="field">
-              <span>Translation Mode</span>
+              <span>{{ t("field.translationMode") }}</span>
               <select
                 v-model="translationMode"
                 @change="saveTranslationMode"
               >
                 <option value="lazyViewport">
-                  Lazy viewport
+                  {{ t("translation.mode.lazyViewport") }}
                 </option>
                 <option value="fullPage">
-                  Full page
+                  {{ t("translation.mode.fullPage") }}
                 </option>
               </select>
             </label>
           </div>
 
           <p class="section-note">
-            显示方式：原文下方显示译文，并尽量保持与原段落一致的排版样式。
+            {{ t("translation.displayNote") }}
           </p>
         </section>
 
@@ -486,14 +541,14 @@ async function testConnection() {
           aria-labelledby="privacy-heading"
         >
           <h2 id="privacy-heading">
-            Privacy
+            {{ t("section.privacy") }}
           </h2>
 
           <ul class="privacy-list">
-            <li>Page text is extracted only when you manually start translation.</li>
-            <li>Extracted text is sent to your configured model provider during translation.</li>
-            <li>API key does not enter content script or page</li>
-            <li>First version has no persistent translation cache</li>
+            <li>{{ t("privacy.manualExtraction") }}</li>
+            <li>{{ t("privacy.providerTransfer") }}</li>
+            <li>{{ t("privacy.apiKeyIsolation") }}</li>
+            <li>{{ t("privacy.noPersistentCache") }}</li>
           </ul>
         </section>
 
@@ -502,12 +557,28 @@ async function testConnection() {
           aria-labelledby="advanced-heading"
         >
           <h2 id="advanced-heading">
-            Advanced
+            {{ t("section.advanced") }}
           </h2>
 
           <div class="settings-grid">
             <label class="field">
-              <span>Timeout</span>
+              <span>{{ t("field.uiLanguage") }}</span>
+              <select
+                v-model="uiLanguage"
+                @change="saveUiLanguage"
+              >
+                <option
+                  v-for="option in uiLanguageOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>{{ t("field.timeout") }}</span>
               <input
                 v-model.number="timeoutMs"
                 type="number"
@@ -517,7 +588,7 @@ async function testConnection() {
             </label>
 
             <label class="field">
-              <span>Temperature</span>
+              <span>{{ t("field.temperature") }}</span>
               <input
                 v-model.number="temperature"
                 type="number"
@@ -528,7 +599,7 @@ async function testConnection() {
             </label>
 
             <label class="field">
-              <span>Max Tokens</span>
+              <span>{{ t("field.maxTokens") }}</span>
               <input
                 v-model.number="maxTokens"
                 type="number"
@@ -538,7 +609,7 @@ async function testConnection() {
             </label>
 
             <div class="field static-field">
-              <span>Prompt version</span>
+              <span>{{ t("field.promptVersion") }}</span>
               <strong>v1</strong>
             </div>
           </div>
