@@ -706,6 +706,81 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("does not complete a lazy task while earlier segments are still in flight", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+    let resolveInitialBatch:
+      | ((value: { text: string; model: string }) => void)
+      | undefined;
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({ id: "segment-1", sourceText: "Visible.", priority: "viewport" }),
+            segment({
+              id: "segment-2",
+              order: 2,
+              sourceText: "Later.",
+              textHash: "hash-2",
+              priority: "normal",
+            }),
+          ],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveInitialBatch = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          items: [{ id: "segment-2", text: "Translated later." }],
+        }),
+        model: "gpt-4.1-mini",
+      });
+
+    const running = orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+
+    await vi.waitFor(() => {
+      expect(generateText).toHaveBeenCalledTimes(1);
+    });
+
+    const afterEnqueue = await orchestrator.enqueueLazySegments("task-1", ["segment-2"]);
+
+    expect(afterEnqueue).toMatchObject({
+      state: "translating",
+      total: 2,
+      translated: 1,
+      failed: 0,
+    });
+
+    resolveInitialBatch?.({
+      text: JSON.stringify({
+        items: [{ id: "segment-1", text: "Translated visible." }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+
+    await expect(running).resolves.toMatchObject({
+      state: "completed",
+      total: 2,
+      translated: 2,
+      failed: 0,
+    });
+  });
+
   it("applies streamed translation items as soon as each record is parsed", async () => {
     const { orchestrator, generateText, streamText, sendToContent } = createOrchestrator();
     const applyEvents: string[] = [];

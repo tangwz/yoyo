@@ -753,6 +753,11 @@ export class TranslationTaskOrchestrator {
       return;
     }
 
+    if (task.inFlightSegmentIds.size > 0) {
+      this.updateProgress(task, { state: "translating" });
+      return;
+    }
+
     if (this.hasUnprocessedSegments(task)) {
       this.updateProgress(task, { state: "waitingForViewport" });
       return;
@@ -765,8 +770,7 @@ export class TranslationTaskOrchestrator {
 
   private hasUnprocessedSegments(task: RunningTask): boolean {
     return [...task.segmentsById.keys()].some(
-      (segmentId) =>
-        !task.processedSegmentIds.has(segmentId) && !task.inFlightSegmentIds.has(segmentId),
+      (segmentId) => !task.processedSegmentIds.has(segmentId),
     );
   }
 
