@@ -1,11 +1,15 @@
 import { AnchorRegistry } from "@/content/anchors";
 import { isElementSkippable } from "@/content/domEligibility";
 import { hashNormalizedText, normalizeSourceText } from "@/translation/hash";
-import type { PageSegment, PageSegmentKind } from "@/translation/types";
+import type { PageSegment, PageSegmentKind, SegmentPriority } from "@/translation/types";
 
 export type SegmentCollection = {
   segments: PageSegment[];
   anchors: AnchorRegistry;
+};
+
+export type SegmentCollectionOptions = {
+  visibleRangeOnly?: boolean;
 };
 
 const leafReadableTags = new Set(["P", "LI", "BLOCKQUOTE"]);
@@ -104,8 +108,31 @@ function pathHintFor(element: Element): string {
   return parts.join(" > ");
 }
 
+export function priorityForElement(element: Element): SegmentPriority {
+  const rect = element.getBoundingClientRect();
+  const viewportHeight = Math.max(1, window.innerHeight || document.documentElement.clientHeight);
+
+  if (rect.bottom > 0 && rect.top < viewportHeight) {
+    return "viewport";
+  }
+
+  if (rect.bottom > -viewportHeight * 2 && rect.top < viewportHeight * 3) {
+    return "nearViewport";
+  }
+
+  return "normal";
+}
+
+function isOutsideVisibleCollectionRange(element: Element): boolean {
+  const rect = element.getBoundingClientRect();
+  const viewportHeight = Math.max(1, window.innerHeight || document.documentElement.clientHeight);
+
+  return rect.bottom <= -viewportHeight * 2 || rect.top >= viewportHeight * 3;
+}
+
 export async function collectPageSegments(
   taskId: string,
+  options: SegmentCollectionOptions = {},
 ): Promise<SegmentCollection> {
   const anchors = new AnchorRegistry();
   const segments: PageSegment[] = [];
@@ -115,12 +142,18 @@ export async function collectPageSegments(
     element: Element,
     sourceText: string,
   ): Promise<void> {
+    const priority = priorityForElement(element);
+    if (options.visibleRangeOnly && priority === "normal") {
+      return;
+    }
+
     const segmentId = `seg_${order}`;
     segments.push({
       id: segmentId,
       order,
       sourceText,
       kind: segmentKindFor(element),
+      priority,
       pathHint: pathHintFor(element),
       textHash: await hashNormalizedText(sourceText),
     });
@@ -130,6 +163,9 @@ export async function collectPageSegments(
 
   async function walk(element: Element): Promise<void> {
     if (isElementSkippable(element)) return;
+    if (options.visibleRangeOnly && element !== document.body && isOutsideVisibleCollectionRange(element)) {
+      return;
+    }
 
     if (element.tagName === "LI" && hasNestedList(element)) {
       const sourceText = collectNestedListItemOwnText(element);

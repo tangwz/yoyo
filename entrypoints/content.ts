@@ -3,6 +3,7 @@ import {
   collectSegments,
   estimatePage,
   getPageRuntimeState,
+  handleTaskProgress,
   hidePageTranslations,
   removePageTranslations,
   showPageTranslations,
@@ -44,10 +45,19 @@ export default defineContentScript({
               ContentRequest,
               { type: "collectSegments" }
             >;
+            const segments = await collectSegments(
+              request.taskId,
+              request.translationMode,
+              request.sourceLanguage,
+              request.targetLanguage,
+              request.providerId,
+              request.textModel,
+            );
             return {
               type: "collectSegmentsResult",
               taskId: request.taskId,
-              segments: await collectSegments(request.taskId),
+              segments,
+              collectionComplete: request.translationMode !== "lazyViewport",
             };
           }
           case "applyTranslations": {
@@ -91,6 +101,14 @@ export default defineContentScript({
               type: "pageRuntimeState",
               ...getPageRuntimeState(),
             };
+          case "taskProgress": {
+            const request = message as Extract<
+              ContentRequest,
+              { type: "taskProgress" }
+            >;
+            handleTaskProgress(request.progress);
+            return { type: "contentActionResult", success: true };
+          }
           default:
             return createContentError("Unsupported content message.");
         }

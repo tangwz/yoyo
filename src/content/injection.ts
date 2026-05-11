@@ -16,11 +16,16 @@ export type TranslationDomState = {
 export function insertPendingTranslations(
   anchors: AnchorRegistry,
   taskId: string,
+  segmentIds?: ReadonlySet<string>,
 ): ApplyTranslationsResult {
   const appliedSegmentIds: string[] = [];
   const failedSegmentIds: string[] = [];
 
   for (const anchor of anchors.listByTask(taskId)) {
+    if (segmentIds && !segmentIds.has(anchor.segmentId)) {
+      continue;
+    }
+
     anchor.insertedNode?.remove();
     if (!anchor.sourceNode.isConnected || !anchor.sourceNode.parentElement) {
       anchor.insertedNode = undefined;

@@ -1,11 +1,21 @@
 // @vitest-environment happy-dom
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const runtimeMock = vi.hoisted(() => ({
+  sendRuntimeMessage: vi.fn(),
+}));
+
+vi.mock("@/messaging/runtime", () => ({
+  sendRuntimeMessage: runtimeMock.sendRuntimeMessage,
+}));
+
 import {
   applyTranslationResults,
   collectSegments,
   estimatePage,
   getPageRuntimeState,
+  handleTaskProgress,
   hidePageTranslations,
   removePageTranslations,
   showPageTranslations,
@@ -17,13 +27,36 @@ describe("page runtime", () => {
       .happyDOM.setURL(url);
   };
 
+  async function flushDeferredLazyCollection(): Promise<void> {
+    const previousCallCount = runtimeMock.sendRuntimeMessage.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage.mock.calls.length).toBeGreaterThan(
+        previousCallCount,
+      );
+    });
+    runtimeMock.sendRuntimeMessage.mockClear();
+  }
+
   beforeEach(() => {
     removePageTranslations();
     document.body.innerHTML = "";
     setUrl("https://example.com/article");
+    runtimeMock.sendRuntimeMessage.mockReset();
+    runtimeMock.sendRuntimeMessage.mockResolvedValue({
+      type: "taskProgress",
+      progress: {
+        taskId: "task-1",
+        state: "waitingForViewport",
+        total: 3,
+        translated: 2,
+        failed: 0,
+      },
+    });
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     removePageTranslations();
     document.body.innerHTML = "";
     setUrl("https://example.com/article");
@@ -63,6 +96,794 @@ describe("page runtime", () => {
         "[data-yoyo-translation][data-yoyo-segment-id='seg_1']",
       )?.previousElementSibling,
     ).toBe(document.querySelector("#first"));
+  });
+
+  it("inserts lazy pending indicators only for viewport and near-viewport segments", async () => {
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+        <p id="third">Third readable paragraph.</p>
+      </article>
+    `;
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 180, bottom: 210 },
+      third: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+
+    expect(
+      [
+        ...document.querySelectorAll<HTMLElement>(
+          "[data-yoyo-translation][data-yoyo-pending='true']",
+        ),
+      ].map((node) => node.dataset.yoyoSegmentId),
+    ).toEqual(["seg_1", "seg_2"]);
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
+  it("reports newly visible lazy segments after scrolling", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+        <p id="third">Third readable paragraph.</p>
+      </article>
+    `;
+
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 180, bottom: 210 },
+      third: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+    await flushDeferredLazyCollection();
+
+    rects.third = { top: 80, bottom: 96 };
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: ["seg_3"],
+      }),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
+  it("keeps initial lazy anchors stable when deferred collection reuses segment ids", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+
+    document.body.innerHTML = `
+      <article>
+        <p id="above">Above viewport readable paragraph.</p>
+        <p id="visible">Visible readable paragraph.</p>
+        <p id="below">Below viewport readable paragraph.</p>
+      </article>
+    `;
+
+    const rects: Record<string, { top: number; bottom: number }> = {
+      above: { top: -500, bottom: -470 },
+      visible: { top: 10, bottom: 30 },
+      below: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+    await flushDeferredLazyCollection();
+
+    applyTranslationResults("task-1", [
+      { segmentId: "seg_1", translatedText: "Visible translated paragraph." },
+    ]);
+
+    const translatedNode = [
+      ...document.querySelectorAll<HTMLElement>(
+        "[data-yoyo-translation][data-yoyo-segment-id='seg_1']",
+      ),
+    ].find((node) => node.dataset.yoyoPending !== "true");
+
+    expect(translatedNode?.previousElementSibling).toBe(
+      document.querySelector("#visible"),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
+  it("cancels deferred lazy collection when the task is removed before the scan starts", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+        <p id="third">Third readable paragraph.</p>
+      </article>
+    `;
+
+    let rectReadCount = 0;
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 420, bottom: 450 },
+      third: { top: 520, bottom: 550 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () => {
+        rectReadCount += 1;
+        return {
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        } as DOMRect;
+      };
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+    rectReadCount = 0;
+
+    removePageTranslations("task-1");
+    await vi.advanceTimersByTimeAsync(1);
+    const deferredRectReadCount = rectReadCount;
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+
+    expect(deferredRectReadCount).toBe(0);
+  });
+
+  it("retries forced recovery after deferred lazy collection when enqueue fails", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+
+    runtimeMock.sendRuntimeMessage
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce({
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "waitingForViewport",
+          total: 2,
+          translated: 1,
+          failed: 0,
+        },
+      });
+
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+      </article>
+    `;
+
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledTimes(1);
+    });
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: [],
+        recovery: expect.objectContaining({
+          collectionComplete: true,
+        }),
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(150);
+
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledTimes(2);
+    });
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: [],
+        recovery: expect.objectContaining({
+          collectionComplete: true,
+        }),
+      }),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
+  it("retries lazy segment reporting when the runtime enqueue fails", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+      </article>
+    `;
+
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+    await flushDeferredLazyCollection();
+    runtimeMock.sendRuntimeMessage
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce({
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "waitingForViewport",
+          total: 2,
+          translated: 1,
+          failed: 0,
+        },
+      });
+
+    rects.second = { top: 80, bottom: 96 };
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledTimes(2);
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: ["seg_2"],
+      }),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
+  it.each(["cancelled", "failed"] as const)(
+    "stops lazy segment reporting when enqueue returns %s progress",
+    async (terminalState) => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+      </article>
+    `;
+
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+    await flushDeferredLazyCollection();
+    runtimeMock.sendRuntimeMessage
+      .mockResolvedValueOnce({
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: terminalState,
+          total: 0,
+          translated: 0,
+          failed: 0,
+          errorMessage: "Translation task is no longer available. Start translation again.",
+        },
+      })
+      .mockResolvedValueOnce({
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "waitingForViewport",
+          total: 2,
+          translated: 1,
+          failed: 0,
+        },
+      });
+
+    rects.second = { top: 80, bottom: 96 };
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledTimes(1);
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: ["seg_2"],
+      }),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+    },
+  );
+
+  it.each(["cancelled", "failed"] as const)(
+    "stops lazy segment reporting when broadcast progress is %s",
+    async (terminalState) => {
+      vi.useFakeTimers();
+      const originalInnerHeight = window.innerHeight;
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: 100,
+      });
+      document.body.innerHTML = `
+        <article>
+          <p id="first">First readable paragraph.</p>
+          <p id="second">Second readable paragraph.</p>
+        </article>
+      `;
+
+      const rects: Record<string, { top: number; bottom: number }> = {
+        first: { top: 10, bottom: 30 },
+        second: { top: 420, bottom: 450 },
+      };
+
+      for (const id of Object.keys(rects)) {
+        const element = document.querySelector(`#${id}`) as HTMLElement;
+        element.getBoundingClientRect = () =>
+          ({
+            x: 0,
+            y: rects[id].top,
+            top: rects[id].top,
+            bottom: rects[id].bottom,
+            left: 0,
+            right: 100,
+            width: 100,
+            height: rects[id].bottom - rects[id].top,
+            toJSON: () => ({}),
+          }) as DOMRect;
+      }
+
+      await collectSegments("task-1", "lazyViewport");
+      await flushDeferredLazyCollection();
+
+      handleTaskProgress({
+        taskId: "task-1",
+        state: terminalState,
+        total: 2,
+        translated: 1,
+        failed: terminalState === "failed" ? 1 : 0,
+      });
+
+      rects.second = { top: 80, bottom: 96 };
+      window.dispatchEvent(new Event("scroll"));
+      await vi.advanceTimersByTimeAsync(150);
+
+      expect(runtimeMock.sendRuntimeMessage).not.toHaveBeenCalled();
+
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: originalInnerHeight,
+      });
+    },
+  );
+
+  it("ignores stale lazy enqueue responses after a new translation starts", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+    let resolveFirstReport:
+      | ((response: Awaited<ReturnType<typeof runtimeMock.sendRuntimeMessage>>) => void)
+      | undefined;
+    runtimeMock.sendRuntimeMessage
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstReport = resolve;
+          }),
+      )
+      .mockResolvedValue({
+        type: "taskProgress",
+        progress: {
+          taskId: "task-2",
+          state: "waitingForViewport",
+          total: 2,
+          translated: 1,
+          failed: 0,
+        },
+      });
+
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+      </article>
+    `;
+
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+    await flushDeferredLazyCollection();
+
+    rects.second = { top: 80, bottom: 96 };
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: ["seg_2"],
+      }),
+    );
+
+    rects.second = { top: 420, bottom: 450 };
+    await collectSegments("task-2", "lazyViewport");
+    await flushDeferredLazyCollection();
+    resolveFirstReport?.({
+      type: "taskProgress",
+      progress: {
+        taskId: "task-1",
+        state: "waitingForViewport",
+        total: 2,
+        translated: 1,
+        failed: 0,
+      },
+    });
+    await Promise.resolve();
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    rects.second = { top: 80, bottom: 96 };
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledTimes(1);
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-2",
+        segmentIds: ["seg_2"],
+      }),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
+  it("reports disconnected lazy segments as failed enqueue items", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+      </article>
+    `;
+
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+    await flushDeferredLazyCollection();
+
+    document.querySelector("#second")?.remove();
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: [],
+        failedSegmentIds: ["seg_2"],
+      }),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
+  it("includes a long-page recovery snapshot when reporting lazy segments", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+
+    document.body.innerHTML = `
+      <article>
+        ${Array.from(
+          { length: 12 },
+          (_value, index) =>
+            `<p id="paragraph-${index + 1}">Readable long article paragraph ${index + 1} with enough text for extraction.</p>`,
+        ).join("")}
+      </article>
+    `;
+
+    const rects: Record<string, { top: number; bottom: number }> = {};
+    for (let index = 1; index <= 12; index += 1) {
+      rects[`paragraph-${index}`] = {
+        top: index <= 2 ? index * 20 : 500 + index * 40,
+        bottom: index <= 2 ? index * 20 + 20 : 520 + index * 40,
+      };
+    }
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
+    applyTranslationResults("task-1", [
+      { segmentId: "seg_1", translatedText: "第一段。" },
+      { segmentId: "seg_2", translatedText: "第二段。" },
+    ]);
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    document.querySelector("#paragraph-3")?.remove();
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: [],
+        failedSegmentIds: ["seg_3"],
+      }),
+    );
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    rects["paragraph-10"] = { top: 80, bottom: 96 };
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: ["seg_10"],
+        recovery: expect.objectContaining({
+          sourceLanguage: "en",
+          targetLanguage: "zh-CN",
+          translationMode: "lazyViewport",
+          processedSegmentIds: ["seg_1", "seg_2"],
+          failedSegmentIds: ["seg_3"],
+        }),
+      }),
+    );
+    const request = runtimeMock.sendRuntimeMessage.mock.calls[0][0] as {
+      recovery: { segments: unknown[] };
+    };
+    expect(request.recovery.segments).toHaveLength(12);
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
   });
 
   it("reports visible runtime state after applying translations", async () => {

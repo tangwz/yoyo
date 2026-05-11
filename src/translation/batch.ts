@@ -17,7 +17,16 @@ export function splitSegmentsIntoBatches(
     throw new Error("maxSegmentsPerBatch must be greater than 0.");
   }
 
-  const orderedSegments = [...segments].sort((left, right) => left.order - right.order);
+  const priorityRank: Record<PageSegment["priority"], number> = {
+    viewport: 0,
+    nearViewport: 1,
+    normal: 2,
+  };
+  const orderedSegments = [...segments].sort(
+    (left, right) =>
+      priorityRank[left.priority] - priorityRank[right.priority] ||
+      left.order - right.order,
+  );
   const batches: PageSegment[][] = [];
   let currentBatch: PageSegment[] = [];
   let currentChars = 0;

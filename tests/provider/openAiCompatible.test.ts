@@ -53,6 +53,116 @@ describe("OpenAiCompatibleProvider", () => {
     });
   });
 
+  it("streams chat completion deltas from an OpenAI-compatible SSE response", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"choices":[{"delta":{"content":"{\\"id\\":\\"a\\","}}]}',
+              "",
+              'data: {"choices":[{"delta":{"content":"\\"text\\":\\"Alpha\\"}\\n"}}]}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    const chunks: string[] = [];
+    for await (const chunk of provider.streamText({ profile, prompt: "Translate me" })) {
+      chunks.push(chunk.text);
+    }
+
+    expect(chunks.join("")).toBe('{"id":"a","text":"Alpha"}\n');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      model: "model-a",
+      messages: [{ role: "user", content: "Translate me" }],
+      temperature: 0.2,
+      max_tokens: 1200,
+      stream: true,
+    });
+  });
+
+  it("aggregates multi-line SSE data fields before parsing streamed JSON", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"choices":',
+              'data: [{"delta":{"content":"Hello"}}]}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+      ),
+    );
+
+    const provider = new OpenAiCompatibleProvider();
+    const chunks: string[] = [];
+    for await (const chunk of provider.streamText({ profile, prompt: "Translate me" })) {
+      chunks.push(chunk.text);
+    }
+
+    expect(chunks).toEqual(["Hello"]);
+  });
+
+  it("rejects non-SSE streaming responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "buffered response" } }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    const provider = new OpenAiCompatibleProvider();
+    const stream = provider.streamText({ profile, prompt: "Translate me" });
+
+    await expect(stream.next()).rejects.toMatchObject({
+      code: "invalidResponse",
+    });
+  });
+
+  it("maps streaming HTTP errors to provider errors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("rate limited", { status: 429 })),
+    );
+
+    const provider = new OpenAiCompatibleProvider();
+    const stream = provider.streamText({ profile, prompt: "Hello" });
+
+    await expect(stream.next()).rejects.toMatchObject({
+      code: "rateLimited",
+      status: 429,
+    });
+  });
+
   it("tries a lower-case model candidate when the original model casing is rejected", async () => {
     const fetchMock = vi
       .fn()

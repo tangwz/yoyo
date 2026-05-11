@@ -8,7 +8,7 @@ export type CreateCacheKeyInput = Omit<
 };
 
 export function normalizeSourceText(sourceText: string): string {
-  return sourceText.trim().replace(/\s+/g, " ");
+  return sourceText.replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
 }
 
 export async function hashNormalizedText(sourceText: string): Promise<string> {

@@ -14,19 +14,47 @@ describe("messaging contracts", () => {
     const request = {
       type: "collectSegments",
       taskId: "task-1",
+      translationMode: "lazyViewport",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+      providerId: "profile-1",
+      textModel: "gpt-4.1-mini",
     } satisfies ContentRequest;
 
     expect(request).toEqual({
       type: "collectSegments",
       taskId: "task-1",
+      translationMode: "lazyViewport",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+      providerId: "profile-1",
+      textModel: "gpt-4.1-mini",
     });
   });
 
   it("covers content entrypoint request variants", () => {
     const requests = [
       { type: "estimatePage" },
-      { type: "collectSegments", taskId: "task-1" },
+      {
+        type: "collectSegments",
+        taskId: "task-1",
+        translationMode: "lazyViewport",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+        providerId: "profile-1",
+        textModel: "gpt-4.1-mini",
+      },
       { type: "applyTranslations", taskId: "task-1", items: [] },
+      {
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "cancelled",
+          total: 1,
+          translated: 0,
+          failed: 0,
+        },
+      },
       { type: "hideTranslations", taskId: "task-1" },
       { type: "showTranslations", taskId: "task-1" },
       { type: "removeTranslations", taskId: "task-1" },
@@ -37,11 +65,48 @@ describe("messaging contracts", () => {
       "estimatePage",
       "collectSegments",
       "applyTranslations",
+      "taskProgress",
       "hideTranslations",
       "showTranslations",
       "removeTranslations",
       "getPageRuntimeState",
     ]);
+  });
+
+  it("supports lazy segment enqueue requests from content scripts", () => {
+    const request = {
+      type: "enqueueLazySegments",
+      taskId: "task-1",
+      segmentIds: ["seg_3"],
+      failedSegmentIds: ["seg_4"],
+      recovery: {
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        providerId: "profile-1",
+        textModel: "gpt-4.1-mini",
+        segments: [],
+        processedSegmentIds: [],
+        failedSegmentIds: ["seg_4"],
+      },
+    } satisfies BackgroundRequest;
+
+    expect(request).toEqual({
+      type: "enqueueLazySegments",
+      taskId: "task-1",
+      segmentIds: ["seg_3"],
+      failedSegmentIds: ["seg_4"],
+      recovery: {
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        providerId: "profile-1",
+        textModel: "gpt-4.1-mini",
+        segments: [],
+        processedSegmentIds: [],
+        failedSegmentIds: ["seg_4"],
+      },
+    });
   });
 
   it("keeps content error responses available to runtime handlers", () => {

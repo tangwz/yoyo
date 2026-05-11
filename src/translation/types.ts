@@ -2,6 +2,7 @@ export type TranslationTaskState =
   | "queued"
   | "collecting"
   | "translating"
+  | "waitingForViewport"
   | "completed"
   | "completedWithErrors"
   | "cancelled"
@@ -14,14 +15,21 @@ export type CancelReason =
   | "superseded";
 
 export type PageSegmentKind = "paragraph" | "heading" | "listItem";
+export type SegmentPriority = "viewport" | "nearViewport" | "normal";
+export type TranslationMode = "lazyViewport" | "fullPage";
 
 export type PageSegment = {
   id: string;
   order: number;
   sourceText: string;
   kind: PageSegmentKind;
+  priority: SegmentPriority;
   pathHint: string;
   textHash: string;
+};
+
+export type TranslationPreferences = {
+  mode: TranslationMode;
 };
 
 export type TranslationResultItem = {

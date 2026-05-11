@@ -1,7 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { parseTranslationBatchResult } from "@/translation/jsonResult";
+import {
+  createStreamingTranslationResultParser,
+  parseTranslationBatchResult,
+} from "@/translation/jsonResult";
 
 describe("translation JSON result parser", () => {
+  it("parses compact v2 items and maps them to translation results", () => {
+    const result = parseTranslationBatchResult(
+      JSON.stringify({
+        items: [
+          { id: "a", text: "Alpha" },
+          { id: "b", text: "Beta" },
+        ],
+      }),
+      ["a", "b"],
+    );
+
+    expect(result.items).toEqual([
+      { segmentId: "a", translatedText: "Alpha" },
+      { segmentId: "b", translatedText: "Beta" },
+    ]);
+    expect(result.missingSegmentIds).toEqual([]);
+  });
+
   it("parses valid items and ignores unknown segment IDs with warnings", () => {
     const result = parseTranslationBatchResult(
       JSON.stringify({
@@ -84,5 +105,50 @@ describe("translation JSON result parser", () => {
     expect(() => parseTranslationBatchResult("No structured data", ["a"])).toThrow(
       "Translation result does not contain a JSON object.",
     );
+  });
+});
+
+describe("streaming translation JSONL parser", () => {
+  it("parses complete records across chunk boundaries", () => {
+    const parser = createStreamingTranslationResultParser(["a", "b"]);
+
+    expect(parser.push('{"id":"a","text":"Al')).toEqual([]);
+    expect(parser.push('pha"}\n{"id":"b","text":"Beta"}\n')).toEqual([
+      { segmentId: "a", translatedText: "Alpha" },
+      { segmentId: "b", translatedText: "Beta" },
+    ]);
+    expect(parser.finish()).toEqual({
+      items: [],
+      missingSegmentIds: [],
+      warnings: [],
+    });
+  });
+
+  it("ignores invalid, unknown, and duplicate streaming records while continuing", () => {
+    const parser = createStreamingTranslationResultParser(["a", "b"]);
+
+    const items = parser.push(
+      [
+        '{"id":"unknown","text":"Ignored"}',
+        '{"id":"a","text":"Alpha"}',
+        '{"id":"a","text":"Duplicate"}',
+        '{"id":"b","text":123}',
+        "not json",
+        '{"id":"b","text":"Beta"}',
+      ].join("\n") + "\n",
+    );
+    const result = parser.finish();
+
+    expect(items).toEqual([
+      { segmentId: "a", translatedText: "Alpha" },
+      { segmentId: "b", translatedText: "Beta" },
+    ]);
+    expect(result.missingSegmentIds).toEqual([]);
+    expect(result.warnings).toEqual([
+      'Ignoring unknown segmentId "unknown".',
+      'Ignoring duplicate segmentId "a".',
+      "Ignoring invalid item at line 4.",
+      "Ignoring invalid JSON at line 5.",
+    ]);
   });
 });

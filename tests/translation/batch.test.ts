@@ -14,6 +14,7 @@ function segment(
     kind: "paragraph",
     pathHint: `body.${id}`,
     textHash: `hash-${id}`,
+    priority: "normal",
   };
 }
 
@@ -30,6 +31,21 @@ describe("translation batch helpers", () => {
 
     expect(batches.map((batch) => batch.map((item) => item.id))).toEqual([
       ["first", "second", "third"],
+    ]);
+  });
+
+  it("sorts viewport and near-viewport segments before normal content", () => {
+    const batches = splitSegmentsIntoBatches(
+      [
+        { ...segment("normal", 1, "A"), priority: "normal" },
+        { ...segment("near", 2, "B"), priority: "nearViewport" },
+        { ...segment("viewport", 3, "C"), priority: "viewport" },
+      ],
+      { maxCharsPerBatch: 10, maxSegmentsPerBatch: 10 },
+    );
+
+    expect(batches.map((batch) => batch.map((item) => item.id))).toEqual([
+      ["viewport", "near", "normal"],
     ]);
   });
 

@@ -10,6 +10,7 @@ describe("translation task types", () => {
     expect(isTerminalTaskState("failed")).toBe(true);
     expect(isTerminalTaskState("collecting")).toBe(false);
     expect(isTerminalTaskState("translating")).toBe(false);
+    expect(isTerminalTaskState("waitingForViewport")).toBe(false);
   });
 
   it("exports the shared terminal task state contract", () => {

@@ -13,6 +13,8 @@ const saveProfile = vi.fn();
 const setActiveProviderId = vi.fn();
 const listProfiles = vi.fn();
 const getActiveProviderId = vi.fn();
+const getTranslationPreferences = vi.fn();
+const saveTranslationPreferences = vi.fn();
 const originalScrollIntoView = Element.prototype.scrollIntoView;
 
 function createDeferred<T>() {
@@ -39,6 +41,10 @@ function mockStorageRepositories() {
       get: vi.fn(),
       save: vi.fn(),
     },
+    translationPreferences: {
+      get: getTranslationPreferences,
+      save: saveTranslationPreferences,
+    },
   });
 }
 
@@ -48,6 +54,8 @@ describe("options app", () => {
     window.history.pushState({}, "", "/options.html");
     listProfiles.mockResolvedValue([]);
     getActiveProviderId.mockResolvedValue(undefined);
+    getTranslationPreferences.mockResolvedValue({ mode: "lazyViewport" });
+    saveTranslationPreferences.mockResolvedValue(undefined);
     mockStorageRepositories();
   });
 
@@ -111,12 +119,30 @@ describe("options app", () => {
     expect(screen.getByRole("button", { name: "测试连接" })).toBeVisible();
 
     expect(screen.getByRole("combobox", { name: "Target Language" })).toHaveValue("zh-CN");
+    expect(screen.getByRole("combobox", { name: "Translation Mode" })).toHaveValue(
+      "lazyViewport",
+    );
     expect(screen.getByRole("spinbutton", { name: "Timeout" })).toHaveValue(30000);
     expect(screen.getByRole("spinbutton", { name: "Temperature" })).toHaveAttribute(
       "step",
       "0.1",
     );
     expect(screen.getByRole("spinbutton", { name: "Max Tokens" })).toHaveValue(4096);
+  });
+
+  it("loads and saves translation preferences", async () => {
+    getTranslationPreferences.mockResolvedValue({ mode: "fullPage" });
+
+    render(OptionsApp);
+
+    const modeSelect = await screen.findByRole("combobox", { name: "Translation Mode" });
+    await waitFor(() => {
+      expect(modeSelect).toHaveValue("fullPage");
+    });
+
+    await fireEvent.update(modeSelect, "lazyViewport");
+
+    expect(saveTranslationPreferences).toHaveBeenCalledWith({ mode: "lazyViewport" });
   });
 
   it("lands on the provider section from first-run options routing", async () => {

@@ -7,6 +7,7 @@ import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
 import { providerPresets } from "@/provider/presets";
 import type { ProviderProfile } from "@/provider/types";
 import { createStorageRepositories } from "@/storage/repositories";
+import type { TranslationMode } from "@/translation/types";
 
 const defaultPreset = providerPresets[0];
 
@@ -17,6 +18,7 @@ const apiKey = ref("");
 const textModel = ref(defaultPreset.defaultTextModel ?? "");
 const visionModel = ref("");
 const targetLanguage = ref("zh-CN");
+const translationMode = ref<TranslationMode>("lazyViewport");
 const timeoutMs = ref(30000);
 const temperature = ref(0.3);
 const maxTokens = ref(4096);
@@ -177,6 +179,16 @@ async function loadActiveProviderProfile() {
   }
 }
 
+async function loadTranslationPreferences() {
+  try {
+    const storage = createStorageRepositories();
+    const preferences = await storage.translationPreferences.get();
+    translationMode.value = preferences.mode;
+  } catch {
+    translationMode.value = "lazyViewport";
+  }
+}
+
 async function focusProviderLanding() {
   if (!shouldLandOnProvider) {
     return;
@@ -188,7 +200,7 @@ async function focusProviderLanding() {
 }
 
 onMounted(async () => {
-  await loadActiveProviderProfile();
+  await Promise.all([loadActiveProviderProfile(), loadTranslationPreferences()]);
   await focusProviderLanding();
 });
 
@@ -204,6 +216,15 @@ async function saveProviderProfile() {
     saveState.value = "saved";
   } catch {
     saveState.value = "error";
+  }
+}
+
+async function saveTranslationMode() {
+  try {
+    const storage = createStorageRepositories();
+    await storage.translationPreferences.save({ mode: translationMode.value });
+  } catch {
+    // Translation mode is non-critical; keep the selected value visible.
   }
 }
 
@@ -436,6 +457,21 @@ async function testConnection() {
                 <option value="en">English</option>
                 <option value="ja">日本語</option>
                 <option value="ko">한국어</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Translation Mode</span>
+              <select
+                v-model="translationMode"
+                @change="saveTranslationMode"
+              >
+                <option value="lazyViewport">
+                  Lazy viewport
+                </option>
+                <option value="fullPage">
+                  Full page
+                </option>
               </select>
             </label>
           </div>

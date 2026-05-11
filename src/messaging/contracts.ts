@@ -3,6 +3,7 @@ import type {
   PageSegment,
   TranslationProgress,
   TranslationResultItem,
+  TranslationMode,
 } from "@/translation/types";
 import type { ProviderReadiness } from "@/provider/readiness";
 
@@ -17,10 +18,31 @@ export type PageTranslationEstimate = {
   reason?: string;
 };
 
+export type LazySegmentRecoverySnapshot = {
+  sourceLanguage: string;
+  targetLanguage: string;
+  translationMode: TranslationMode;
+  collectionComplete?: boolean;
+  providerId?: string;
+  textModel?: string;
+  segments: PageSegment[];
+  processedSegmentIds: string[];
+  failedSegmentIds?: string[];
+};
+
 export type ContentRequest =
   | { type: "estimatePage" }
-  | { type: "collectSegments"; taskId: string }
+  | {
+      type: "collectSegments";
+      taskId: string;
+      translationMode: TranslationMode;
+      sourceLanguage: string;
+      targetLanguage: string;
+      providerId?: string;
+      textModel?: string;
+    }
   | { type: "applyTranslations"; taskId: string; items: TranslationResultItem[] }
+  | { type: "taskProgress"; progress: TranslationProgress }
   | { type: "hideTranslations"; taskId?: string }
   | { type: "showTranslations"; taskId?: string }
   | { type: "removeTranslations"; taskId?: string }
@@ -28,7 +50,12 @@ export type ContentRequest =
 
 export type ContentResponse =
   | { type: "estimatePageResult"; estimate: PageTranslationEstimate }
-  | { type: "collectSegmentsResult"; taskId: string; segments: PageSegment[] }
+  | {
+      type: "collectSegmentsResult";
+      taskId: string;
+      segments: PageSegment[];
+      collectionComplete?: boolean;
+    }
   | {
       type: "contentActionResult";
       success: boolean;
@@ -58,6 +85,13 @@ export type BackgroundRequest =
       type: "openOptions";
       section?: OptionsSection;
       source?: OptionsOpenSource;
+    }
+  | {
+      type: "enqueueLazySegments";
+      taskId: string;
+      segmentIds: string[];
+      failedSegmentIds?: string[];
+      recovery?: LazySegmentRecoverySnapshot;
     };
 
 export type BackgroundResponse =

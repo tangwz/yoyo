@@ -55,13 +55,22 @@ export default defineBackground(() => {
     return selectReadyProviderProfile(profiles, activeProviderId);
   }
 
+  async function getProviderProfile(providerId: string): Promise<ProviderProfile | undefined> {
+    return selectReadyProviderProfile(await listProfiles(), providerId);
+  }
+
   const orchestrator = new TranslationTaskOrchestrator({
     getActiveProfile,
+    getProviderProfile,
     provider,
     sendToContent: (tabId, message) =>
       sendTabMessage<ContentRequest, ContentResponse>(tabId, message),
-    emitProgress: (progress) => {
+    emitProgress: (progress, tabId) => {
       void browser.runtime.sendMessage({ type: "taskProgress", progress });
+      void sendTabMessage<ContentRequest, ContentResponse>(tabId, {
+        type: "taskProgress",
+        progress,
+      }).catch(() => undefined);
     },
     now: () => Date.now(),
     createTaskId,
@@ -82,6 +91,7 @@ export default defineBackground(() => {
         tabId,
         sourceLanguage: "auto",
         targetLanguage: "zh-CN",
+        translationMode: (await storage.translationPreferences.get()).mode,
       });
 
       if (progress.state === "failed") {
@@ -102,15 +112,31 @@ export default defineBackground(() => {
   );
 
   addRuntimeMessageListener<BackgroundRequest, BackgroundResponse>(
-    async (request) => {
+    async (request, sender) => {
       switch (request.type) {
         case "translatePage": {
+          const preferences = await storage.translationPreferences.get();
           const progress = orchestrator.startTranslatePage({
             tabId: request.tabId,
             sourceLanguage: request.sourceLanguage,
             targetLanguage: request.targetLanguage,
+            translationMode: preferences.mode,
           });
           return { type: "taskProgress", progress };
+        }
+        case "enqueueLazySegments": {
+          const tabId = sender.tab?.id;
+          return {
+            type: "taskProgress",
+            progress: await orchestrator.enqueueLazySegments(
+              request.taskId,
+              request.segmentIds,
+              request.failedSegmentIds,
+              request.recovery && tabId !== undefined
+                ? { ...request.recovery, tabId }
+                : undefined,
+            ),
+          };
         }
         case "cancelTask":
           return {
