@@ -78,6 +78,10 @@ type TranslationBatchInput = TaskTranslationContext & {
   fanOutGroups: Map<string, PageSegment[]>;
 };
 
+type ApplyTranslationsOptions = {
+  countFailures?: boolean;
+};
+
 export class TranslationTaskOrchestrator {
   private readonly tasks = new Map<string, RunningTask>();
   private readonly cache = new SessionTranslationCache();
@@ -531,16 +535,24 @@ export class TranslationTaskOrchestrator {
     input: TranslationBatchInput,
     item: TranslationResultItem,
   ): Promise<boolean> {
+    const group = input.fanOutGroups.get(item.segmentId) ?? [];
     const fanOutItems = this.fanOutTranslationItem(item, input.fanOutGroups);
-    const appliedItems = await this.applyTranslations(input.task, fanOutItems);
+    const appliedItems = await this.applyTranslations(input.task, fanOutItems, {
+      countFailures: false,
+    });
     if (appliedItems.length === 0) {
       return false;
     }
 
-    await this.cacheAppliedGroups(input, [item], appliedItems);
     const appliedIds = new Set(appliedItems.map((appliedItem) => appliedItem.segmentId));
-    const group = input.fanOutGroups.get(item.segmentId) ?? [];
-    return group.length > 0 && group.every((segment) => appliedIds.has(segment.id));
+    const pendingGroup = group.filter((segment) => !appliedIds.has(segment.id));
+    if (pendingGroup.length > 0) {
+      input.fanOutGroups.set(item.segmentId, pendingGroup);
+      return false;
+    }
+
+    await this.cacheAppliedGroups(input, [item], appliedItems);
+    return group.length > 0;
   }
 
   private fanOutTranslationItem(
@@ -603,6 +615,7 @@ export class TranslationTaskOrchestrator {
   private async applyTranslations(
     task: RunningTask,
     items: TranslationResultItem[],
+    options: ApplyTranslationsOptions = {},
   ): Promise<TranslationResultItem[]> {
     if (items.length === 0 || this.isTaskCancelled(task)) {
       return [];
@@ -635,19 +648,26 @@ export class TranslationTaskOrchestrator {
 
         this.incrementProgress(task, {
           translated: appliedItems.length,
-          failed: explicitFailures.length + implicitFailures.length,
+          failed:
+            options.countFailures === false
+              ? 0
+              : explicitFailures.length + implicitFailures.length,
         });
         return appliedItems;
       }
 
-      this.incrementProgress(task, { failed: items.length });
+      if (options.countFailures !== false) {
+        this.incrementProgress(task, { failed: items.length });
+      }
       return [];
     } catch {
       if (this.isTaskCancelled(task)) {
         return [];
       }
 
-      this.incrementProgress(task, { failed: items.length });
+      if (options.countFailures !== false) {
+        this.incrementProgress(task, { failed: items.length });
+      }
       return [];
     }
   }

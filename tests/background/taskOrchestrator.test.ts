@@ -910,6 +910,62 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("retries only failed fan-out members after a partial streaming apply", async () => {
+    const { orchestrator, generateText, streamText, sendToContent } = createOrchestrator();
+    const applyEvents: string[][] = [];
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({ id: "segment-1", sourceText: "Repeated text." }),
+            segment({
+              id: "segment-2",
+              order: 2,
+              sourceText: "Repeated text.",
+              textHash: "hash-2",
+            }),
+          ],
+        };
+      }
+
+      if (message.type !== "applyTranslations") {
+        throw new Error(`Unexpected content message: ${message.type}`);
+      }
+
+      applyEvents.push(message.items.map((item) => item.segmentId));
+      if (applyEvents.length === 1) {
+        return {
+          type: "contentActionResult",
+          success: false,
+          appliedSegmentIds: ["segment-1"],
+          failedSegmentIds: ["segment-2"],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    streamText.mockReturnValueOnce(streamChunks(['{"id":"segment-1","text":"重复文本。"}\n']));
+    streamText.mockReturnValueOnce(streamChunks(['{"id":"segment-1","text":"重复文本。"}\n']));
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    expect(generateText).not.toHaveBeenCalled();
+    expect(streamText).toHaveBeenCalledTimes(2);
+    expect(applyEvents).toEqual([["segment-1", "segment-2"], ["segment-2"]]);
+    expect(progress).toMatchObject({
+      state: "completed",
+      translated: 2,
+      failed: 0,
+    });
+  });
+
   it("does not cancel a completed task when a same-tab task starts later", async () => {
     const { orchestrator, generateText, sendToContent } = createOrchestrator({
       createTaskId: vi.fn().mockReturnValueOnce("task-1").mockReturnValueOnce("task-2"),
