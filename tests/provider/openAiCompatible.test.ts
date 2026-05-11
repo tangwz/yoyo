@@ -219,6 +219,60 @@ describe("OpenAiCompatibleProvider", () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("gpt-4.1-mini");
   });
 
+  it("uses a pasted chat completions endpoint with query params without appending the path twice", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "translated text" } }],
+          model: "model-a",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    await provider.generateText({
+      profile: {
+        ...profile,
+        baseURL: "https://api.example.com/v1/chat/completions?api-version=2026-05-01",
+      },
+      prompt: "Translate me",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.com/v1/chat/completions?api-version=2026-05-01",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("appends chat completions before query params on base URLs", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "translated text" } }],
+          model: "model-a",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    await provider.generateText({
+      profile: {
+        ...profile,
+        baseURL: "https://api.example.com/v1?api-version=2026-05-01",
+      },
+      prompt: "Translate me",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.com/v1/chat/completions?api-version=2026-05-01",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("tests a provider connection with the fixed prompt", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

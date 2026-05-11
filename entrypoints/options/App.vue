@@ -10,19 +10,18 @@ import {
 import { ProviderError } from "@/provider/errors";
 import { normalizeModelNameForProfile } from "@/provider/modelNames";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
-import { providerPresets } from "@/provider/presets";
+import { defaultProviderPreset, providerPresets } from "@/provider/presets";
+import { selectStoredActiveProviderId } from "@/provider/readiness";
 import type { ProviderProfile } from "@/provider/types";
 import { defaultUiPreferences, type UiPreferences } from "@/storage/defaults";
 import { createStorageRepositories } from "@/storage/repositories";
 import type { TranslationMode } from "@/translation/types";
 
-const defaultPreset = providerPresets[0];
-
-const selectedPresetId = ref(defaultPreset.id);
-const displayName = ref(defaultPreset.name);
-const baseUrl = ref(defaultPreset.defaultBaseUrl);
+const selectedPresetId = ref(defaultProviderPreset.id);
+const displayName = ref(defaultProviderPreset.name);
+const baseUrl = ref(defaultProviderPreset.defaultBaseUrl);
 const apiKey = ref("");
-const textModel = ref(defaultPreset.defaultTextModel ?? "");
+const textModel = ref(defaultProviderPreset.defaultTextModel ?? "");
 const visionModel = ref("");
 const targetLanguage = ref("zh-CN");
 const translationMode = ref<TranslationMode>("lazyViewport");
@@ -215,8 +214,16 @@ async function loadActiveProviderProfile() {
       storage.providers.listProfiles(),
       storage.providers.getActiveProviderId(),
     ]);
-    const activeProfile =
-      profiles.find((profile) => profile.id === activeProviderId) ?? profiles[0];
+    const selectedActiveProviderId = selectStoredActiveProviderId(profiles, activeProviderId);
+    const activeProfile = selectedActiveProviderId
+      ? profiles.find((profile) => profile.id === selectedActiveProviderId)
+      : undefined;
+
+    if (selectedActiveProviderId && selectedActiveProviderId !== activeProviderId) {
+      await Promise.resolve(
+        storage.providers.setActiveProviderId(selectedActiveProviderId),
+      ).catch(() => undefined);
+    }
 
     if (activeProfile) {
       applyProviderProfile(activeProfile);

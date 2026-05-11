@@ -298,16 +298,57 @@ describe("options app", () => {
     expect(screen.getByRole("spinbutton", { name: "最大输出长度" })).toHaveValue(8192);
   });
 
-  it("fills provider fields from the selected preset", async () => {
+  it("loads a fallback provider profile when the active provider id is missing", async () => {
+    listProfiles.mockResolvedValue([
+      {
+        id: "incomplete",
+        displayName: "Incomplete Provider",
+        presetId: "custom",
+        type: "openai-compatible",
+        baseURL: "https://api.incomplete.example/v1",
+        apiKey: "",
+        textModel: "missing-key-model",
+      },
+      {
+        id: "deepseek",
+        displayName: "DeepSeek Work",
+        presetId: "deepseek",
+        type: "openai-compatible",
+        baseURL: "https://api.deepseek.com/v1",
+        apiKey: "saved-key",
+        textModel: "deepseek-chat",
+      },
+    ]);
+    getActiveProviderId.mockResolvedValue(undefined);
+
     await renderReady();
 
-    await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "deepseek");
-
-    expect(screen.getByRole("textbox", { name: "显示名称" })).toHaveValue("DeepSeek");
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "显示名称" })).toHaveValue("DeepSeek Work");
+    });
+    expect(screen.getByRole("combobox", { name: "服务预设" })).toHaveDisplayValue("DeepSeek");
     expect(screen.getByRole("textbox", { name: "接口地址" })).toHaveValue(
       "https://api.deepseek.com/v1",
     );
+    expect(screen.getByLabelText("访问密钥")).toHaveValue("saved-key");
     expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue("deepseek-chat");
+    expect(setActiveProviderId).toHaveBeenCalledWith("deepseek");
+  });
+
+  it.each([
+    ["deepseek", "DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat"],
+    ["kimi", "Kimi", "https://api.moonshot.ai/v1", "moonshot-v1-8k"],
+    ["glm", "GLM", "https://open.bigmodel.cn/api/paas/v4", "glm-5.1"],
+    ["minimax", "MiniMax", "https://api.minimax.io/v1", "MiniMax-M2.7"],
+    ["xiaomi-mimo", "Xiaomi MiMo", "https://api.xiaomimimo.com/v1", "mimo-v2-flash"],
+  ])("fills provider fields from the %s preset", async (presetId, name, url, model) => {
+    await renderReady();
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), presetId);
+
+    expect(screen.getByRole("textbox", { name: "显示名称" })).toHaveValue(name);
+    expect(screen.getByRole("textbox", { name: "接口地址" })).toHaveValue(url);
+    expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue(model);
   });
 
   it("saves the selected provider profile and activates it", async () => {
@@ -482,6 +523,33 @@ describe("options app", () => {
     });
     expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue("mimo-v2.5");
     expect(screen.queryByText(/大小写/)).not.toBeInTheDocument();
+  });
+
+  it("tests a pasted chat completions endpoint with query params without duplicating the endpoint path", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "ok" } }],
+          model: "deepseek-chat",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await renderReady();
+
+    await fireEvent.update(
+      screen.getByRole("textbox", { name: "接口地址" }),
+      "https://api.example.com/v1/chat/completions?api-version=2026-05-01",
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.com/v1/chat/completions?api-version=2026-05-01",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
   });
 
   it("shows error feedback when testing the provider connection fails", async () => {
