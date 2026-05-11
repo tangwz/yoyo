@@ -1,4 +1,8 @@
-import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
+import type {
+  ContentRequest,
+  ContentResponse,
+  LazySegmentRecoverySnapshot,
+} from "@/messaging/contracts";
 import { ProviderError } from "@/provider/errors";
 import type { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
 import type { ProviderProfile } from "@/provider/types";
@@ -103,8 +107,9 @@ export class TranslationTaskOrchestrator {
     taskId: string,
     segmentIds: readonly string[],
     failedSegmentIds: readonly string[] = [],
+    recovery?: LazySegmentRecoverySnapshot & { tabId: number },
   ): Promise<TranslationProgress> {
-    const task = this.tasks.get(taskId);
+    const task = this.tasks.get(taskId) ?? (await this.recoverLazyTask(taskId, recovery));
     if (!task || !task.context || this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state)) {
       return task ? this.cloneProgress(task.progress) : this.missingTaskProgress(taskId);
     }
@@ -118,6 +123,45 @@ export class TranslationTaskOrchestrator {
     await this.processSegmentsForTask(task, segments);
     this.finishOrWaitForLazySegments(task);
     return this.cloneProgress(task.progress);
+  }
+
+  private async recoverLazyTask(
+    taskId: string,
+    recovery: (LazySegmentRecoverySnapshot & { tabId: number }) | undefined,
+  ): Promise<RunningTask | undefined> {
+    if (!recovery || recovery.segments.length === 0) {
+      return undefined;
+    }
+
+    const profile = await this.dependencies.getActiveProfile();
+    if (!profile) {
+      return undefined;
+    }
+
+    const task = this.createTask(taskId, recovery.tabId);
+    task.segmentsById = new Map(recovery.segments.map((segment) => [segment.id, segment]));
+    task.context = {
+      profile,
+      sourceLanguage: recovery.sourceLanguage,
+      targetLanguage: recovery.targetLanguage,
+      translationMode: recovery.translationMode,
+    };
+
+    const processedIds = [...new Set(recovery.processedSegmentIds)].filter((segmentId) =>
+      task.segmentsById.has(segmentId),
+    );
+    for (const segmentId of processedIds) {
+      task.processedSegmentIds.add(segmentId);
+    }
+
+    this.updateProgress(task, {
+      state: "translating",
+      total: recovery.segments.length,
+      translated: processedIds.length,
+      failed: 0,
+    });
+
+    return task;
   }
 
   private markSegmentsFailed(
@@ -166,6 +210,8 @@ export class TranslationTaskOrchestrator {
         type: "collectSegments",
         taskId: task.progress.taskId,
         translationMode,
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
       });
 
       if (

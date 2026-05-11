@@ -12,10 +12,12 @@ import {
 import type {
   BackgroundRequest,
   BackgroundResponse,
+  LazySegmentRecoverySnapshot,
   PageTranslationEstimate,
 } from "@/messaging/contracts";
 import { sendRuntimeMessage } from "@/messaging/runtime";
 import {
+  type PageSegment,
   type TranslationMode,
   type TranslationResultItem,
 } from "@/translation/types";
@@ -23,8 +25,12 @@ import {
 let currentAnchors = new AnchorRegistry();
 let activeTaskId: string | undefined;
 let lazyReportTaskId: string | undefined;
+let lazyRecoverySnapshot:
+  | Omit<LazySegmentRecoverySnapshot, "processedSegmentIds">
+  | undefined;
 let lazyReportTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
 let reportedLazySegmentIds = new Set<string>();
+let currentSegmentsById = new Map<string, PageSegment>();
 
 export async function estimatePage(): Promise<PageTranslationEstimate> {
   if (!isPageUrlSupported(location.href)) {
@@ -57,6 +63,7 @@ function stopLazySegmentReporting(): void {
   window.removeEventListener("scroll", scheduleLazySegmentReport);
   window.removeEventListener("resize", scheduleLazySegmentReport);
   lazyReportTaskId = undefined;
+  lazyRecoverySnapshot = undefined;
   reportedLazySegmentIds = new Set();
 }
 
@@ -109,6 +116,10 @@ async function reportVisibleLazySegments(): Promise<void> {
   if (failedSegmentIds.length > 0) {
     request.failedSegmentIds = failedSegmentIds;
   }
+  const recovery = buildLazyRecoverySnapshot(taskId);
+  if (recovery) {
+    request.recovery = recovery;
+  }
 
   const response = await Promise.resolve(
     sendRuntimeMessage<BackgroundRequest, BackgroundResponse>(request),
@@ -128,8 +139,32 @@ async function reportVisibleLazySegments(): Promise<void> {
   }
 }
 
-function startLazySegmentReporting(taskId: string): void {
+function buildLazyRecoverySnapshot(taskId: string): LazySegmentRecoverySnapshot | undefined {
+  if (!lazyRecoverySnapshot) {
+    return undefined;
+  }
+
+  const processedSegmentIds = currentAnchors
+    .listByTask(taskId)
+    .filter((anchor) => {
+      const insertedNode = anchor.insertedNode;
+      return Boolean(insertedNode?.isConnected) && insertedNode?.dataset.yoyoPending !== "true";
+    })
+    .map((anchor) => anchor.segmentId);
+
+  return {
+    ...lazyRecoverySnapshot,
+    segments: [...currentSegmentsById.values()],
+    processedSegmentIds,
+  };
+}
+
+function startLazySegmentReporting(
+  taskId: string,
+  recoverySnapshot: Omit<LazySegmentRecoverySnapshot, "processedSegmentIds">,
+): void {
   lazyReportTaskId = taskId;
+  lazyRecoverySnapshot = recoverySnapshot;
   reportedLazySegmentIds = new Set(
     currentAnchors
       .listByTask(taskId)
@@ -143,6 +178,8 @@ function startLazySegmentReporting(taskId: string): void {
 export async function collectSegments(
   taskId: string,
   translationMode: TranslationMode = "fullPage",
+  sourceLanguage = "auto",
+  targetLanguage = "zh-CN",
 ) {
   if (!isPageUrlSupported(location.href)) {
     throw new Error("Unsupported page URL.");
@@ -152,12 +189,18 @@ export async function collectSegments(
   removeTranslations();
 
   const { segments, anchors } = await collectPageSegments(taskId);
+  currentSegmentsById = new Map(segments.map((segment) => [segment.id, segment]));
   currentAnchors = anchors;
   activeTaskId = taskId;
   insertPendingTranslations(currentAnchors, taskId);
 
   if (translationMode === "lazyViewport") {
-    startLazySegmentReporting(taskId);
+    startLazySegmentReporting(taskId, {
+      sourceLanguage,
+      targetLanguage,
+      translationMode,
+      segments,
+    });
   }
 
   return segments;
@@ -185,10 +228,14 @@ export function removePageTranslations(taskId?: string): void {
   if (targetTaskId === undefined || targetTaskId === activeTaskId) {
     stopLazySegmentReporting();
     currentAnchors.clear();
+    currentSegmentsById.clear();
     activeTaskId = undefined;
   } else {
     if (targetTaskId === lazyReportTaskId) {
       stopLazySegmentReporting();
+    }
+    for (const anchor of currentAnchors.listByTask(targetTaskId)) {
+      currentSegmentsById.delete(anchor.segmentId);
     }
     currentAnchors.clearTask(targetTaskId);
   }

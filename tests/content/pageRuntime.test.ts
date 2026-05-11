@@ -131,11 +131,13 @@ describe("page runtime", () => {
     window.dispatchEvent(new Event("scroll"));
     await vi.advanceTimersByTimeAsync(150);
 
-    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith({
-      type: "enqueueLazySegments",
-      taskId: "task-1",
-      segmentIds: ["seg_3"],
-    });
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: ["seg_3"],
+      }),
+    );
 
     Object.defineProperty(window, "innerHeight", {
       configurable: true,
@@ -201,11 +203,14 @@ describe("page runtime", () => {
     await vi.advanceTimersByTimeAsync(150);
 
     expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledTimes(2);
-    expect(runtimeMock.sendRuntimeMessage).toHaveBeenNthCalledWith(2, {
-      type: "enqueueLazySegments",
-      taskId: "task-1",
-      segmentIds: ["seg_2"],
-    });
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: ["seg_2"],
+      }),
+    );
 
     Object.defineProperty(window, "innerHeight", {
       configurable: true,
@@ -281,11 +286,14 @@ describe("page runtime", () => {
     await vi.advanceTimersByTimeAsync(150);
 
     expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledTimes(2);
-    expect(runtimeMock.sendRuntimeMessage).toHaveBeenNthCalledWith(2, {
-      type: "enqueueLazySegments",
-      taskId: "task-1",
-      segmentIds: ["seg_2"],
-    });
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: ["seg_2"],
+      }),
+    );
 
     Object.defineProperty(window, "innerHeight", {
       configurable: true,
@@ -336,12 +344,91 @@ describe("page runtime", () => {
     window.dispatchEvent(new Event("scroll"));
     await vi.advanceTimersByTimeAsync(150);
 
-    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith({
-      type: "enqueueLazySegments",
-      taskId: "task-1",
-      segmentIds: [],
-      failedSegmentIds: ["seg_2"],
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: [],
+        failedSegmentIds: ["seg_2"],
+      }),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
     });
+  });
+
+  it("includes a long-page recovery snapshot when reporting lazy segments", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+
+    document.body.innerHTML = `
+      <article>
+        ${Array.from(
+          { length: 12 },
+          (_value, index) =>
+            `<p id="paragraph-${index + 1}">Readable long article paragraph ${index + 1} with enough text for extraction.</p>`,
+        ).join("")}
+      </article>
+    `;
+
+    const rects: Record<string, { top: number; bottom: number }> = {};
+    for (let index = 1; index <= 12; index += 1) {
+      rects[`paragraph-${index}`] = {
+        top: index <= 2 ? index * 20 : 500 + index * 40,
+        bottom: index <= 2 ? index * 20 + 20 : 520 + index * 40,
+      };
+    }
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    applyTranslationResults("task-1", [
+      { segmentId: "seg_1", translatedText: "第一段。" },
+      { segmentId: "seg_2", translatedText: "第二段。" },
+    ]);
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    rects["paragraph-10"] = { top: 80, bottom: 96 };
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-1",
+        segmentIds: ["seg_10"],
+        recovery: expect.objectContaining({
+          sourceLanguage: "en",
+          targetLanguage: "zh-CN",
+          translationMode: "lazyViewport",
+          processedSegmentIds: ["seg_1", "seg_2"],
+        }),
+      }),
+    );
+    const request = runtimeMock.sendRuntimeMessage.mock.calls[0][0] as {
+      recovery: { segments: unknown[] };
+    };
+    expect(request.recovery.segments).toHaveLength(12);
 
     Object.defineProperty(window, "innerHeight", {
       configurable: true,

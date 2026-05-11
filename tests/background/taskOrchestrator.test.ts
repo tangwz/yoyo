@@ -143,6 +143,8 @@ describe("TranslationTaskOrchestrator", () => {
       type: "collectSegments",
       taskId: "task-1",
       translationMode: "lazyViewport",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
     });
     expect(generateText).toHaveBeenCalledTimes(1);
     expect(generateText.mock.calls[0]?.[0]).toMatchObject({
@@ -649,6 +651,56 @@ describe("TranslationTaskOrchestrator", () => {
       translated: 0,
       failed: 0,
       errorMessage: "Translation task is no longer available. Start translation again.",
+    });
+  });
+
+  it("recovers a missing lazy task from a long-page recovery snapshot", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+    const longSegments = Array.from({ length: 12 }, (_value, index) =>
+      segment({
+        id: `segment-${index + 1}`,
+        order: index + 1,
+        sourceText: `Long paragraph ${index + 1}.`,
+        textHash: `hash-${index + 1}`,
+        priority: index < 2 ? "viewport" : "normal",
+      }),
+    );
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type !== "applyTranslations") {
+        throw new Error(`Unexpected content message: ${message.type}`);
+      }
+
+      expect(message.items).toEqual([
+        { segmentId: "segment-10", translatedText: "Translated paragraph 10." },
+      ]);
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ id: "segment-10", text: "Translated paragraph 10." }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+
+    const progress = await orchestrator.enqueueLazySegments("task-1", ["segment-10"], [], {
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      segments: longSegments,
+      processedSegmentIds: ["segment-1", "segment-2"],
+    });
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generateText.mock.calls[0]?.[0].prompt).toContain("segment-10");
+    expect(generateText.mock.calls[0]?.[0].prompt).not.toContain('"id":"segment-1"');
+    expect(progress).toMatchObject({
+      taskId: "task-1",
+      state: "waitingForViewport",
+      total: 12,
+      translated: 3,
+      failed: 0,
     });
   });
 

@@ -18,9 +18,23 @@ export type PageTranslationEstimate = {
   reason?: string;
 };
 
+export type LazySegmentRecoverySnapshot = {
+  sourceLanguage: string;
+  targetLanguage: string;
+  translationMode: TranslationMode;
+  segments: PageSegment[];
+  processedSegmentIds: string[];
+};
+
 export type ContentRequest =
   | { type: "estimatePage" }
-  | { type: "collectSegments"; taskId: string; translationMode: TranslationMode }
+  | {
+      type: "collectSegments";
+      taskId: string;
+      translationMode: TranslationMode;
+      sourceLanguage: string;
+      targetLanguage: string;
+    }
   | { type: "applyTranslations"; taskId: string; items: TranslationResultItem[] }
   | { type: "hideTranslations"; taskId?: string }
   | { type: "showTranslations"; taskId?: string }
@@ -65,6 +79,7 @@ export type BackgroundRequest =
       taskId: string;
       segmentIds: string[];
       failedSegmentIds?: string[];
+      recovery?: LazySegmentRecoverySnapshot;
     };
 
 export type BackgroundResponse =

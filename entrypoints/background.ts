@@ -103,7 +103,7 @@ export default defineBackground(() => {
   );
 
   addRuntimeMessageListener<BackgroundRequest, BackgroundResponse>(
-    async (request) => {
+    async (request, sender) => {
       switch (request.type) {
         case "translatePage": {
           const preferences = await storage.translationPreferences.get();
@@ -115,15 +115,20 @@ export default defineBackground(() => {
           });
           return { type: "taskProgress", progress };
         }
-        case "enqueueLazySegments":
+        case "enqueueLazySegments": {
+          const tabId = sender.tab?.id;
           return {
             type: "taskProgress",
             progress: await orchestrator.enqueueLazySegments(
               request.taskId,
               request.segmentIds,
               request.failedSegmentIds,
+              request.recovery && tabId !== undefined
+                ? { ...request.recovery, tabId }
+                : undefined,
             ),
           };
+        }
         case "cancelTask":
           return {
             type: "taskProgress",

@@ -15,19 +15,29 @@ describe("messaging contracts", () => {
       type: "collectSegments",
       taskId: "task-1",
       translationMode: "lazyViewport",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
     } satisfies ContentRequest;
 
     expect(request).toEqual({
       type: "collectSegments",
       taskId: "task-1",
       translationMode: "lazyViewport",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
     });
   });
 
   it("covers content entrypoint request variants", () => {
     const requests = [
       { type: "estimatePage" },
-      { type: "collectSegments", taskId: "task-1", translationMode: "lazyViewport" },
+      {
+        type: "collectSegments",
+        taskId: "task-1",
+        translationMode: "lazyViewport",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+      },
       { type: "applyTranslations", taskId: "task-1", items: [] },
       { type: "hideTranslations", taskId: "task-1" },
       { type: "showTranslations", taskId: "task-1" },
@@ -52,6 +62,13 @@ describe("messaging contracts", () => {
       taskId: "task-1",
       segmentIds: ["seg_3"],
       failedSegmentIds: ["seg_4"],
+      recovery: {
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        segments: [],
+        processedSegmentIds: [],
+      },
     } satisfies BackgroundRequest;
 
     expect(request).toEqual({
@@ -59,6 +76,13 @@ describe("messaging contracts", () => {
       taskId: "task-1",
       segmentIds: ["seg_3"],
       failedSegmentIds: ["seg_4"],
+      recovery: {
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        segments: [],
+        processedSegmentIds: [],
+      },
     });
   });
 
