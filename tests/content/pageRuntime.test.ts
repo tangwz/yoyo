@@ -208,6 +208,67 @@ describe("page runtime", () => {
     });
   });
 
+  it("keeps initial lazy anchors stable when deferred collection reuses segment ids", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+
+    document.body.innerHTML = `
+      <article>
+        <p id="above">Above viewport readable paragraph.</p>
+        <p id="visible">Visible readable paragraph.</p>
+        <p id="below">Below viewport readable paragraph.</p>
+      </article>
+    `;
+
+    const rects: Record<string, { top: number; bottom: number }> = {
+      above: { top: -500, bottom: -470 },
+      visible: { top: 10, bottom: 30 },
+      below: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+    await flushDeferredLazyCollection();
+
+    applyTranslationResults("task-1", [
+      { segmentId: "seg_1", translatedText: "Visible translated paragraph." },
+    ]);
+
+    const translatedNode = [
+      ...document.querySelectorAll<HTMLElement>(
+        "[data-yoyo-translation][data-yoyo-segment-id='seg_1']",
+      ),
+    ].find((node) => node.dataset.yoyoPending !== "true");
+
+    expect(translatedNode?.previousElementSibling).toBe(
+      document.querySelector("#visible"),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
   it("retries lazy segment reporting when the runtime enqueue fails", async () => {
     vi.useFakeTimers();
     const originalInnerHeight = window.innerHeight;

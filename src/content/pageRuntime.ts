@@ -228,6 +228,24 @@ function mergeLazySegmentCollection(
       .map((anchor) => [anchor.sourceNode, anchor]),
   );
   const nextSegmentsById = new Map(currentSegmentsById);
+  const usedSegmentIds = new Set(nextSegmentsById.keys());
+  let nextSegmentOrdinal = nextAvailableSegmentOrdinal(usedSegmentIds);
+
+  const allocateSegmentId = (preferredSegmentId: string): string => {
+    if (!usedSegmentIds.has(preferredSegmentId)) {
+      usedSegmentIds.add(preferredSegmentId);
+      return preferredSegmentId;
+    }
+
+    let segmentId = `seg_${nextSegmentOrdinal}`;
+    nextSegmentOrdinal += 1;
+    while (usedSegmentIds.has(segmentId)) {
+      segmentId = `seg_${nextSegmentOrdinal}`;
+      nextSegmentOrdinal += 1;
+    }
+    usedSegmentIds.add(segmentId);
+    return segmentId;
+  };
 
   for (const segment of collection.segments) {
     const anchor = collection.anchors.get(segment.id);
@@ -241,14 +259,35 @@ function mergeLazySegmentCollection(
         ...segment,
         id: existingAnchor.segmentId,
       });
+      usedSegmentIds.add(existingAnchor.segmentId);
       continue;
     }
 
-    currentAnchors.set(anchor);
-    nextSegmentsById.set(segment.id, segment);
+    const segmentId = allocateSegmentId(segment.id);
+    currentAnchors.set({
+      ...anchor,
+      segmentId,
+    });
+    nextSegmentsById.set(segmentId, {
+      ...segment,
+      id: segmentId,
+    });
   }
 
   currentSegmentsById = nextSegmentsById;
+}
+
+function nextAvailableSegmentOrdinal(segmentIds: ReadonlySet<string>): number {
+  let maxOrdinal = 0;
+  for (const segmentId of segmentIds) {
+    const match = /^seg_(\d+)$/.exec(segmentId);
+    if (!match) {
+      continue;
+    }
+    maxOrdinal = Math.max(maxOrdinal, Number(match[1]));
+  }
+
+  return maxOrdinal + 1;
 }
 
 export async function collectSegments(
