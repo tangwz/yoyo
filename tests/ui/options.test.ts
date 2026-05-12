@@ -13,6 +13,8 @@ const saveProfile = vi.fn();
 const setActiveProviderId = vi.fn();
 const listProfiles = vi.fn();
 const getActiveProviderId = vi.fn();
+const getUiPreferences = vi.fn();
+const saveUiPreferences = vi.fn();
 const getTranslationPreferences = vi.fn();
 const saveTranslationPreferences = vi.fn();
 const originalScrollIntoView = Element.prototype.scrollIntoView;
@@ -38,8 +40,8 @@ function mockStorageRepositories() {
       setActiveProviderId,
     },
     uiPreferences: {
-      get: vi.fn(),
-      save: vi.fn(),
+      get: getUiPreferences,
+      save: saveUiPreferences,
     },
     translationPreferences: {
       get: getTranslationPreferences,
@@ -48,12 +50,22 @@ function mockStorageRepositories() {
   });
 }
 
+async function renderReady(navigationName = "设置分区") {
+  const result = render(OptionsApp);
+
+  await screen.findByRole("navigation", { name: navigationName });
+
+  return result;
+}
+
 describe("options app", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.history.pushState({}, "", "/options.html");
     listProfiles.mockResolvedValue([]);
     getActiveProviderId.mockResolvedValue(undefined);
+    getUiPreferences.mockResolvedValue({ theme: "light", uiLanguage: "zh-CN" });
+    saveUiPreferences.mockResolvedValue(undefined);
     getTranslationPreferences.mockResolvedValue({ mode: "lazyViewport" });
     saveTranslationPreferences.mockResolvedValue(undefined);
     mockStorageRepositories();
@@ -65,77 +77,154 @@ describe("options app", () => {
     window.history.pushState({}, "", "/options.html");
   });
 
-  it("renders provider, translation, privacy, and advanced settings", () => {
-    render(OptionsApp);
+  it("renders provider, translation, privacy, and advanced settings", async () => {
+    await renderReady();
 
-    const navigation = screen.getByRole("navigation", { name: "Settings sections" });
+    const navigation = screen.getByRole("navigation", { name: "设置分区" });
     expect(navigation).toBeVisible();
-    expect(screen.getByRole("link", { name: "Provider" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "模型服务" })).toHaveAttribute(
       "href",
       "#provider-heading",
     );
-    expect(screen.getByRole("link", { name: "Translation" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "翻译" })).toHaveAttribute(
       "href",
       "#translation-heading",
     );
-    expect(screen.getByRole("link", { name: "Privacy" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "隐私" })).toHaveAttribute(
       "href",
       "#privacy-heading",
     );
-    expect(screen.getByRole("link", { name: "Advanced" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "高级设置" })).toHaveAttribute(
       "href",
       "#advanced-heading",
     );
 
+    expect(screen.getByRole("heading", { name: "模型服务" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "翻译" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "隐私" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "高级设置" })).toBeVisible();
+
+    expect(
+      screen.getByText("访问密钥保存在浏览器扩展本地存储，不跨设备同步。"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("只有在你手动开始翻译时，扩展才会提取页面文本。"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("翻译过程中，提取的文本会发送到你配置的模型服务。"),
+    ).toBeVisible();
+  });
+
+  it("renders options messages from the saved UI language", async () => {
+    getUiPreferences.mockResolvedValue({ theme: "light", uiLanguage: "en-US" });
+
+    await renderReady("Settings sections");
+
+    expect(
+      await screen.findByRole("navigation", { name: "Settings sections" }),
+    ).toBeVisible();
     expect(screen.getByRole("heading", { name: "Provider" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Translation" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Privacy" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Advanced" })).toBeVisible();
-
-    expect(
-      screen.getByText("API Key 保存在浏览器扩展本地存储，不跨设备同步。"),
-    ).toBeVisible();
-    expect(
-      screen.getByText("Page text is extracted only when you manually start translation."),
-    ).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Interface language" })).toHaveValue("en-US");
     expect(
       screen.getByText(
-        "Extracted text is sent to your configured model provider during translation.",
+        "The API key is stored locally in this browser extension and is not synced across devices.",
       ),
     ).toBeVisible();
+    expect(screen.getByRole("option", { name: "Custom OpenAI compatible" })).toBeInTheDocument();
   });
 
-  it("renders provider form fields and advanced controls", () => {
+  it("does not render settings text before the stored UI language is loaded", async () => {
+    const uiPreferences = createDeferred<{ theme: "light"; uiLanguage: "en-US" }>();
+    getUiPreferences.mockReturnValue(uiPreferences.promise);
+
     render(OptionsApp);
 
-    expect(screen.getByRole("combobox", { name: "Preset" })).toHaveDisplayValue("OpenAI");
-    expect(screen.getByRole("textbox", { name: "Display Name" })).toHaveValue("OpenAI");
-    expect(screen.getByRole("textbox", { name: "Base URL" })).toHaveValue(
+    expect(screen.queryByRole("navigation", { name: "设置分区" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "设置" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Settings sections" })).not.toBeInTheDocument();
+
+    uiPreferences.resolve({ theme: "light", uiLanguage: "en-US" });
+
+    expect(
+      await screen.findByRole("navigation", { name: "Settings sections" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("navigation", { name: "设置分区" })).not.toBeInTheDocument();
+  });
+
+  it("falls back to the default UI language when stored preferences are corrupted", async () => {
+    getUiPreferences.mockResolvedValue({ theme: "light", uiLanguage: "fr-FR" });
+
+    await renderReady();
+
+    expect(await screen.findByRole("navigation", { name: "设置分区" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "模型服务" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "界面语言" })).toHaveValue("zh-CN");
+  });
+
+  it("falls back to the default UI language when stored preferences are missing it", async () => {
+    getUiPreferences.mockResolvedValue({ theme: "light" });
+
+    await renderReady();
+
+    expect(await screen.findByRole("navigation", { name: "设置分区" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "模型服务" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "界面语言" })).toHaveValue("zh-CN");
+  });
+
+  it("renders provider form fields and advanced controls", async () => {
+    await renderReady();
+
+    expect(screen.getByRole("combobox", { name: "服务预设" })).toHaveDisplayValue("OpenAI");
+    expect(screen.getByRole("textbox", { name: "显示名称" })).toHaveValue("OpenAI");
+    expect(screen.getByRole("textbox", { name: "接口地址" })).toHaveValue(
       "https://api.openai.com/v1",
     );
-    expect(screen.getByLabelText("API Key")).toHaveAttribute("type", "password");
-    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue("gpt-4.1-mini");
-    expect(screen.getByRole("textbox", { name: "Vision Model" })).toBeVisible();
+    expect(screen.getByLabelText("访问密钥")).toHaveAttribute("type", "password");
+    expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue("gpt-4.1-mini");
+    expect(screen.getByRole("textbox", { name: "视觉模型" })).toBeVisible();
     expect(screen.getByRole("button", { name: "测试连接" })).toBeVisible();
 
-    expect(screen.getByRole("combobox", { name: "Target Language" })).toHaveValue("zh-CN");
-    expect(screen.getByRole("combobox", { name: "Translation Mode" })).toHaveValue(
+    expect(screen.getByRole("combobox", { name: "目标语言" })).toHaveValue("zh-CN");
+    expect(screen.getByRole("combobox", { name: "翻译模式" })).toHaveValue(
       "lazyViewport",
     );
-    expect(screen.getByRole("spinbutton", { name: "Timeout" })).toHaveValue(30000);
-    expect(screen.getByRole("spinbutton", { name: "Temperature" })).toHaveAttribute(
+    expect(screen.getByRole("combobox", { name: "界面语言" })).toHaveValue("zh-CN");
+    expect(screen.getByRole("spinbutton", { name: "超时时间" })).toHaveValue(30000);
+    expect(screen.getByRole("spinbutton", { name: "温度" })).toHaveAttribute(
       "step",
       "0.1",
     );
-    expect(screen.getByRole("spinbutton", { name: "Max Tokens" })).toHaveValue(4096);
+    expect(screen.getByRole("spinbutton", { name: "最大输出长度" })).toHaveValue(4096);
+  });
+
+  it("saves the selected UI language and rerenders options messages", async () => {
+    await renderReady();
+
+    const languageSelect = await screen.findByRole("combobox", { name: "界面语言" });
+    expect(languageSelect).toHaveValue("zh-CN");
+
+    await fireEvent.update(languageSelect, "en-US");
+
+    await waitFor(() => {
+      expect(saveUiPreferences).toHaveBeenCalledWith({
+        theme: "light",
+        uiLanguage: "en-US",
+      });
+    });
+    expect(screen.getByRole("navigation", { name: "Settings sections" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Interface language" })).toHaveValue("en-US");
+    expect(screen.getByRole("button", { name: "Test connection" })).toBeVisible();
   });
 
   it("loads and saves translation preferences", async () => {
     getTranslationPreferences.mockResolvedValue({ mode: "fullPage" });
 
-    render(OptionsApp);
+    await renderReady();
 
-    const modeSelect = await screen.findByRole("combobox", { name: "Translation Mode" });
+    const modeSelect = await screen.findByRole("combobox", { name: "翻译模式" });
     await waitFor(() => {
       expect(modeSelect).toHaveValue("fullPage");
     });
@@ -154,12 +243,12 @@ describe("options app", () => {
     );
     Element.prototype.scrollIntoView = scrollIntoView;
 
-    render(OptionsApp);
+    await renderReady();
 
     expect(screen.getByText("首次使用前，请先配置模型服务。")).toBeVisible();
 
-    const providerSection = screen.getByRole("heading", { name: "Provider" }).closest("section");
-    const presetSelect = screen.getByRole("combobox", { name: "Preset" });
+    const providerSection = screen.getByRole("heading", { name: "模型服务" }).closest("section");
+    const presetSelect = screen.getByRole("combobox", { name: "服务预设" });
 
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
@@ -188,51 +277,51 @@ describe("options app", () => {
     ]);
     getActiveProviderId.mockResolvedValue("openai");
 
-    render(OptionsApp);
+    await renderReady();
 
     expect(await screen.findByDisplayValue("Custom Provider")).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Preset" })).toHaveDisplayValue(
-      "Custom OpenAI Compatible",
+    expect(screen.getByRole("combobox", { name: "服务预设" })).toHaveDisplayValue(
+      "自定义兼容服务",
     );
-    expect(screen.getByRole("textbox", { name: "Base URL" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "接口地址" })).toHaveValue(
       "https://api.example.test/v1",
     );
-    expect(screen.getByLabelText("API Key")).toHaveValue("saved-key");
-    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue(
+    expect(screen.getByLabelText("访问密钥")).toHaveValue("saved-key");
+    expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue(
       "custom-text-model",
     );
-    expect(screen.getByRole("textbox", { name: "Vision Model" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "视觉模型" })).toHaveValue(
       "custom-vision-model",
     );
-    expect(screen.getByRole("spinbutton", { name: "Timeout" })).toHaveValue(60000);
-    expect(screen.getByRole("spinbutton", { name: "Temperature" })).toHaveValue(0.2);
-    expect(screen.getByRole("spinbutton", { name: "Max Tokens" })).toHaveValue(8192);
+    expect(screen.getByRole("spinbutton", { name: "超时时间" })).toHaveValue(60000);
+    expect(screen.getByRole("spinbutton", { name: "温度" })).toHaveValue(0.2);
+    expect(screen.getByRole("spinbutton", { name: "最大输出长度" })).toHaveValue(8192);
   });
 
   it("fills provider fields from the selected preset", async () => {
-    render(OptionsApp);
+    await renderReady();
 
-    await fireEvent.update(screen.getByRole("combobox", { name: "Preset" }), "deepseek");
+    await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "deepseek");
 
-    expect(screen.getByRole("textbox", { name: "Display Name" })).toHaveValue("DeepSeek");
-    expect(screen.getByRole("textbox", { name: "Base URL" })).toHaveValue(
+    expect(screen.getByRole("textbox", { name: "显示名称" })).toHaveValue("DeepSeek");
+    expect(screen.getByRole("textbox", { name: "接口地址" })).toHaveValue(
       "https://api.deepseek.com/v1",
     );
-    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue("deepseek-chat");
+    expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue("deepseek-chat");
   });
 
   it("saves the selected provider profile and activates it", async () => {
-    render(OptionsApp);
+    await renderReady();
 
-    await fireEvent.update(screen.getByRole("combobox", { name: "Preset" }), "deepseek");
-    await fireEvent.update(screen.getByRole("textbox", { name: "Display Name" }), "DeepSeek Work");
-    await fireEvent.update(screen.getByRole("textbox", { name: "Base URL" }), "https://api.example.com/v1");
-    await fireEvent.update(screen.getByLabelText("API Key"), "secret-key");
-    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "deepseek-chat");
-    await fireEvent.update(screen.getByRole("textbox", { name: "Vision Model" }), "");
-    await fireEvent.update(screen.getByRole("spinbutton", { name: "Timeout" }), "45000");
-    await fireEvent.update(screen.getByRole("spinbutton", { name: "Temperature" }), "0.7");
-    await fireEvent.update(screen.getByRole("spinbutton", { name: "Max Tokens" }), "2048");
+    await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "deepseek");
+    await fireEvent.update(screen.getByRole("textbox", { name: "显示名称" }), "DeepSeek Work");
+    await fireEvent.update(screen.getByRole("textbox", { name: "接口地址" }), "https://api.example.com/v1");
+    await fireEvent.update(screen.getByLabelText("访问密钥"), "secret-key");
+    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "deepseek-chat");
+    await fireEvent.update(screen.getByRole("textbox", { name: "视觉模型" }), "");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "超时时间" }), "45000");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "温度" }), "0.7");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "最大输出长度" }), "2048");
 
     await fireEvent.click(screen.getByRole("button", { name: "保存翻译服务" }));
 
@@ -256,11 +345,11 @@ describe("options app", () => {
   });
 
   it("normalizes known preset model casing before saving", async () => {
-    render(OptionsApp);
+    await renderReady();
 
-    await fireEvent.update(screen.getByRole("combobox", { name: "Preset" }), "openai");
-    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), " GPT-4.1-MINI ");
-    await fireEvent.update(screen.getByRole("textbox", { name: "Vision Model" }), " CUSTOM-VISION ");
+    await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "openai");
+    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), " GPT-4.1-MINI ");
+    await fireEvent.update(screen.getByRole("textbox", { name: "视觉模型" }), " CUSTOM-VISION ");
 
     await fireEvent.click(screen.getByRole("button", { name: "保存翻译服务" }));
 
@@ -283,16 +372,16 @@ describe("options app", () => {
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(OptionsApp);
+    await renderReady();
 
-    await fireEvent.update(screen.getByRole("combobox", { name: "Preset" }), "deepseek");
-    await fireEvent.update(screen.getByRole("textbox", { name: "Display Name" }), "DeepSeek Work");
-    await fireEvent.update(screen.getByRole("textbox", { name: "Base URL" }), "https://api.example.com/v1");
-    await fireEvent.update(screen.getByLabelText("API Key"), "secret-key");
-    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "deepseek-chat");
-    await fireEvent.update(screen.getByRole("spinbutton", { name: "Timeout" }), "45000");
-    await fireEvent.update(screen.getByRole("spinbutton", { name: "Temperature" }), "0.7");
-    await fireEvent.update(screen.getByRole("spinbutton", { name: "Max Tokens" }), "2048");
+    await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "deepseek");
+    await fireEvent.update(screen.getByRole("textbox", { name: "显示名称" }), "DeepSeek Work");
+    await fireEvent.update(screen.getByRole("textbox", { name: "接口地址" }), "https://api.example.com/v1");
+    await fireEvent.update(screen.getByLabelText("访问密钥"), "secret-key");
+    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "deepseek-chat");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "超时时间" }), "45000");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "温度" }), "0.7");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "最大输出长度" }), "2048");
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
@@ -314,6 +403,31 @@ describe("options app", () => {
     expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
   });
 
+  it("rerenders successful provider test feedback when the UI language changes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "ok" } }],
+            model: "gpt-4.1-mini",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    await renderReady();
+
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "界面语言" }), "en-US");
+
+    expect(await screen.findByText("Test succeeded.")).toHaveAttribute("role", "status");
+    expect(screen.queryByText("测试成功。")).not.toBeInTheDocument();
+  });
+
   it("keeps the original text model when lower-case probing is rejected during a successful test", async () => {
     const fetchMock = vi
       .fn()
@@ -327,14 +441,14 @@ describe("options app", () => {
         ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(OptionsApp);
+    await renderReady();
 
-    await fireEvent.update(screen.getByRole("combobox", { name: "Preset" }), "custom");
-    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "Custom-Model");
+    await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "custom");
+    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "Custom-Model");
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
     expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
-    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue("Custom-Model");
+    expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue("Custom-Model");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("custom-model");
     expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("Custom-Model");
@@ -350,13 +464,13 @@ describe("options app", () => {
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.update(
-      screen.getByRole("textbox", { name: "Base URL" }),
+      screen.getByRole("textbox", { name: "接口地址" }),
       "https://token-plan-cn.xiaomimimo.com/v1",
     );
-    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "MiMo-V2.5");
+    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "MiMo-V2.5");
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
     expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
@@ -366,21 +480,41 @@ describe("options app", () => {
       temperature: 0,
       max_tokens: 32,
     });
-    expect(screen.getByRole("textbox", { name: "Text Model" })).toHaveValue("mimo-v2.5");
+    expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue("mimo-v2.5");
     expect(screen.queryByText(/大小写/)).not.toBeInTheDocument();
   });
 
   it("shows error feedback when testing the provider connection fails", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "无法连接到服务，请检查 Base URL 和网络后重试。",
+      "无法连接到服务，请检查接口地址和网络后重试。",
     );
     expect(saveProfile).not.toHaveBeenCalled();
     expect(setActiveProviderId).not.toHaveBeenCalled();
+  });
+
+  it("rerenders failed provider test feedback when the UI language changes", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unavailable")));
+    await renderReady();
+
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "无法连接到服务，请检查接口地址和网络后重试。",
+    );
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "界面语言" }), "en-US");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Cannot connect to the provider. Check the Base URL and network, then try again.",
+    );
+    expect(
+      screen.queryByText("无法连接到服务，请检查接口地址和网络后重试。"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows model-specific feedback when the provider rejects the request", async () => {
@@ -393,7 +527,7 @@ describe("options app", () => {
         }),
       ),
     );
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
@@ -417,13 +551,13 @@ describe("options app", () => {
         ),
       ),
     );
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
     expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
 
-    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "gpt-4.1");
+    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "gpt-4.1");
 
     expect(screen.queryByText("测试成功。")).not.toBeInTheDocument();
   });
@@ -431,10 +565,10 @@ describe("options app", () => {
   it("ignores provider test results when the form changes before the request completes", async () => {
     const response = createDeferred<Response>();
     vi.stubGlobal("fetch", vi.fn().mockReturnValue(response.promise));
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
-    await fireEvent.update(screen.getByRole("textbox", { name: "Text Model" }), "gpt-4.1");
+    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "gpt-4.1");
 
     response.resolve(
       new Response(
@@ -461,7 +595,7 @@ describe("options app", () => {
         }),
       ),
     );
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
@@ -471,11 +605,11 @@ describe("options app", () => {
   });
 
   it("normalizes blank numeric request params before saving", async () => {
-    render(OptionsApp);
+    await renderReady();
 
-    await fireEvent.update(screen.getByRole("spinbutton", { name: "Timeout" }), "");
-    await fireEvent.update(screen.getByRole("spinbutton", { name: "Temperature" }), "");
-    await fireEvent.update(screen.getByRole("spinbutton", { name: "Max Tokens" }), "");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "超时时间" }), "");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "温度" }), "");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "最大输出长度" }), "");
 
     await fireEvent.click(screen.getByRole("button", { name: "保存翻译服务" }));
 
@@ -492,7 +626,7 @@ describe("options app", () => {
 
   it("shows error feedback when saving a provider profile fails", async () => {
     saveProfile.mockRejectedValueOnce(new Error("storage failed"));
-    render(OptionsApp);
+    await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "保存翻译服务" }));
 
