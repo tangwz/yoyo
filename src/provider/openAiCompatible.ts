@@ -26,7 +26,32 @@ type ChatCompletionStreamResponse = {
 };
 
 function joinUrl(baseURL: string, path: string): string {
-  return `${baseURL.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  return `${baseURL.trim().replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+function getChatCompletionsUrl(baseURL: string): string {
+  const normalizedBaseURL = baseURL.trim().replace(/\/+$/, "");
+
+  try {
+    const url = new URL(normalizedBaseURL);
+    const normalizedPath = url.pathname.replace(/\/+$/, "");
+    if (/\/chat\/completions$/i.test(normalizedPath)) {
+      return normalizedBaseURL;
+    }
+
+    url.pathname = `${normalizedPath}/chat/completions`;
+    return url.toString();
+  } catch {
+    if (/\/chat\/completions$/i.test(normalizedBaseURL)) {
+      return normalizedBaseURL;
+    }
+  }
+
+  if (/\/chat\/completions(?:[?#].*)?$/i.test(normalizedBaseURL)) {
+    return normalizedBaseURL;
+  }
+
+  return joinUrl(normalizedBaseURL, "/chat/completions");
 }
 
 type AbortSource = "timeout" | "user";
@@ -206,7 +231,7 @@ export class OpenAiCompatibleProvider {
     model: string,
     signal: AbortSignal,
   ): Promise<GenerateTextResponse> {
-    const response = await fetch(joinUrl(request.profile.baseURL, "/chat/completions"), {
+    const response = await fetch(getChatCompletionsUrl(request.profile.baseURL), {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -253,7 +278,7 @@ export class OpenAiCompatibleProvider {
     model: string,
     signal: AbortSignal,
   ): AsyncGenerator<StreamTextChunk> {
-    const response = await fetch(joinUrl(request.profile.baseURL, "/chat/completions"), {
+    const response = await fetch(getChatCompletionsUrl(request.profile.baseURL), {
       method: "POST",
       headers: {
         "content-type": "application/json",

@@ -3,6 +3,7 @@ import {
   evaluateProviderReadiness,
   formatProviderLabel,
   resolveReadyProviderProfile,
+  selectStoredActiveProviderId,
 } from "@/provider/readiness";
 import type { ProviderProfile } from "@/provider/types";
 
@@ -12,24 +13,7 @@ type StoredProviderStateDependencies = {
   persistActiveProviderId: (activeProviderId: string) => Promise<void>;
 };
 
-function hasText(value: string | undefined): boolean {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function isCompleteProfile(profile: ProviderProfile): boolean {
-  return hasText(profile.apiKey) && hasText(profile.baseURL) && hasText(profile.textModel);
-}
-
-export function selectStoredActiveProviderId(
-  profiles: ProviderProfile[],
-  activeProviderId: string | undefined,
-): string | undefined {
-  if (hasText(activeProviderId) && profiles.some((profile) => profile.id === activeProviderId)) {
-    return activeProviderId;
-  }
-
-  return profiles.find(isCompleteProfile)?.id;
-}
+export { selectStoredActiveProviderId };
 
 export async function getStoredProviderState(
   dependencies: StoredProviderStateDependencies,
