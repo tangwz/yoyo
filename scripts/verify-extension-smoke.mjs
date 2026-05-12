@@ -10,6 +10,9 @@ import { chromium } from "playwright-core";
 const extensionPath = resolve("build/chrome-mv3");
 const keepOpen = process.env.YOYO_SMOKE_KEEP_OPEN === "1";
 const detachBrowser = process.env.YOYO_SMOKE_DETACH_BROWSER === "1";
+const baseUrlLabel = /^(Base URL|接口地址)$/;
+const apiKeyLabel = /^(API key|API Key|访问密钥)$/;
+const textModelLabel = /^(Text model|Text Model|文本模型)$/;
 const promptProbe = {
   connectionTestPrompt: "",
   translationPrompts: [],
@@ -24,6 +27,29 @@ function assert(condition, message) {
 
 function delay(ms) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+async function waitForCondition(predicate, message, timeoutMs = 10000, intervalMs = 100) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+
+  while (Date.now() < deadline) {
+    try {
+      const result = await predicate();
+      if (result) {
+        return result;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    await delay(intervalMs);
+  }
+
+  if (lastError instanceof Error) {
+    throw new Error(`${message} Last error: ${lastError.message}`);
+  }
+  throw new Error(message);
 }
 
 function readJsonBody(request) {
@@ -45,10 +71,27 @@ function readJsonBody(request) {
 }
 
 function extractSegmentIds(prompt) {
+  const inputIndex = prompt.lastIndexOf("Input:");
+  if (inputIndex !== -1) {
+    const inputText = prompt.slice(inputIndex + "Input:".length).trim();
+    try {
+      const parsed = JSON.parse(inputText);
+      if (Array.isArray(parsed.items)) {
+        return parsed.items
+          .map((item) => item?.segmentId ?? item?.id)
+          .filter((id) => typeof id === "string" && id !== "...");
+      }
+    } catch {
+      // Fall through to regex extraction for older prompt shapes.
+    }
+  }
+
   const ids = new Set();
-  const pattern = /"segmentId"\s*:\s*"([^"]+)"/g;
+  const pattern = /"(?:segmentId|id)"\s*:\s*"([^"]+)"/g;
   for (const match of prompt.matchAll(pattern)) {
-    ids.add(match[1]);
+    if (match[1] !== "...") {
+      ids.add(match[1]);
+    }
   }
   return [...ids];
 }
@@ -129,8 +172,8 @@ function createMockProviderServer() {
 
       promptProbe.translationPrompts.push(prompt);
       const items = extractSegmentIds(prompt).map((segmentId) => ({
-        segmentId,
-        translatedText: `[translated ${segmentId}]`,
+        id: segmentId,
+        text: `[translated ${segmentId}]`,
       }));
 
       response.writeHead(200, { "content-type": "application/json" });
@@ -200,13 +243,47 @@ async function waitForCdpEndpoint(port) {
 
 function createArticleServer() {
   const server = createServer((request, response) => {
-    if (request.url !== "/article") {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (url.pathname !== "/article" && url.pathname !== "/lazy-article") {
       response.writeHead(404);
       response.end("Not found");
       return;
     }
 
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    if (url.pathname === "/lazy-article") {
+      response.end(`<!doctype html>
+        <html>
+          <head>
+            <title>Lazy Smoke Article</title>
+            <style>
+              body {
+                margin: 0;
+                font: 18px/1.6 Arial, sans-serif;
+              }
+              main {
+                box-sizing: border-box;
+                margin: 0 auto;
+                max-width: 720px;
+                padding: 32px 24px;
+              }
+              .spacer {
+                height: 360vh;
+              }
+            </style>
+          </head>
+          <body>
+            <main>
+              <h1>Lazy viewport smoke title</h1>
+              <p id="lazy-first">Lazy visible first paragraph should translate before the worker restart.</p>
+              <div class="spacer" aria-hidden="true"></div>
+              <p id="lazy-later">Lazy later paragraph should translate after the worker restart.</p>
+            </main>
+          </body>
+        </html>`);
+      return;
+    }
+
     response.end(`<!doctype html>
       <html>
         <head><title>Smoke Article</title></head>
@@ -228,6 +305,7 @@ function createArticleServer() {
       assert(address && typeof address === "object", "Article server did not expose a port.");
       resolveServer({
         url: `http://127.0.0.1:${address.port}/article`,
+        lazyUrl: `http://127.0.0.1:${address.port}/lazy-article`,
         close: () => new Promise((resolveClose) => server.close(resolveClose)),
       });
     });
@@ -262,6 +340,73 @@ async function getExtensionServiceWorker(context) {
   const match = serviceWorker.url().match(/^chrome-extension:\/\/([^/]+)\//);
   assert(match, `Could not read extension id from service worker URL: ${serviceWorker.url()}`);
   return { extensionId: match[1], serviceWorker };
+}
+
+async function getTabForUrl(serviceWorker, targetUrl) {
+  return serviceWorker.evaluate(async (url) => {
+    const tabs = await chrome.tabs.query({});
+    const tab = tabs.find((candidate) => candidate.url === url);
+    if (!tab?.id) {
+      throw new Error(`No tab found for ${url}`);
+    }
+    return { id: tab.id, windowId: tab.windowId };
+  }, targetUrl);
+}
+
+async function serviceWorkerTarget(context, extensionId) {
+  const browser = context.browser();
+  assert(browser, "Browser does not expose a CDP session for service worker control.");
+
+  const cdp = await browser.newBrowserCDPSession();
+  try {
+    const { targetInfos } = await cdp.send("Target.getTargets");
+    return targetInfos.find(
+      (target) =>
+        target.type === "service_worker" &&
+        target.url === `chrome-extension://${extensionId}/background.js`,
+    );
+  } finally {
+    await cdp.detach().catch(() => undefined);
+  }
+}
+
+async function terminateExtensionServiceWorker(context, extensionId) {
+  const target = await serviceWorkerTarget(context, extensionId);
+  assert(target, "Could not find the extension service worker target to terminate.");
+
+  const browser = context.browser();
+  assert(browser, "Browser does not expose a CDP session for service worker termination.");
+  const cdp = await browser.newBrowserCDPSession();
+  try {
+    await cdp.send("Target.closeTarget", { targetId: target.targetId });
+  } finally {
+    await cdp.detach().catch(() => undefined);
+  }
+
+  await waitForCondition(
+    async () => !(await serviceWorkerTarget(context, extensionId)),
+    "Extension service worker target did not terminate.",
+    5000,
+  );
+}
+
+async function translationSnapshot(page) {
+  return page.locator("[data-yoyo-translation]").evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      segmentId: node.dataset.yoyoSegmentId ?? "",
+      pending: node.dataset.yoyoPending === "true",
+      text: (node.textContent ?? "").trim(),
+    })),
+  );
+}
+
+function assertUniqueInjectedSegments(snapshot, message) {
+  const segmentIds = snapshot.map((item) => item.segmentId);
+  const uniqueSegmentIds = new Set(segmentIds);
+  assert(
+    uniqueSegmentIds.size === segmentIds.length,
+    `${message} Segment ids: ${segmentIds.join(", ")}`,
+  );
 }
 
 async function findExtensionPage(context, extensionId, pathPrefix, timeout = 5000) {
@@ -376,9 +521,9 @@ async function main() {
     );
     await firstRunPopupPage.close().catch(() => undefined);
 
-    await optionsPage.getByLabel("Base URL").fill(providerServer.baseUrl);
-    await optionsPage.getByLabel("API Key").fill("smoke-test-key");
-    await optionsPage.getByLabel("Text Model").fill("mock-model");
+    await optionsPage.getByLabel(baseUrlLabel).fill(providerServer.baseUrl);
+    await optionsPage.getByLabel(apiKeyLabel).fill("smoke-test-key");
+    await optionsPage.getByLabel(textModelLabel).fill("mock-model");
     await optionsPage.getByRole("button", { name: "保存翻译服务" }).click();
     await optionsPage.getByText("已保存翻译服务。").waitFor({ timeout: 5000 });
     await assertProviderRequestCountStays(0, "Saving provider settings sent a provider request.");
@@ -395,13 +540,16 @@ async function main() {
       "Provider test request did not contain the fixed connection-test prompt.",
     );
 
-    await optionsPage.getByLabel("API Key").fill("smoke-failing-key");
+    await optionsPage.getByLabel(apiKeyLabel).fill("smoke-failing-key");
     await optionsPage.getByRole("button", { name: "测试连接" }).click();
     const failureMessage = optionsPage.getByRole("alert");
     await failureMessage.waitFor({ timeout: 5000 });
+    const providerFailureText = (await failureMessage.textContent())?.trim();
     assert(
-      (await failureMessage.textContent())?.trim() === "API Key 无效或无权限。",
-      "Provider failure did not show the bounded unauthorized message.",
+      providerFailureText === "API Key 无效或无权限。" ||
+        providerFailureText === "访问密钥无效或无权限。" ||
+        providerFailureText === "The API key is invalid or unauthorized.",
+      `Provider failure did not show the bounded unauthorized message: ${providerFailureText}`,
     );
     const optionsTextAfterFailure = (await optionsPage.textContent("body")) ?? "";
     assert(
@@ -437,14 +585,7 @@ async function main() {
       "Loading a readable article sent a provider request.",
     );
 
-    const articleTab = await serviceWorker.evaluate(async (targetUrl) => {
-      const tabs = await chrome.tabs.query({});
-      const tab = tabs.find((candidate) => candidate.url === targetUrl);
-      if (!tab?.id) {
-        throw new Error(`No article tab found for ${targetUrl}`);
-      }
-      return { id: tab.id, windowId: tab.windowId };
-    }, articlePage.url());
+    const articleTab = await getTabForUrl(serviceWorker, articlePage.url());
 
     const beforePopupRequestCount = countProviderRequests();
     await articlePage.bringToFront();
@@ -531,6 +672,100 @@ async function main() {
       beforeExistingPopupRequestCount,
       "Opening the action popup for existing translations sent a provider request.",
     );
+
+    const lazyPage = await context.newPage();
+    await lazyPage.goto(articleServer.lazyUrl);
+    await lazyPage.waitForSelector("#lazy-first");
+    const lazyTab = await getTabForUrl(serviceWorker, lazyPage.url());
+    const beforeLazyTranslationRequestCount = countProviderRequests();
+
+    const lazyStartResponse = await optionsPage.evaluate(async (targetTabId) => {
+      return chrome.runtime.sendMessage({
+        type: "translatePage",
+        tabId: targetTabId,
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+      });
+    }, lazyTab.id);
+    assert(
+      lazyStartResponse?.type === "taskProgress",
+      `Lazy viewport translatePage did not start: ${JSON.stringify(lazyStartResponse)}`,
+    );
+
+    const initialLazySnapshot = await waitForCondition(
+      async () => {
+        const snapshot = await translationSnapshot(lazyPage);
+        const translated = snapshot.filter((item) => !item.pending);
+        if (translated.length === 0) {
+          const progress = await optionsPage.evaluate(async (targetTabId) => {
+            return chrome.runtime.sendMessage({
+              type: "getTaskForTab",
+              tabId: targetTabId,
+            });
+          }, lazyTab.id);
+          throw new Error(
+            JSON.stringify({
+              snapshot,
+              progress,
+              providerRequests: countProviderRequests(),
+              translationPrompts: promptProbe.translationPrompts.length,
+            }),
+          );
+        }
+        return translated.length >= 1 ? snapshot : undefined;
+      },
+      "Lazy viewport did not inject initial visible translations.",
+    );
+    assertUniqueInjectedSegments(
+      initialLazySnapshot,
+      "Lazy viewport duplicated translations before service worker restart.",
+    );
+    assert(
+      (await lazyPage.locator("#lazy-later + [data-yoyo-translation]").count()) === 0,
+      "Lazy viewport translated the offscreen segment before scrolling.",
+    );
+
+    await terminateExtensionServiceWorker(context, extensionId);
+    await lazyPage.locator("#lazy-later").scrollIntoViewIfNeeded();
+
+    const recoveredLazySnapshot = await waitForCondition(
+      async () => {
+        const laterText = await lazyPage
+          .locator("#lazy-later + [data-yoyo-translation]")
+          .textContent()
+          .catch(() => undefined);
+        const snapshot = await translationSnapshot(lazyPage);
+        return laterText?.includes("[translated ") ? snapshot : undefined;
+      },
+      "Lazy viewport did not recover and translate the newly visible segment after service worker restart.",
+      15000,
+    );
+    assertUniqueInjectedSegments(
+      recoveredLazySnapshot,
+      "Lazy viewport duplicated translations after service worker restart.",
+    );
+    assert(
+      (await lazyPage.locator("#lazy-later + [data-yoyo-translation]").count()) === 1,
+      "Lazy viewport injected the recovered segment more than once.",
+    );
+
+    const lazyProgressResponse = await optionsPage.evaluate(async (targetTabId) => {
+      return chrome.runtime.sendMessage({
+        type: "getTaskForTab",
+        tabId: targetTabId,
+      });
+    }, lazyTab.id);
+    assert(
+      lazyProgressResponse?.type === "taskProgress" &&
+        lazyProgressResponse.progress.state === "completed" &&
+        lazyProgressResponse.progress.translated === recoveredLazySnapshot.length,
+      `Lazy viewport recovery did not complete cleanly: ${JSON.stringify(lazyProgressResponse)}`,
+    );
+    assert(
+      countProviderRequests() > beforeLazyTranslationRequestCount,
+      "Lazy viewport recovery did not send any provider requests.",
+    );
+
     if (detachBrowser) {
       await optionsPage.close().catch(() => undefined);
     }
