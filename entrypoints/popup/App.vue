@@ -591,10 +591,10 @@ async function onRemoveTranslations(): Promise<void> {
   color: #ffffff;
   background: linear-gradient(
     180deg,
-    var(--yoyo-brand-400) 0%,
-    var(--yoyo-brand-600) 100%
+    var(--yoyo-brand-700) 0%,
+    var(--yoyo-brand-800) 100%
   );
-  box-shadow: 0 10px 20px rgb(16 154 80 / 22%);
+  box-shadow: 0 10px 20px rgb(7 95 50 / 22%);
   font-size: 15px;
   font-weight: 750;
   cursor: pointer;
@@ -603,8 +603,8 @@ async function onRemoveTranslations(): Promise<void> {
 .primary-action:hover {
   background: linear-gradient(
     180deg,
-    var(--yoyo-brand-300) 0%,
-    var(--yoyo-brand-500) 100%
+    var(--yoyo-brand-800) 0%,
+    var(--yoyo-brand-700) 100%
   );
 }
 
