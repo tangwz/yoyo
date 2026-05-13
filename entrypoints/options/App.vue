@@ -799,8 +799,8 @@ async function testConnection() {
 
 .primary-button {
   color: #ffffff;
-  background: var(--yoyo-brand-600);
-  border: 1px solid var(--yoyo-brand-600);
+  background: var(--yoyo-brand-700);
+  border: 1px solid var(--yoyo-brand-700);
 }
 
 .secondary-button {
