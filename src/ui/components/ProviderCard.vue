@@ -22,15 +22,15 @@ defineProps<{
   gap: 12px;
   min-height: 56px;
   padding: 12px 14px;
-  border: 1px solid #e1e3e8;
+  border: 1px solid var(--yoyo-border);
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--yoyo-surface);
   box-shadow: 0 1px 2px rgb(20 24 33 / 6%);
 }
 
 .provider-card__label {
   flex: 0 0 auto;
-  color: #4b5565;
+  color: var(--yoyo-muted);
   font-size: 13px;
   font-weight: 600;
 }
@@ -38,7 +38,7 @@ defineProps<{
 .provider-card__value {
   min-width: 0;
   overflow: hidden;
-  color: #202431;
+  color: var(--yoyo-text);
   font-size: 12px;
   font-weight: 600;
   text-align: right;
