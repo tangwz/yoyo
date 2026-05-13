@@ -558,10 +558,10 @@ async function onRemoveTranslations(): Promise<void> {
   width: 100%;
   min-height: 300px;
   padding: 18px;
-  color: #202431;
+  color: var(--yoyo-text);
   background:
-    linear-gradient(180deg, #f8f8fa 0%, #ffffff 38%),
-    #ffffff;
+    linear-gradient(180deg, var(--yoyo-surface-soft) 0%, var(--yoyo-surface) 42%),
+    var(--yoyo-surface);
 }
 
 .popup-header {
@@ -570,7 +570,7 @@ async function onRemoveTranslations(): Promise<void> {
 
 .popup-header h1 {
   margin: 0;
-  color: #171b26;
+  color: var(--yoyo-text);
   font-size: 20px;
   font-weight: 750;
   line-height: 1.2;
@@ -589,15 +589,23 @@ async function onRemoveTranslations(): Promise<void> {
   border: 0;
   border-radius: 12px;
   color: #ffffff;
-  background: linear-gradient(180deg, #6157f4 0%, #4f46d8 100%);
-  box-shadow: 0 10px 20px rgb(79 70 216 / 22%);
+  background: linear-gradient(
+    180deg,
+    var(--yoyo-brand-400) 0%,
+    var(--yoyo-brand-600) 100%
+  );
+  box-shadow: 0 10px 20px rgb(16 154 80 / 22%);
   font-size: 15px;
   font-weight: 750;
   cursor: pointer;
 }
 
 .primary-action:hover {
-  background: linear-gradient(180deg, #6b61ff 0%, #554ae4 100%);
+  background: linear-gradient(
+    180deg,
+    var(--yoyo-brand-300) 0%,
+    var(--yoyo-brand-500) 100%
+  );
 }
 
 .primary-action:disabled {
@@ -606,7 +614,7 @@ async function onRemoveTranslations(): Promise<void> {
 }
 
 .primary-action:focus-visible {
-  outline: 3px solid #b8b4ff;
+  outline: 3px solid var(--yoyo-focus-ring);
   outline-offset: 3px;
 }
 

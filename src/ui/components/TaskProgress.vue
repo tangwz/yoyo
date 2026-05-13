@@ -78,10 +78,10 @@ const progressPercent = computed(() => {
 <style scoped>
 .task-progress {
   padding: 9px 11px;
-  border: 1px solid #e1e3e8;
+  border: 1px solid var(--yoyo-border);
   border-radius: 10px;
-  color: #4b5565;
-  background: #ffffff;
+  color: var(--yoyo-muted);
+  background: var(--yoyo-surface);
   font-size: 12px;
   font-weight: 600;
 }
@@ -95,11 +95,11 @@ const progressPercent = computed(() => {
 }
 
 .task-progress__title {
-  color: #3f4655;
+  color: var(--yoyo-text-soft);
 }
 
 .task-progress__summary {
-  color: #6b7280;
+  color: var(--yoyo-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -109,13 +109,17 @@ const progressPercent = computed(() => {
   margin-bottom: 7px;
   overflow: hidden;
   border-radius: 999px;
-  background: #eceef3;
+  background: var(--yoyo-brand-100);
 }
 
 .task-progress__bar-fill {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #5b4cf0 0%, #6f5cf5 100%);
+  background: linear-gradient(
+    90deg,
+    var(--yoyo-brand-600) 0%,
+    var(--yoyo-brand-300) 100%
+  );
   transition: width 160ms ease;
 }
 
@@ -151,7 +155,7 @@ const progressPercent = computed(() => {
 .task-progress__item--completed .task-progress__value::after {
   content: "/";
   margin-left: 4px;
-  color: #8b93a1;
+  color: var(--yoyo-muted-subtle);
 }
 
 .task-progress__item--failed {

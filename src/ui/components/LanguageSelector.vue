@@ -69,27 +69,27 @@ const emit = defineEmits<{
   width: 100%;
   height: 36px;
   padding: 0 30px 0 10px;
-  border: 1px solid #d6d9e0;
+  border: 1px solid var(--yoyo-border);
   border-radius: 10px;
-  color: #202431;
+  color: var(--yoyo-text);
   background:
     linear-gradient(45deg, transparent 50%, #606879 50%) calc(100% - 15px)
       50% / 6px 6px no-repeat,
     linear-gradient(135deg, #606879 50%, transparent 50%) calc(100% - 11px)
       50% / 6px 6px no-repeat,
-    #f5f6f8;
+    var(--yoyo-surface-muted);
   appearance: none;
 }
 
 .language-selector__select:focus {
-  outline: 2px solid #6f63ff;
+  outline: 2px solid var(--yoyo-focus-ring);
   outline-offset: 2px;
-  border-color: #8a82ff;
-  background-color: #ffffff;
+  border-color: var(--yoyo-brand-600);
+  background-color: var(--yoyo-surface);
 }
 
 .language-selector__arrow {
-  color: #6a7280;
+  color: var(--yoyo-muted);
   font-size: 16px;
   line-height: 1;
 }

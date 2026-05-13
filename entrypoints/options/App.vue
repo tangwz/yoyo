@@ -645,21 +645,21 @@ async function testConnection() {
 :global(#app) {
   min-height: 100%;
   margin: 0;
-  background: #f4f6fa;
+  background: var(--yoyo-surface-soft);
 }
 
 .yoyo-shell {
   box-sizing: border-box;
   min-height: 100vh;
-  color: #172033;
-  background: #f4f6fa;
+  color: var(--yoyo-text);
+  background: var(--yoyo-surface-soft);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 .page-header {
-  background: #ffffff;
-  border-bottom: 1px solid #e1e5ee;
+  background: var(--yoyo-surface);
+  border-bottom: 1px solid var(--yoyo-border);
 }
 
 .page-header__inner {
@@ -696,7 +696,7 @@ async function testConnection() {
 .settings-nav a {
   padding: 9px 12px;
   border-radius: 8px;
-  color: #4d586b;
+  color: var(--yoyo-muted);
   font-size: 14px;
   font-weight: 650;
   text-decoration: none;
@@ -704,21 +704,21 @@ async function testConnection() {
 
 .settings-nav a:hover,
 .settings-nav a:focus-visible {
-  color: #172033;
-  background: #e9edf5;
+  color: var(--yoyo-text);
+  background: var(--yoyo-surface-muted);
   outline: none;
 }
 
 .settings-content {
-  background: #ffffff;
-  border: 1px solid #e1e5ee;
+  background: var(--yoyo-surface);
+  border: 1px solid var(--yoyo-border);
   border-radius: 14px;
   box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
 }
 
 .settings-section {
   padding: 28px 32px;
-  border-bottom: 1px solid #edf0f5;
+  border-bottom: 1px solid var(--yoyo-border);
 }
 
 .settings-section:last-child {
@@ -742,7 +742,7 @@ async function testConnection() {
   min-width: 0;
   flex-direction: column;
   gap: 8px;
-  color: #3d4658;
+  color: var(--yoyo-text-soft);
   font-size: 13px;
   font-weight: 600;
 }
@@ -757,18 +757,25 @@ async function testConnection() {
   width: 100%;
   min-height: 40px;
   padding: 8px 10px;
-  color: #172033;
+  color: var(--yoyo-text);
   font: inherit;
   font-weight: 400;
-  background: #ffffff;
-  border: 1px solid #b8c0d1;
+  background: var(--yoyo-surface);
+  border: 1px solid var(--yoyo-border-strong);
   border-radius: 6px;
+}
+
+.field input:focus-visible,
+.field select:focus-visible {
+  border-color: var(--yoyo-brand-600);
+  outline: 3px solid var(--yoyo-focus-ring);
+  outline-offset: 2px;
 }
 
 .field small,
 .section-note {
   margin: 0;
-  color: #5d6678;
+  color: var(--yoyo-muted);
   font-size: 13px;
   font-weight: 400;
   line-height: 1.5;
@@ -792,14 +799,14 @@ async function testConnection() {
 
 .primary-button {
   color: #ffffff;
-  background: #1f5fbf;
-  border: 1px solid #1f5fbf;
+  background: var(--yoyo-brand-600);
+  border: 1px solid var(--yoyo-brand-600);
 }
 
 .secondary-button {
-  color: #172033;
-  background: #ffffff;
-  border: 1px solid #aab3c5;
+  color: var(--yoyo-text);
+  background: var(--yoyo-surface);
+  border: 1px solid var(--yoyo-border-strong);
 }
 
 .save-feedback {
@@ -819,7 +826,7 @@ async function testConnection() {
 .privacy-list {
   padding-left: 20px;
   margin: 0;
-  color: #3d4658;
+  color: var(--yoyo-text-soft);
   line-height: 1.6;
 }
 
@@ -829,7 +836,7 @@ async function testConnection() {
 }
 
 .static-field strong {
-  color: #172033;
+  color: var(--yoyo-text);
   font-size: 15px;
 }
 

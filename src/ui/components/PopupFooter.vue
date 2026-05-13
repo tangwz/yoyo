@@ -35,7 +35,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 8px;
   padding-top: 10px;
-  border-top: 1px solid #e4e7ec;
+  border-top: 1px solid var(--yoyo-border);
 }
 
 .popup-footer__button {
@@ -45,7 +45,7 @@ const emit = defineEmits<{
   padding: 0 8px;
   border: 0;
   border-radius: 8px;
-  color: #4b5565;
+  color: var(--yoyo-muted);
   background: transparent;
   font-size: 13px;
   font-weight: 600;
@@ -53,12 +53,12 @@ const emit = defineEmits<{
 }
 
 .popup-footer__button:hover {
-  color: #202431;
-  background: #eef0f4;
+  color: var(--yoyo-text);
+  background: var(--yoyo-surface-muted);
 }
 
 .popup-footer__button:focus-visible {
-  outline: 2px solid #6f63ff;
+  outline: 2px solid var(--yoyo-focus-ring);
   outline-offset: 2px;
 }
 
@@ -67,7 +67,7 @@ const emit = defineEmits<{
 }
 
 .popup-footer__version {
-  color: #8a93a3;
+  color: var(--yoyo-muted-subtle);
   font-size: 12px;
   font-weight: 600;
 }
