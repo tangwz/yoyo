@@ -118,7 +118,7 @@ const progressPercent = computed(() => {
   background: linear-gradient(
     90deg,
     var(--yoyo-brand-600) 0%,
-    var(--yoyo-brand-300) 100%
+    var(--yoyo-brand-700) 100%
   );
   transition: width 160ms ease;
 }
