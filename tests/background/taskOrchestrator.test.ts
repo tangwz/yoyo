@@ -274,6 +274,40 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("uses the resolved translation provider for Chrome Built-in AI profiles", async () => {
+    const translateBatch = vi.fn(async () => ({
+      items: [{ segmentId: "segment-1", translatedText: "你好，世界。" }],
+    }));
+    const { orchestrator, sendToContent } = createOrchestrator({
+      getActiveProfile: async () => chromeBuiltInProfile(),
+      getTranslationProvider: () => ({
+        translateText: vi.fn(),
+        translateBatch,
+      }),
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [segment()],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+
+    await expect(
+      orchestrator.translatePage({
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+      }),
+    ).resolves.toMatchObject({ state: "completed" });
+    expect(translateBatch).toHaveBeenCalledTimes(1);
+  });
+
   it("completes with errors when provider output omits an expected segment", async () => {
     const { orchestrator, translateBatch, sendToContent } = createOrchestrator();
 

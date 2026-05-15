@@ -1,10 +1,15 @@
-import { onTranslatePageMenuClick, registerContextMenus } from "@/background/contextMenu";
+import {
+  onTranslatePageMenuClick,
+  onTranslateSelectionMenuClick,
+  registerContextMenus,
+} from "@/background/contextMenu";
 import { notifyPageCannotTranslate, notifyProviderMissing } from "@/background/notifications";
 import {
   buildProviderStatusResponse,
   getStoredProviderState,
   selectReadyProviderProfile,
 } from "@/background/providerStatus";
+import { translateSelection } from "@/background/selectionTranslation";
 import { TranslationTaskOrchestrator } from "@/background/taskOrchestrator";
 import { openOptionsPage } from "@/browser/browserApi";
 import type {
@@ -126,6 +131,32 @@ export default defineBackground(() => {
     },
   );
 
+  onTranslateSelectionMenuClick(
+    async ({ tabId, text }) => {
+      await translateSelection(
+        {
+          tabId,
+          text,
+          sourceLanguage: "auto",
+          targetLanguage: "zh-CN",
+        },
+        {
+          getActiveProfile,
+          getTranslationProvider: (profile) =>
+            translationProviderResolver.getTranslationProvider(profile),
+          sendToContent: (targetTabId, message) =>
+            sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
+        },
+      );
+    },
+    (error, tabId) => {
+      console.error("[yoyo] failed to handle translate selection menu click", {
+        tabId,
+        error,
+      });
+    },
+  );
+
   addRuntimeMessageListener<BackgroundRequest, BackgroundResponse>(
     async (request, sender) => {
       switch (request.type) {
@@ -172,6 +203,15 @@ export default defineBackground(() => {
           const { activeProviderId, profiles } = await loadStoredProviderState();
           return buildProviderStatusResponse(profiles, activeProviderId);
         }
+        case "translateSelection":
+          await translateSelection(request, {
+            getActiveProfile,
+            getTranslationProvider: (profile) =>
+              translationProviderResolver.getTranslationProvider(profile),
+            sendToContent: (targetTabId, message) =>
+              sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
+          });
+          return { type: "backgroundActionResult", success: true };
         case "openOptions":
           await openOptionsPage({
             section: request.section,
