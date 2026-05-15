@@ -14,8 +14,9 @@ import type {
   ContentResponse,
 } from "@/messaging/contracts";
 import { addRuntimeMessageListener, sendTabMessage } from "@/messaging/runtime";
+import { ChromeBuiltInTranslatorProvider } from "@/provider/chromeBuiltInAi";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
-import { OpenAiTranslationAdapter } from "@/provider/openAiTranslationAdapter";
+import { TranslationProviderResolver } from "@/provider/resolver";
 import type { ProviderProfile } from "@/provider/types";
 import { createStorageRepositories } from "@/storage/repositories";
 
@@ -33,7 +34,10 @@ function createErrorResponse(error: unknown): BackgroundResponse {
 export default defineBackground(() => {
   const storage = createStorageRepositories();
   const provider = new OpenAiCompatibleProvider();
-  const translationProvider = new OpenAiTranslationAdapter(provider);
+  const translationProviderResolver = new TranslationProviderResolver({
+    openAiProvider: provider,
+    chromeBuiltInTranslatorProvider: new ChromeBuiltInTranslatorProvider(),
+  });
 
   async function listProfiles(): Promise<ProviderProfile[]> {
     return storage.providers.listProfiles();
@@ -64,13 +68,8 @@ export default defineBackground(() => {
   const orchestrator = new TranslationTaskOrchestrator({
     getActiveProfile,
     getProviderProfile,
-    getTranslationProvider: (profile) => {
-      if (profile.type !== "openai-compatible") {
-        throw new Error("Unsupported provider profile.");
-      }
-
-      return translationProvider;
-    },
+    getTranslationProvider: (profile) =>
+      translationProviderResolver.getTranslationProvider(profile),
     sendToContent: (tabId, message) =>
       sendTabMessage<ContentRequest, ContentResponse>(tabId, message),
     emitProgress: (progress, tabId) => {
