@@ -215,6 +215,28 @@ describe("ChromeBuiltInTranslatorProvider", () => {
     } satisfies Partial<LocalAiError>);
   });
 
+  it("rejects non Chrome Built-in AI profiles for empty batches", async () => {
+    const provider = new ChromeBuiltInTranslatorProvider({
+      getTranslatorApi: () => ({
+        availability: vi.fn(async () => "available" as const),
+        create: vi.fn(async () => ({
+          translate: vi.fn(async (text: string) => `translated:${text}`),
+        })),
+      }),
+    });
+
+    await expect(
+      provider.translateBatch({
+        profile: openAiProfile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        segments: [],
+      }),
+    ).rejects.toMatchObject({
+      code: "unknown",
+    } satisfies Partial<LocalAiError>);
+  });
+
   it("maps availability errors to local unknown errors", async () => {
     const cause = new Error("availability failed");
     const provider = new ChromeBuiltInTranslatorProvider({

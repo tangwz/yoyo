@@ -126,6 +126,8 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
   }
 
   async translateBatch(request: TranslateBatchRequest) {
+    assertChromeBuiltInProfile(request.profile);
+
     const items = [];
     for (const segment of request.segments) {
       const response = await this.translateText({
