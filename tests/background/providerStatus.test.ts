@@ -5,7 +5,10 @@ import {
   selectReadyProviderProfile,
   selectStoredActiveProviderId,
 } from "@/background/providerStatus";
-import type { OpenAiCompatibleProviderProfile } from "@/provider/types";
+import type {
+  OpenAiCompatibleProviderProfile,
+  ProviderProfile,
+} from "@/provider/types";
 
 function profile(
   overrides: Partial<OpenAiCompatibleProviderProfile> = {},
@@ -46,6 +49,27 @@ describe("provider status", () => {
     expect(
       selectStoredActiveProviderId([profile({ id: "incomplete", textModel: " " })], undefined),
     ).toBeUndefined();
+  });
+
+  it("skips unsupported Chrome Built-in AI when selecting a legacy fallback provider", () => {
+    const profiles: ProviderProfile[] = [
+      {
+        id: "chrome-built-in-ai",
+        displayName: "Chrome Built-in AI",
+        type: "chrome-built-in-ai",
+      },
+      profile({ id: "ready", displayName: "Ready Provider" }),
+    ];
+
+    expect(
+      selectStoredActiveProviderId(profiles, undefined, {
+        chromeBuiltInAiBrowserSupport: {
+          supported: false,
+          reason: "browserUnsupported",
+          minimumChromeVersion: 138,
+        },
+      }),
+    ).toBe("ready");
   });
 
   it("falls back to a complete profile when the stored active id is stale", () => {
@@ -97,6 +121,32 @@ describe("provider status", () => {
       readiness: "missingTextModel",
       providerLabel: "未配置翻译服务",
       providerMode: "remote",
+    });
+  });
+
+  it("returns local-only status details for an unsupported selected Chrome Built-in AI provider", () => {
+    const profiles: ProviderProfile[] = [
+      {
+        id: "chrome-built-in-ai",
+        displayName: "Custom Built-in Provider",
+        type: "chrome-built-in-ai",
+      },
+    ];
+
+    expect(
+      buildProviderStatusResponse(profiles, "chrome-built-in-ai", {
+        chromeBuiltInAiBrowserSupport: {
+          supported: false,
+          reason: "browserUnsupported",
+          minimumChromeVersion: 138,
+        },
+      }),
+    ).toEqual({
+      type: "providerStatus",
+      configured: false,
+      readiness: "browserUnsupported",
+      providerLabel: "Chrome Built-in AI / Local only",
+      providerMode: "local-only",
     });
   });
 });

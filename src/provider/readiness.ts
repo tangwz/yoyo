@@ -36,9 +36,12 @@ function hasText(value: string | undefined): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function isCompleteProfile(profile: ProviderProfile): boolean {
+function isCompleteProfile(
+  profile: ProviderProfile,
+  context: ProviderReadinessContext = {},
+): boolean {
   if (profile.type === "chrome-built-in-ai") {
-    return true;
+    return isChromeBuiltInAiSupported(context);
   }
 
   if (!isOpenAiCompatibleProviderProfile(profile)) {
@@ -57,12 +60,13 @@ function isChromeBuiltInAiSupported(context: ProviderReadinessContext): boolean 
 export function selectStoredActiveProviderId(
   profiles: ProviderProfile[],
   activeProviderId: string | undefined,
+  context: ProviderReadinessContext = {},
 ): string | undefined {
   if (hasText(activeProviderId) && profiles.some((profile) => profile.id === activeProviderId)) {
     return activeProviderId;
   }
 
-  return profiles.find(isCompleteProfile)?.id;
+  return profiles.find((profile) => isCompleteProfile(profile, context))?.id;
 }
 
 export function evaluateProviderReadiness(

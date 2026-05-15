@@ -55,6 +55,7 @@ function readyProviderStatus() {
     configured: true,
     readiness: "ready",
     providerLabel: "OpenAI / api.openai.com",
+    providerMode: "remote",
   };
 }
 
@@ -264,6 +265,7 @@ describe("popup app", () => {
           configured: false,
           readiness: "missingApiKey",
           providerLabel: "未配置翻译服务",
+          providerMode: "remote",
         };
       }
 
@@ -304,6 +306,7 @@ describe("popup app", () => {
           configured: false,
           readiness: "missingApiKey",
           providerLabel: "未配置翻译服务",
+          providerMode: "remote",
         };
       }
 
@@ -352,6 +355,7 @@ describe("popup app", () => {
           configured: false,
           readiness: "missingApiKey",
           providerLabel: "未配置翻译服务",
+          providerMode: "remote",
         };
       }
 
@@ -394,6 +398,7 @@ describe("popup app", () => {
           configured: true,
           readiness: "ready",
           providerLabel: "OpenAI / api.openai.com",
+          providerMode: "remote",
         };
       }
 
@@ -635,6 +640,7 @@ describe("popup app", () => {
           configured: true,
           readiness: "ready",
           providerLabel: "OpenAI / api.openai.com",
+          providerMode: "remote",
         };
       }
 

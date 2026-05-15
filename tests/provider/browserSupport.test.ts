@@ -57,4 +57,25 @@ describe("browser support", () => {
       }),
     ).toMatchObject({ supported: false, reason: "browserUnsupported" });
   });
+
+  it("rejects iOS Chrome as unsupported", () => {
+    expect(
+      getChromeBuiltInAiBrowserSupport({
+        userAgent:
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/138.0.7204.0 Mobile/15E148 Safari/604.1",
+      }),
+    ).toMatchObject({ supported: false, reason: "browserUnsupported" });
+  });
+
+  it("reports unknown version for malformed desktop Chrome user agents", () => {
+    expect(parseChromeMajorVersion("Mozilla/5.0 (Macintosh) Chrome/ Safari/537.36")).toBeUndefined();
+    expect(
+      getChromeBuiltInAiBrowserSupport({
+        userAgent: "Mozilla/5.0 (Macintosh) Chrome/ Safari/537.36",
+      }),
+    ).toMatchObject({
+      supported: false,
+      reason: "unknownChromeVersion",
+    });
+  });
 });

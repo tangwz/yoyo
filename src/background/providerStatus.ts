@@ -4,6 +4,7 @@ import {
   formatProviderLabel,
   resolveReadyProviderProfile,
   selectStoredActiveProviderId,
+  type ProviderReadinessContext,
 } from "@/provider/readiness";
 import type { ProviderProfile } from "@/provider/types";
 
@@ -44,16 +45,21 @@ export function selectReadyProviderProfile(
 export function buildProviderStatusResponse(
   profiles: ProviderProfile[],
   activeProviderId: string | undefined,
+  context: ProviderReadinessContext = {},
 ): Extract<BackgroundResponse, { type: "providerStatus" }> {
-  const readiness = evaluateProviderReadiness(profiles, activeProviderId);
+  const readiness = evaluateProviderReadiness(profiles, activeProviderId, context);
+  const selectedProfile = profiles.find((profile) => profile.id === activeProviderId);
+  const providerDisplayProfile =
+    selectedProfile?.type === "chrome-built-in-ai" ? selectedProfile : readiness.profile;
 
   return {
     type: "providerStatus",
     configured: readiness.readiness === "ready",
     readiness: readiness.readiness,
-    providerLabel: formatProviderLabel(readiness.profile),
+    providerLabel: formatProviderLabel(providerDisplayProfile),
     providerMode:
-      readiness.readiness === "ready" && readiness.profile.type === "chrome-built-in-ai"
+      selectedProfile?.type === "chrome-built-in-ai" ||
+      (readiness.readiness === "ready" && readiness.profile.type === "chrome-built-in-ai")
         ? "local-only"
         : "remote",
   };
