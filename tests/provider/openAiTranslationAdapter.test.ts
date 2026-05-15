@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { OpenAiTranslationAdapter } from "@/provider/openAiTranslationAdapter";
-import type { OpenAiCompatibleProviderProfile } from "@/provider/types";
+import type { OpenAiCompatibleProviderProfile, ProviderProfile } from "@/provider/types";
 import type { PageSegment } from "@/translation/types";
 
 function profile(): OpenAiCompatibleProviderProfile {
@@ -11,6 +11,14 @@ function profile(): OpenAiCompatibleProviderProfile {
     baseURL: "https://api.example.test/v1",
     apiKey: "secret",
     textModel: "gpt-4.1-mini",
+  };
+}
+
+function nonOpenAiProfile(): ProviderProfile {
+  return {
+    id: "chrome-built-in-ai",
+    displayName: "Chrome Built-in AI",
+    type: "chrome-built-in-ai",
   };
 }
 
@@ -57,5 +65,35 @@ describe("OpenAiTranslationAdapter", () => {
     });
     expect(generateText).toHaveBeenCalledTimes(1);
     expect(generateText.mock.calls[0]?.[0].prompt).toContain("Target language: zh-CN");
+  });
+
+  it("rejects non-OpenAI-compatible profiles for batch translation", async () => {
+    const generateText = vi.fn();
+    const adapter = new OpenAiTranslationAdapter({ generateText });
+
+    await expect(
+      adapter.translateBatch({
+        profile: nonOpenAiProfile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        segments: [segment("segment-1", "Hello.")],
+      }),
+    ).rejects.toThrow("OpenAI translation adapter requires an OpenAI-compatible profile.");
+    expect(generateText).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-OpenAI-compatible profiles for text translation", async () => {
+    const generateText = vi.fn();
+    const adapter = new OpenAiTranslationAdapter({ generateText });
+
+    await expect(
+      adapter.translateText({
+        profile: nonOpenAiProfile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        text: "Hello.",
+      }),
+    ).rejects.toThrow("OpenAI translation adapter requires an OpenAI-compatible profile.");
+    expect(generateText).not.toHaveBeenCalled();
   });
 });

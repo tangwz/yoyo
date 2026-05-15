@@ -7,7 +7,6 @@ import { ProviderError } from "@/provider/errors";
 import type { TranslationProvider } from "@/provider/translationProvider";
 import {
   isOpenAiCompatibleProviderProfile,
-  type OpenAiCompatibleProviderProfile,
   type ProviderProfile,
 } from "@/provider/types";
 import { splitSegmentsIntoBatches } from "@/translation/batch";
@@ -50,7 +49,7 @@ export type TranslatePageInput = {
 };
 
 type TaskTranslationContext = {
-  profile: OpenAiCompatibleProviderProfile;
+  profile: ProviderProfile;
   sourceLanguage: string;
   targetLanguage: string;
   translationMode: TranslationMode;
@@ -208,23 +207,22 @@ export class TranslationTaskOrchestrator {
 
   private async getRecoveryProfile(
     recovery: LazySegmentRecoverySnapshot,
-  ): Promise<OpenAiCompatibleProviderProfile | undefined> {
+  ): Promise<ProviderProfile | undefined> {
     if (!recovery.providerId) {
-      const activeProfile = await this.dependencies.getActiveProfile();
-      return activeProfile && isOpenAiCompatibleProviderProfile(activeProfile)
-        ? activeProfile
-        : undefined;
+      return this.dependencies.getActiveProfile();
     }
 
     const profile = await this.dependencies.getProviderProfile(recovery.providerId);
-    if (!profile || !isOpenAiCompatibleProviderProfile(profile)) {
+    if (!profile) {
       return undefined;
     }
 
-    return {
-      ...profile,
-      textModel: recovery.textModel ?? profile.textModel,
-    };
+    return isOpenAiCompatibleProviderProfile(profile)
+      ? {
+          ...profile,
+          textModel: recovery.textModel ?? profile.textModel,
+        }
+      : profile;
   }
 
   private mergeLazyRecoverySnapshot(
@@ -308,9 +306,6 @@ export class TranslationTaskOrchestrator {
       if (!profile) {
         return this.failTask(task, "No active provider profile.");
       }
-      if (!isOpenAiCompatibleProviderProfile(profile)) {
-        return this.failTask(task, "Unsupported provider profile.");
-      }
 
       const translationMode = input.translationMode ?? "lazyViewport";
       const collectResponse = await this.dependencies.sendToContent(input.tabId, {
@@ -320,7 +315,7 @@ export class TranslationTaskOrchestrator {
         sourceLanguage: input.sourceLanguage,
         targetLanguage: input.targetLanguage,
         providerId: profile.id,
-        textModel: profile.textModel,
+        textModel: isOpenAiCompatibleProviderProfile(profile) ? profile.textModel : undefined,
       });
 
       if (
@@ -880,20 +875,36 @@ export class TranslationTaskOrchestrator {
   private async cacheKeyForSegment(
     segment: PageSegment,
     input: {
-      profile: OpenAiCompatibleProviderProfile;
+      profile: ProviderProfile;
       sourceLanguage: string;
       targetLanguage: string;
     },
   ): Promise<TranslationCacheKey> {
+    const providerIdentity = this.providerCacheIdentity(input.profile);
+
     return createCacheKey({
       sourceText: segment.sourceText,
       sourceLanguage: input.sourceLanguage,
       targetLanguage: input.targetLanguage,
-      providerId: input.profile.id,
-      textModel: input.profile.textModel,
+      providerId: providerIdentity.providerId,
+      textModel: providerIdentity.textModel,
       translationStyle,
       promptVersion: translationPromptVersion,
     });
+  }
+
+  private providerCacheIdentity(profile: ProviderProfile): Pick<TranslationCacheKey, "providerId" | "textModel"> {
+    if (isOpenAiCompatibleProviderProfile(profile)) {
+      return {
+        providerId: profile.id,
+        textModel: profile.textModel,
+      };
+    }
+
+    return {
+      providerId: profile.id,
+      textModel: profile.type,
+    };
   }
 
   private failTask(
