@@ -282,7 +282,7 @@ describe("TranslationTaskOrchestrator", () => {
     >(async () => ({
       items: [{ segmentId: "segment-1", translatedText: "你好，世界。" }],
     }));
-    const getTranslationProvider = vi.fn((profile: ProviderProfile) => ({
+    const getTranslationProvider = vi.fn((_profile: ProviderProfile) => ({
       translateText: vi.fn(),
       translateBatch,
     }));
