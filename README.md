@@ -11,7 +11,7 @@ This project is not positioned as a page-cleaning tool. It is designed to preser
 Implemented in the current version:
 
 - Custom LLM provider: supports OpenAI-compatible providers with configurable Base URL, API Key, text model, vision model placeholder, and request parameters.
-- Chrome Built-in AI provider: on supported desktop Chrome versions, Yoyo can translate locally with no API key. This mode is local-only and does not fall back to remote providers automatically.
+- Chrome Built-in AI provider: on desktop Chrome 138 or later, Yoyo can translate locally with no API key. This mode is local-only and does not fall back to remote providers automatically.
 - Local provider storage: provider profiles, API keys, model names, and Base URLs are stored in `chrome.storage.local` and are not synced across devices.
 - Provider connection test: the options page can send a fixed short prompt to test the configured provider without reading page content.
 - Full-page translation: users can translate the current page from the popup or context menu.

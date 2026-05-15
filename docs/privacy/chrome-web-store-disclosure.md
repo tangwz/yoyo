@@ -32,7 +32,7 @@ Yoyo does not provide automatic translation in the beta release. It does not aut
 
 ## Chrome Built-in AI Data Flow
 
-On supported desktop Chrome versions, users can select the Chrome Built-in AI provider to translate locally with no API key.
+On desktop Chrome 138 or later, users can select the Chrome Built-in AI provider to translate locally with no API key.
 
 When this provider is selected:
 
@@ -77,7 +77,7 @@ The submission must disclose that:
 
 - Page access is used to support user-triggered translation on the current page.
 - Page text is transmitted only after the user explicitly starts translation.
-- Page text is transmitted only to the OpenAI-compatible Provider configured by the user.
+- When an OpenAI-compatible Provider is selected, page text is transmitted only to the Provider configured by the user.
 - When the Chrome Built-in AI provider is selected, page text is processed locally through Chrome's browser Built-in AI APIs hosted in an extension offscreen document.
 - The `offscreen` permission is used only to host browser Built-in AI APIs that are unavailable in the MV3 background service worker.
 - API keys stay in extension local storage and are used only for requests to the configured Provider.

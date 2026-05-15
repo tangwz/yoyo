@@ -11,7 +11,7 @@
 当前版本已实现：
 
 - 自定义大模型服务：支持 OpenAI-compatible provider，用户可配置 Base URL、API Key、文本模型、视觉模型占位和请求参数。
-- Chrome Built-in AI Provider：在支持的桌面版 Chrome 中，悠悠可以无需 API Key 使用本地翻译能力。该模式是 local-only，不会自动回退到远端 Provider。
+- Chrome Built-in AI Provider：在桌面版 Chrome 138 或更高版本中，悠悠可以无需 API Key 使用本地翻译能力。该模式是 local-only，不会自动回退到远端 Provider。
 - Provider 本地保存：provider profile、API Key、模型名和 Base URL 保存到 `chrome.storage.local`，不会同步到云端。
 - Provider 连接测试：设置页可发送固定短文本测试模型服务，不读取网页正文。
 - 当前页全文翻译：通过 popup 或右键菜单触发当前页面翻译。
