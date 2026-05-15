@@ -48,7 +48,13 @@ export type ContentRequest =
   | { type: "hideTranslations"; taskId?: string }
   | { type: "showTranslations"; taskId?: string }
   | { type: "removeTranslations"; taskId?: string }
-  | { type: "getPageRuntimeState" };
+  | { type: "getPageRuntimeState" }
+  | {
+      type: "showSelectionTranslation";
+      sourceText: string;
+      translatedText?: string;
+      errorMessage?: string;
+    };
 
 export type ContentResponse =
   | { type: "estimatePageResult"; estimate: PageTranslationEstimate }
@@ -81,6 +87,13 @@ export type BackgroundRequest =
       targetLanguage: string;
     }
   | { type: "cancelTask"; taskId: string; reason: CancelReason }
+  | {
+      type: "translateSelection";
+      tabId: number;
+      text: string;
+      sourceLanguage: string;
+      targetLanguage: string;
+    }
   | { type: "getTaskForTab"; tabId: number }
   | { type: "getProviderStatus" }
   | {

@@ -59,6 +59,16 @@ describe("messaging contracts", () => {
       { type: "showTranslations", taskId: "task-1" },
       { type: "removeTranslations", taskId: "task-1" },
       { type: "getPageRuntimeState" },
+      {
+        type: "showSelectionTranslation",
+        sourceText: "Hello",
+        translatedText: "你好",
+      },
+      {
+        type: "showSelectionTranslation",
+        sourceText: "Hello",
+        errorMessage: "Selection translation failed.",
+      },
     ] satisfies ContentRequest[];
 
     expect(requests.map((request) => request.type)).toEqual([
@@ -70,7 +80,27 @@ describe("messaging contracts", () => {
       "showTranslations",
       "removeTranslations",
       "getPageRuntimeState",
+      "showSelectionTranslation",
+      "showSelectionTranslation",
     ]);
+  });
+
+  it("supports selection translation requests to the background", () => {
+    const request = {
+      type: "translateSelection",
+      tabId: 42,
+      text: "Hello",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+    } satisfies BackgroundRequest;
+
+    expect(request).toEqual({
+      type: "translateSelection",
+      tabId: 42,
+      text: "Hello",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+    });
   });
 
   it("supports lazy segment enqueue requests from content scripts", () => {

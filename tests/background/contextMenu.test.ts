@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   onTranslatePageMenuClick,
+  onTranslateSelectionMenuClick,
   registerContextMenus,
   translatePageMenuId,
+  translateSelectionMenuId,
 } from "@/background/contextMenu";
 
 const { addListener, create, removeAll } = vi.hoisted(() => ({
@@ -30,7 +32,7 @@ describe("context menu registration", () => {
     removeAll.mockClear();
   });
 
-  it("registers a single translate page menu item", () => {
+  it("registers page and selection translation menu items", () => {
     registerContextMenus();
 
     expect(removeAll).toHaveBeenCalledTimes(1);
@@ -38,6 +40,11 @@ describe("context menu registration", () => {
       id: translatePageMenuId,
       title: "Translate this page",
       contexts: ["page"],
+    });
+    expect(create).toHaveBeenCalledWith({
+      id: translateSelectionMenuId,
+      title: "Translate selection",
+      contexts: ["selection"],
     });
   });
 
@@ -69,5 +76,51 @@ describe("context menu registration", () => {
     listener({ menuItemId: "other.menu" }, { id: 42 });
 
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("routes selection clicks with tab id and selected text", () => {
+    const handler = vi.fn(async () => undefined);
+
+    onTranslateSelectionMenuClick(handler);
+
+    const listener = addListener.mock.calls[0]?.[0];
+    listener(
+      { menuItemId: translateSelectionMenuId, selectionText: "  Hello world  " },
+      { id: 42 },
+    );
+
+    expect(handler).toHaveBeenCalledWith({ tabId: 42, text: "Hello world" });
+  });
+
+  it("ignores selection clicks without text or tab id", () => {
+    const handler = vi.fn(async () => undefined);
+
+    onTranslateSelectionMenuClick(handler);
+
+    const listener = addListener.mock.calls[0]?.[0];
+    listener({ menuItemId: translateSelectionMenuId, selectionText: "   " }, { id: 42 });
+    listener({ menuItemId: translateSelectionMenuId, selectionText: "Hello" }, {});
+    listener({ menuItemId: translatePageMenuId, selectionText: "Hello" }, { id: 42 });
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("routes selection handler failures to the error callback", async () => {
+    const error = new Error("selection translation failed");
+    const onError = vi.fn();
+
+    onTranslateSelectionMenuClick(
+      async () => {
+        throw error;
+      },
+      onError,
+    );
+
+    const listener = addListener.mock.calls[0]?.[0];
+    listener({ menuItemId: translateSelectionMenuId, selectionText: "Hello" }, { id: 42 });
+
+    await vi.waitFor(() => {
+      expect(onError).toHaveBeenCalledWith(error, { tabId: 42, text: "Hello" });
+    });
   });
 });
