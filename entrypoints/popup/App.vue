@@ -140,6 +140,13 @@ function applyProviderStatus(response: Extract<BackgroundResponse, { type: "prov
   isProviderConfigured.value = response.configured;
   providerLabel.value = response.providerLabel;
 
+  if (isUnsupportedLocalProvider(response)) {
+    state.value = "error";
+    currentTaskId.value = "";
+    errorMessage.value = "Chrome Built-in AI requires desktop Chrome 138 or later.";
+    return;
+  }
+
   if (!response.configured) {
     state.value = "onboarding";
     currentTaskId.value = "";
@@ -148,6 +155,12 @@ function applyProviderStatus(response: Extract<BackgroundResponse, { type: "prov
     state.value = "idle";
     errorMessage.value = "";
   }
+}
+
+function isUnsupportedLocalProvider(
+  response: Extract<BackgroundResponse, { type: "providerStatus" }>,
+): boolean {
+  return response.providerMode === "local-only" && response.readiness === "browserUnsupported";
 }
 
 function applyActionFailure(response: ContentResponse, fallbackMessage: string): void {
@@ -266,6 +279,10 @@ onMounted(async () => {
     }
 
     applyProviderStatus(providerStatus);
+    if (isUnsupportedLocalProvider(providerStatus)) {
+      return;
+    }
+
     if (!providerStatus.configured) {
       await maybeOpenProviderOnboardingSettings().catch((error: unknown) => {
         errorMessage.value =

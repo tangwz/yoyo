@@ -298,6 +298,48 @@ describe("popup app", () => {
     });
   });
 
+  it("shows unsupported local provider errors without opening Provider settings", async () => {
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return {
+          type: "providerStatus",
+          configured: false,
+          readiness: "browserUnsupported",
+          providerLabel: "Chrome Built-in AI / Local only",
+          providerMode: "local-only",
+        };
+      }
+
+      if (message.type === "openOptions") {
+        throw new Error("Provider settings should not open.");
+      }
+
+      throw new Error(`Unexpected runtime message: ${message.type}`);
+    });
+
+    render(PopupApp);
+
+    expect(await screen.findByText("Chrome Built-in AI / Local only")).toBeVisible();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Chrome Built-in AI requires desktop Chrome 138 or later.",
+    );
+
+    await waitFor(() => {
+      expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
+        type: "getProviderStatus",
+      });
+    });
+    expect(browserMock.runtimeSendMessage).not.toHaveBeenCalledWith({
+      type: "openOptions",
+      section: "provider",
+      source: "first-run",
+    });
+    expect(browserMock.tabsQuery).not.toHaveBeenCalled();
+    expect(browserMock.tabsSendMessage).not.toHaveBeenCalledWith(expect.any(Number), {
+      type: "estimatePage",
+    });
+  });
+
   it("does not automatically reopen first-run settings after the first redirect attempt", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
       if (message.type === "getProviderStatus") {
