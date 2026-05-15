@@ -8,6 +8,7 @@ import {
   removePageTranslations,
   showPageTranslations,
 } from "@/content/pageRuntime";
+import { showSelectionTranslation } from "@/content/selectionPanel";
 import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
 import { addRuntimeMessageListener } from "@/messaging/runtime";
 
@@ -107,6 +108,14 @@ export default defineContentScript({
               { type: "taskProgress" }
             >;
             handleTaskProgress(request.progress);
+            return { type: "contentActionResult", success: true };
+          }
+          case "showSelectionTranslation": {
+            const request = message as Extract<
+              ContentRequest,
+              { type: "showSelectionTranslation" }
+            >;
+            showSelectionTranslation(request);
             return { type: "contentActionResult", success: true };
           }
           default:
