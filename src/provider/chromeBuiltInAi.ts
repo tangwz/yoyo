@@ -16,8 +16,11 @@ export type TranslatorLanguageOptions = {
   targetLanguage: string;
 };
 
+export type ChromeBuiltInAiDownloadMonitor = EventTarget;
+
 export type TranslatorCreateOptions = TranslatorLanguageOptions & {
   signal?: AbortSignal;
+  monitor?: (monitor: ChromeBuiltInAiDownloadMonitor) => void;
 };
 
 export type TranslatorTranslateOptions = {
@@ -32,6 +35,35 @@ export type TranslatorInstance = {
 export type TranslatorApi = {
   availability(options: TranslatorLanguageOptions): Promise<TranslatorAvailability>;
   create(options: TranslatorCreateOptions): Promise<TranslatorInstance>;
+};
+
+export type LanguageDetectorAvailability =
+  | "available"
+  | "downloadable"
+  | "downloading"
+  | "unavailable";
+
+export type LanguageDetectionResult = {
+  detectedLanguage: string;
+  confidence?: number;
+};
+
+export type LanguageDetectorCreateOptions = {
+  signal?: AbortSignal;
+  monitor?: (monitor: ChromeBuiltInAiDownloadMonitor) => void;
+};
+
+export type LanguageDetectorInstance = {
+  detect(
+    text: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<LanguageDetectionResult[]>;
+  destroy?: () => void | Promise<void>;
+};
+
+export type LanguageDetectorApi = {
+  availability(): Promise<LanguageDetectorAvailability>;
+  create(options?: LanguageDetectorCreateOptions): Promise<LanguageDetectorInstance>;
 };
 
 type ChromeBuiltInTranslatorProviderDependencies = {
@@ -203,13 +235,6 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
         "Chrome Built-in AI is not available for this language pair.",
       );
     }
-    if (availability === "downloadable" || availability === "downloading") {
-      throw new LocalAiError(
-        "modelDownloadRequired",
-        "Chrome needs to download a local translation model before translating this language pair.",
-      );
-    }
-
     try {
       return await translatorApi.create({
         ...languageOptions,

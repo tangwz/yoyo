@@ -252,9 +252,34 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
-  it("fails before collecting content when Chrome Built-in AI receives auto source language", async () => {
+  it("detects source language before translating with Chrome Built-in AI when source is auto", async () => {
+    const detectSourceLanguage = vi.fn(async () => "en");
     const { orchestrator, sendToContent, translateBatch } = createOrchestrator({
       getActiveProfile: vi.fn(async () => chromeBuiltInProfile()),
+      detectSourceLanguage,
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: "task-1",
+          segments: [segment({ id: "segment-1", sourceText: "Hello world." })],
+        };
+      }
+
+      if (message.type === "applyTranslations") {
+        return {
+          type: "contentActionResult",
+          success: true,
+          appliedSegmentIds: message.items.map((item) => item.segmentId),
+        };
+      }
+
+      throw new Error(`Unexpected content message: ${message.type}`);
+    });
+    translateBatch.mockResolvedValue({
+      items: [{ segmentId: "segment-1", translatedText: "你好，世界。" }],
     });
 
     const progress = await orchestrator.translatePage({
@@ -263,13 +288,20 @@ describe("TranslationTaskOrchestrator", () => {
       targetLanguage: "zh-CN",
     });
 
-    expect(sendToContent).not.toHaveBeenCalled();
-    expect(translateBatch).not.toHaveBeenCalled();
+    expect(detectSourceLanguage).toHaveBeenCalledWith(
+      "Hello world.",
+      expect.any(AbortSignal),
+    );
+    expect(translateBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceLanguage: "en",
+      }),
+    );
     expect(progress).toMatchObject({
       taskId: "task-1",
-      state: "failed",
-      total: 0,
-      translated: 0,
+      state: "completed",
+      total: 1,
+      translated: 1,
       failed: 0,
     });
   });

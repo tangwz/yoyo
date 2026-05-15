@@ -232,14 +232,14 @@ describe("ChromeBuiltInTranslatorProvider", () => {
   });
 
   it.each(["downloadable", "downloading"] as const)(
-    "fails locally when the model is %s",
+    "creates the translator when the model is %s",
     async (availabilityResult) => {
+      const translate = vi.fn(async (text: string) => `translated:${text}`);
+      const create = vi.fn(async () => ({ translate }));
       const provider = new ChromeBuiltInTranslatorProvider({
         getTranslatorApi: () => ({
           availability: vi.fn(async () => availabilityResult),
-          create: vi.fn(async () => ({
-            translate: vi.fn(async (text: string) => `translated:${text}`),
-          })),
+          create,
         }),
       });
 
@@ -250,9 +250,12 @@ describe("ChromeBuiltInTranslatorProvider", () => {
           targetLanguage: "zh-CN",
           text: "Hello",
         }),
-      ).rejects.toMatchObject({
-        code: "modelDownloadRequired",
-      } satisfies Partial<LocalAiError>);
+      ).resolves.toEqual({ translatedText: "translated:Hello" });
+      expect(create).toHaveBeenCalledWith({
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        signal: undefined,
+      });
     },
   );
 

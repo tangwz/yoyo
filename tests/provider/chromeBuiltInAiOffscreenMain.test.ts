@@ -222,4 +222,39 @@ describe("chrome-built-in-ai offscreen handler", () => {
     await createResponsePromise;
     expect(session.hasTranslator("translator-1")).toBe(false);
   });
+
+  it("detects the language of text and destroys the detector", async () => {
+    const destroy = vi.fn(async () => undefined);
+    const detect = vi.fn(async () => [
+      { detectedLanguage: "en", confidence: 0.92 },
+    ]);
+    const handleRequest = createChromeBuiltInAiOffscreenRequestHandler({
+      getTranslatorApi: () => ({
+        availability: vi.fn(async () => "available" as const),
+        create: vi.fn(async () => ({
+          translate: vi.fn(async (text: string) => `translated:${text}`),
+        })),
+      }),
+      getLanguageDetectorApi: () => ({
+        availability: vi.fn(async () => "available" as const),
+        create: vi.fn(async () => ({ detect, destroy })),
+      }),
+    });
+
+    await expect(
+      handleRequest({
+        requestId: "detect-1",
+        type: "chromeBuiltInAi.detectLanguage",
+        text: "Hello world.",
+      }),
+    ).resolves.toEqual({
+      requestId: "detect-1",
+      ok: true,
+      detectedLanguage: "en",
+    });
+    expect(detect).toHaveBeenCalledWith("Hello world.", {
+      signal: expect.any(AbortSignal),
+    });
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
 });

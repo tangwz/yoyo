@@ -2,6 +2,9 @@ import {
   CHROME_BUILT_IN_AI_OFFSCREEN_PORT,
 } from "@/provider/chromeBuiltInAiOffscreenClient";
 import type {
+  LanguageDetectionResult,
+  LanguageDetectorApi,
+  LanguageDetectorInstance,
   TranslatorApi,
   TranslatorInstance,
   TranslatorLanguageOptions,
@@ -33,6 +36,11 @@ type OffscreenRequest =
       requestId: string;
       type: "chromeBuiltInAi.cancel";
       cancelledRequestId: string;
+    }
+  | {
+      requestId: string;
+      type: "chromeBuiltInAi.detectLanguage";
+      text: string;
     };
 
 type OffscreenResponse =
@@ -40,6 +48,7 @@ type OffscreenResponse =
       requestId: string;
       ok: true;
       availability?: Awaited<ReturnType<TranslatorApi["availability"]>>;
+      detectedLanguage?: string;
       translatorId?: string;
       translatedText?: string;
     }
@@ -62,6 +71,7 @@ type ChromeRuntimeLike = {
 
 type ChromeBuiltInAiOffscreenHandlerDependencies = {
   getTranslatorApi: () => TranslatorApi;
+  getLanguageDetectorApi?: () => LanguageDetectorApi;
   createTranslatorId?: () => string;
 };
 
@@ -81,6 +91,17 @@ function getTranslatorApi(): TranslatorApi {
   return translator;
 }
 
+function getLanguageDetectorApi(): LanguageDetectorApi {
+  const detector = (globalThis as typeof globalThis & {
+    LanguageDetector?: LanguageDetectorApi;
+  }).LanguageDetector;
+  if (!detector) {
+    throw new Error("Chrome Built-in AI Language Detector API is not available.");
+  }
+
+  return detector;
+}
+
 function createTranslatorId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `translator-${Date.now()}-${Math.random()}`;
 }
@@ -91,6 +112,27 @@ function serializeError(error: unknown): { name?: string; message?: string } {
   }
 
   return { message: "Chrome Built-in AI offscreen request failed." };
+}
+
+function pickDetectedLanguage(results: LanguageDetectionResult[]): string | undefined {
+  const bestResult = results.find(
+    (result) =>
+      result.detectedLanguage &&
+      result.detectedLanguage !== "und" &&
+      (result.confidence === undefined || result.confidence >= 0.35),
+  );
+
+  return bestResult?.detectedLanguage;
+}
+
+async function destroyLanguageDetector(
+  detector: LanguageDetectorInstance | undefined,
+): Promise<void> {
+  try {
+    await detector?.destroy?.();
+  } catch {
+    // Best effort cleanup after language detection.
+  }
 }
 
 export function createChromeBuiltInAiOffscreenRequestHandler(
@@ -205,6 +247,35 @@ export function createChromeBuiltInAiOffscreenSession(
         case "chromeBuiltInAi.cancel":
           activeRequests.get(request.cancelledRequestId)?.abort();
           return { requestId: request.requestId, ok: true };
+        case "chromeBuiltInAi.detectLanguage": {
+          const controller = new AbortController();
+          activeRequests.set(request.requestId, controller);
+          let detector: LanguageDetectorInstance | undefined;
+          try {
+            const detectorApi =
+              dependencies.getLanguageDetectorApi?.() ?? getLanguageDetectorApi();
+            const availability = await detectorApi.availability();
+            if (availability === "unavailable") {
+              throw new DOMException(
+                "Chrome Built-in AI Language Detector API is unavailable.",
+                "NotSupportedError",
+              );
+            }
+
+            detector = await detectorApi.create({ signal: controller.signal });
+            const results = await detector.detect(request.text, {
+              signal: controller.signal,
+            });
+            return {
+              requestId: request.requestId,
+              ok: true,
+              detectedLanguage: pickDetectedLanguage(results),
+            };
+          } finally {
+            activeRequests.delete(request.requestId);
+            await destroyLanguageDetector(detector);
+          }
+        }
       }
     } catch (error) {
       return {
@@ -232,6 +303,7 @@ export function setupChromeBuiltInAiOffscreenPort(
 
     const session = createChromeBuiltInAiOffscreenSession({
       getTranslatorApi,
+      getLanguageDetectorApi,
     });
     let disconnected = false;
 

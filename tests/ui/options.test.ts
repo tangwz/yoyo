@@ -111,7 +111,9 @@ describe("options app", () => {
       screen.getByText("只有在你手动开始翻译时，扩展才会提取页面文本。"),
     ).toBeVisible();
     expect(
-      screen.getByText("翻译过程中，提取的文本会发送到你配置的模型服务。"),
+      screen.getByText(
+        "选择 OpenAI-compatible Provider 时，提取的文本会发送到你配置的模型服务；选择 Chrome Built-in AI 时，文本在本地处理，不会自动回退到远端 Provider。",
+      ),
     ).toBeVisible();
   });
 

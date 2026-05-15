@@ -13,6 +13,7 @@ export type TranslateSelectionInput = {
 export type TranslateSelectionDependencies = {
   getActiveProfile: () => Promise<ProviderProfile | undefined>;
   getTranslationProvider: (profile: ProviderProfile) => TranslationProvider;
+  detectSourceLanguage?: (text: string) => Promise<string | undefined>;
   sendToContent: (
     tabId: number,
     message: ContentRequest,
@@ -39,19 +40,16 @@ export async function translateSelection(
       );
       return;
     }
-    if (profile.type === "chrome-built-in-ai" && input.sourceLanguage === "auto") {
-      await sendSelectionTranslationError(
-        input.tabId,
-        sourceText,
-        "Chrome Built-in AI requires an explicit source language for selection translation. No remote provider was used.",
-        dependencies,
-      );
-      return;
-    }
+    const sourceLanguage = await resolveSelectionSourceLanguage(
+      sourceText,
+      input.sourceLanguage,
+      profile,
+      dependencies,
+    );
 
     const response = await dependencies.getTranslationProvider(profile).translateText({
       profile,
-      sourceLanguage: input.sourceLanguage,
+      sourceLanguage,
       targetLanguage: input.targetLanguage,
       text: sourceText,
     });
@@ -69,6 +67,26 @@ export async function translateSelection(
       dependencies,
     );
   }
+}
+
+async function resolveSelectionSourceLanguage(
+  sourceText: string,
+  sourceLanguage: string,
+  profile: ProviderProfile,
+  dependencies: Pick<TranslateSelectionDependencies, "detectSourceLanguage">,
+): Promise<string> {
+  if (profile.type !== "chrome-built-in-ai" || sourceLanguage !== "auto") {
+    return sourceLanguage;
+  }
+
+  const detectedLanguage = await dependencies.detectSourceLanguage?.(sourceText);
+  if (!detectedLanguage) {
+    throw new Error(
+      "Chrome Built-in AI could not detect the selected text language. No remote provider was used.",
+    );
+  }
+
+  return detectedLanguage;
 }
 
 function getSelectionTranslationErrorMessage(error: unknown): string {

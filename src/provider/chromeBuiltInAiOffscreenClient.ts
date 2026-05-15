@@ -1,4 +1,5 @@
 import type {
+  LanguageDetectorAvailability,
   TranslatorApi,
   TranslatorAvailability,
   TranslatorCreateOptions,
@@ -66,6 +67,11 @@ type OffscreenRequest =
       requestId: string;
       type: "chromeBuiltInAi.cancel";
       cancelledRequestId: string;
+    }
+  | {
+      requestId: string;
+      type: "chromeBuiltInAi.detectLanguage";
+      text: string;
     };
 
 type OffscreenResponse =
@@ -73,6 +79,8 @@ type OffscreenResponse =
       requestId: string;
       ok: true;
       availability?: TranslatorAvailability;
+      detectorAvailability?: LanguageDetectorAvailability;
+      detectedLanguage?: string;
       translatorId?: string;
       translatedText?: string;
     }
@@ -300,6 +308,19 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
         }
       },
     };
+  }
+
+  async detectLanguage(text: string, signal?: AbortSignal): Promise<string | undefined> {
+    const response = await this.sendRequest(
+      {
+        requestId: createRequestId(),
+        type: "chromeBuiltInAi.detectLanguage",
+        text,
+      },
+      signal,
+    );
+
+    return response.detectedLanguage;
   }
 
   private async ensureDocument(): Promise<void> {

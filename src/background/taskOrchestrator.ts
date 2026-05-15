@@ -35,6 +35,7 @@ export type TranslationTaskOrchestratorDependencies = {
   getActiveProfile: () => Promise<ProviderProfile | undefined>;
   getProviderProfile: (providerId: string) => Promise<ProviderProfile | undefined>;
   getTranslationProvider: (profile: ProviderProfile) => TranslationProvider;
+  detectSourceLanguage?: (text: string, signal: AbortSignal) => Promise<string | undefined>;
   sendToContent: (tabId: number, message: ContentRequest) => Promise<ContentResponse>;
   emitProgress?: (progress: TranslationProgress, tabId: number) => void | Promise<void>;
   now: () => number;
@@ -306,13 +307,6 @@ export class TranslationTaskOrchestrator {
       if (!profile) {
         return this.failTask(task, "No active provider profile.");
       }
-      if (profile.type === "chrome-built-in-ai" && input.sourceLanguage === "auto") {
-        return this.failTask(
-          task,
-          "Chrome Built-in AI requires an explicit source language.",
-        );
-      }
-
       const translationMode = input.translationMode ?? "lazyViewport";
       const collectResponse = await this.dependencies.sendToContent(input.tabId, {
         type: "collectSegments",
@@ -332,11 +326,17 @@ export class TranslationTaskOrchestrator {
       }
 
       const segments = collectResponse.segments;
+      const sourceLanguage = await this.resolveSourceLanguageForProfile(
+        profile,
+        input.sourceLanguage,
+        segments,
+        task.controller.signal,
+      );
       task.segmentsById = new Map(segments.map((segment) => [segment.id, segment]));
       task.collectionComplete = collectResponse.collectionComplete ?? true;
       task.context = {
         profile,
-        sourceLanguage: input.sourceLanguage,
+        sourceLanguage,
         targetLanguage: input.targetLanguage,
         translationMode,
       };
@@ -433,6 +433,41 @@ export class TranslationTaskOrchestrator {
 
     this.tasks.set(taskId, task);
     return task;
+  }
+
+  private async resolveSourceLanguageForProfile(
+    profile: ProviderProfile,
+    sourceLanguage: string,
+    segments: readonly PageSegment[],
+    signal: AbortSignal,
+  ): Promise<string> {
+    if (profile.type !== "chrome-built-in-ai" || sourceLanguage !== "auto") {
+      return sourceLanguage;
+    }
+
+    const sample = this.createLanguageDetectionSample(segments);
+    if (!sample || !this.dependencies.detectSourceLanguage) {
+      throw new Error(
+        "Chrome Built-in AI could not detect the page language. No remote provider was used.",
+      );
+    }
+
+    const detectedLanguage = await this.dependencies.detectSourceLanguage(sample, signal);
+    if (!detectedLanguage) {
+      throw new Error(
+        "Chrome Built-in AI could not detect the page language. No remote provider was used.",
+      );
+    }
+
+    return detectedLanguage;
+  }
+
+  private createLanguageDetectionSample(segments: readonly PageSegment[]): string {
+    return segments
+      .map((segment) => segment.sourceText.trim())
+      .filter(Boolean)
+      .join("\n")
+      .slice(0, 2000);
   }
 
   private cancelTasksForTab(tabId: number, reason: CancelReason): void {

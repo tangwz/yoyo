@@ -77,11 +77,18 @@ export default defineBackground(() => {
     return selectReadyProviderProfile(await listProfiles(), providerId);
   }
 
+  function getChromeBuiltInAiOffscreenClient(): ChromeBuiltInAiOffscreenClient {
+    chromeBuiltInAiOffscreenClient ??= new ChromeBuiltInAiOffscreenClient();
+    return chromeBuiltInAiOffscreenClient;
+  }
+
   const orchestrator = new TranslationTaskOrchestrator({
     getActiveProfile,
     getProviderProfile,
     getTranslationProvider: (profile) =>
       translationProviderResolver.getTranslationProvider(profile),
+    detectSourceLanguage: (text, signal) =>
+      getChromeBuiltInAiOffscreenClient().detectLanguage(text, signal),
     sendToContent: (tabId, message) =>
       sendTabMessage<ContentRequest, ContentResponse>(tabId, message),
     emitProgress: (progress, tabId) => {
@@ -109,7 +116,7 @@ export default defineBackground(() => {
 
       const progress = await orchestrator.translatePage({
         tabId,
-        sourceLanguage: activeProfile.type === "chrome-built-in-ai" ? "en" : "auto",
+        sourceLanguage: "auto",
         targetLanguage: "zh-CN",
         translationMode: (await storage.translationPreferences.get()).mode,
       });
@@ -139,13 +146,15 @@ export default defineBackground(() => {
         {
           tabId,
           text,
-          sourceLanguage: activeProfile?.type === "chrome-built-in-ai" ? "en" : "auto",
+          sourceLanguage: "auto",
           targetLanguage: "zh-CN",
         },
         {
           getActiveProfile: async () => activeProfile,
           getTranslationProvider: (profile) =>
             translationProviderResolver.getTranslationProvider(profile),
+          detectSourceLanguage: (sourceText) =>
+            getChromeBuiltInAiOffscreenClient().detectLanguage(sourceText),
           sendToContent: (targetTabId, message) =>
             sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
         },

@@ -31,6 +31,11 @@ type RequestMessage =
       requestId: string;
       type: "chromeBuiltInAi.cancel";
       cancelledRequestId: string;
+    }
+  | {
+      requestId: string;
+      type: "chromeBuiltInAi.detectLanguage";
+      text: string;
     };
 
 type ResponseMessage =
@@ -38,6 +43,7 @@ type ResponseMessage =
       requestId: string;
       ok: true;
       availability?: "available" | "downloadable" | "downloading" | "unavailable";
+      detectedLanguage?: string;
       translatorId?: string;
       translatedText?: string;
     }
@@ -164,6 +170,32 @@ describe("ChromeBuiltInAiOffscreenClient", () => {
         translatorId: "translator-1",
       }),
     ]);
+  });
+
+  it("detects source language over a runtime port", async () => {
+    const port = createPort((message) => ({
+      requestId: message.requestId,
+      ok: true,
+      detectedLanguage: "en",
+    }));
+    const client = new ChromeBuiltInAiOffscreenClient({
+      runtime: {
+        getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
+        getContexts: vi.fn(async () => [{ contextId: "existing" }]),
+        connect: vi.fn(() => port),
+      },
+      offscreen: {
+        createDocument: vi.fn(async () => undefined),
+      },
+    });
+
+    await expect(client.detectLanguage("Hello world.")).resolves.toBe("en");
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "chromeBuiltInAi.detectLanguage",
+        text: "Hello world.",
+      }),
+    );
   });
 
   it("keeps the create port alive so translator sessions can translate before destroy", async () => {
