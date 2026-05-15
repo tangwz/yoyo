@@ -59,7 +59,10 @@ type ChromeRuntimeLike = {
   onConnect: { addListener(listener: (port: ChromeRuntimePort) => void): void };
 };
 
-const translators = new Map<string, TranslatorInstance>();
+type ChromeBuiltInAiOffscreenHandlerDependencies = {
+  getTranslatorApi: () => TranslatorApi;
+  createTranslatorId?: () => string;
+};
 
 function getTranslatorApi(): TranslatorApi {
   const translator = (globalThis as typeof globalThis & { Translator?: TranslatorApi })
@@ -83,59 +86,124 @@ function serializeError(error: unknown): { name?: string; message?: string } {
   return { message: "Chrome Built-in AI offscreen request failed." };
 }
 
-async function handleRequest(request: OffscreenRequest): Promise<OffscreenResponse> {
-  try {
-    switch (request.type) {
-      case "chromeBuiltInAi.availability":
-        return {
-          requestId: request.requestId,
-          ok: true,
-          availability: await getTranslatorApi().availability(request.options),
-        };
-      case "chromeBuiltInAi.create": {
-        const translator = await getTranslatorApi().create(request.options);
-        const translatorId = createTranslatorId();
-        translators.set(translatorId, translator);
-        return { requestId: request.requestId, ok: true, translatorId };
-      }
-      case "chromeBuiltInAi.translate": {
-        const translator = translators.get(request.translatorId);
-        if (!translator) {
-          throw new Error("Chrome Built-in AI translator session was not found.");
-        }
+export function createChromeBuiltInAiOffscreenRequestHandler(
+  dependencies: ChromeBuiltInAiOffscreenHandlerDependencies,
+): (request: OffscreenRequest) => Promise<OffscreenResponse> {
+  const translators = new Map<string, TranslatorInstance>();
+  const activeRequests = new Map<string, AbortController>();
 
-        return {
-          requestId: request.requestId,
-          ok: true,
-          translatedText: await translator.translate(request.text),
-        };
+  return async function handleRequest(request: OffscreenRequest): Promise<OffscreenResponse> {
+    try {
+      switch (request.type) {
+        case "chromeBuiltInAi.availability":
+          return {
+            requestId: request.requestId,
+            ok: true,
+            availability: await dependencies.getTranslatorApi().availability(request.options),
+          };
+        case "chromeBuiltInAi.create": {
+          const controller = new AbortController();
+          activeRequests.set(request.requestId, controller);
+
+          let translator: TranslatorInstance | undefined;
+          try {
+            translator = await dependencies.getTranslatorApi().create({
+              ...request.options,
+              signal: controller.signal,
+            });
+
+            if (controller.signal.aborted) {
+              await translator.destroy?.();
+              translator = undefined;
+              throw new DOMException(
+                "Chrome Built-in AI translation was cancelled.",
+                "AbortError",
+              );
+            }
+
+            const translatorId =
+              dependencies.createTranslatorId?.() ?? createTranslatorId();
+            translators.set(translatorId, translator);
+            return { requestId: request.requestId, ok: true, translatorId };
+          } catch (error) {
+            if (translator && controller.signal.aborted) {
+              try {
+                await translator.destroy?.();
+              } catch {
+                // Best effort cleanup after cancellation.
+              }
+            }
+            throw error;
+          } finally {
+            activeRequests.delete(request.requestId);
+          }
+        }
+        case "chromeBuiltInAi.translate": {
+          const translator = translators.get(request.translatorId);
+          if (!translator) {
+            throw new Error("Chrome Built-in AI translator session was not found.");
+          }
+
+          const controller = new AbortController();
+          activeRequests.set(request.requestId, controller);
+          try {
+            return {
+              requestId: request.requestId,
+              ok: true,
+              translatedText: await translator.translate(request.text, {
+                signal: controller.signal,
+              }),
+            };
+          } finally {
+            activeRequests.delete(request.requestId);
+          }
+        }
+        case "chromeBuiltInAi.destroy":
+          await translators.get(request.translatorId)?.destroy?.();
+          translators.delete(request.translatorId);
+          return { requestId: request.requestId, ok: true };
+        case "chromeBuiltInAi.cancel":
+          activeRequests.get(request.cancelledRequestId)?.abort();
+          return { requestId: request.requestId, ok: true };
       }
-      case "chromeBuiltInAi.destroy":
-        await translators.get(request.translatorId)?.destroy?.();
-        translators.delete(request.translatorId);
-        return { requestId: request.requestId, ok: true };
-      case "chromeBuiltInAi.cancel":
-        return { requestId: request.requestId, ok: true };
+    } catch (error) {
+      return {
+        requestId: request.requestId,
+        ok: false,
+        error: serializeError(error),
+      };
     }
-  } catch (error) {
-    return {
-      requestId: request.requestId,
-      ok: false,
-      error: serializeError(error),
-    };
-  }
+  };
+}
+
+export function setupChromeBuiltInAiOffscreenPort(
+  chromeRuntime: ChromeRuntimeLike,
+): void {
+  const handleRequest = createChromeBuiltInAiOffscreenRequestHandler({
+    getTranslatorApi,
+  });
+
+  chromeRuntime.onConnect.addListener((port) => {
+    if (port.name !== CHROME_BUILT_IN_AI_OFFSCREEN_PORT) {
+      return;
+    }
+
+    port.onMessage.addListener((request: OffscreenRequest) => {
+      void handleRequest(request).then((response) => {
+        try {
+          port.postMessage(response);
+        } catch {
+          // The background port may disconnect after sending a cancellation request.
+        }
+      });
+    });
+  });
 }
 
 const chromeRuntime = (globalThis as typeof globalThis & {
-  chrome: { runtime: ChromeRuntimeLike };
-}).chrome.runtime;
+  chrome?: { runtime?: ChromeRuntimeLike };
+}).chrome?.runtime;
 
-chromeRuntime.onConnect.addListener((port) => {
-  if (port.name !== CHROME_BUILT_IN_AI_OFFSCREEN_PORT) {
-    return;
-  }
-
-  port.onMessage.addListener((request: OffscreenRequest) => {
-    void handleRequest(request).then((response) => port.postMessage(response));
-  });
-});
+if (chromeRuntime) {
+  setupChromeBuiltInAiOffscreenPort(chromeRuntime);
+}

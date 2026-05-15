@@ -8,8 +8,7 @@ import type {
 } from "@/provider/chromeBuiltInAi";
 
 export const CHROME_BUILT_IN_AI_OFFSCREEN_PORT = "yoyo.chrome-built-in-ai-offscreen";
-export const CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT =
-  "chrome-built-in-ai-offscreen/index.html";
+export const CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT = "chrome-built-in-ai-offscreen.html";
 
 type ChromeRuntimePort = {
   onMessage: { addListener(listener: (message: OffscreenResponse) => void): void };

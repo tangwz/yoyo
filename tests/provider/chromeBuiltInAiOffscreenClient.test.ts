@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT,
   CHROME_BUILT_IN_AI_OFFSCREEN_PORT,
   ChromeBuiltInAiOffscreenClient,
 } from "@/provider/chromeBuiltInAiOffscreenClient";
@@ -75,10 +74,10 @@ describe("ChromeBuiltInAiOffscreenClient", () => {
 
     expect(runtime.getContexts).toHaveBeenCalledWith({
       contextTypes: ["OFFSCREEN_DOCUMENT"],
-      documentUrls: [`chrome-extension://test/${CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT}`],
+      documentUrls: ["chrome-extension://test/chrome-built-in-ai-offscreen.html"],
     });
     expect(offscreen.createDocument).toHaveBeenCalledWith({
-      url: CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT,
+      url: "chrome-built-in-ai-offscreen.html",
       reasons: ["DOM_PARSER"],
       justification:
         "Run Chrome Built-in AI Translator API from an extension document context.",
