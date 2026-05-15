@@ -140,7 +140,7 @@ describe("translateSelection", () => {
     });
   });
 
-  it("does not pass raw auto to Chrome Built-in AI provider", async () => {
+  it("sends an explicit-language error instead of passing raw auto to Chrome Built-in AI", async () => {
     getActiveProfile.mockResolvedValue(chromeBuiltInProfile);
 
     await translateSelection(
@@ -153,11 +153,13 @@ describe("translateSelection", () => {
       dependencies(),
     );
 
-    expect(translateText).toHaveBeenCalledWith({
-      profile: chromeBuiltInProfile,
-      sourceLanguage: "en",
-      targetLanguage: "zh-CN",
-      text: "Hello",
+    expect(getTranslationProvider).not.toHaveBeenCalled();
+    expect(translateText).not.toHaveBeenCalled();
+    expect(sendToContent).toHaveBeenCalledWith(42, {
+      type: "showSelectionTranslation",
+      sourceText: "Hello",
+      errorMessage:
+        "Chrome Built-in AI requires an explicit source language for selection translation. No remote provider was used.",
     });
   });
 });

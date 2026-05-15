@@ -28,26 +28,30 @@ export async function translateSelection(
     return;
   }
 
-  const profile = await dependencies.getActiveProfile();
-  if (!profile) {
-    await sendSelectionTranslationError(
-      input.tabId,
-      sourceText,
-      "No active provider profile.",
-      dependencies,
-    );
-    return;
-  }
-
-  const sourceLanguage =
-    profile.type === "chrome-built-in-ai" && input.sourceLanguage === "auto"
-      ? "en"
-      : input.sourceLanguage;
-
   try {
+    const profile = await dependencies.getActiveProfile();
+    if (!profile) {
+      await sendSelectionTranslationError(
+        input.tabId,
+        sourceText,
+        "No active provider profile.",
+        dependencies,
+      );
+      return;
+    }
+    if (profile.type === "chrome-built-in-ai" && input.sourceLanguage === "auto") {
+      await sendSelectionTranslationError(
+        input.tabId,
+        sourceText,
+        "Chrome Built-in AI requires an explicit source language for selection translation. No remote provider was used.",
+        dependencies,
+      );
+      return;
+    }
+
     const response = await dependencies.getTranslationProvider(profile).translateText({
       profile,
-      sourceLanguage,
+      sourceLanguage: input.sourceLanguage,
       targetLanguage: input.targetLanguage,
       text: sourceText,
     });

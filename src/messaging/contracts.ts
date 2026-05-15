@@ -52,8 +52,14 @@ export type ContentRequest =
   | {
       type: "showSelectionTranslation";
       sourceText: string;
-      translatedText?: string;
-      errorMessage?: string;
+      translatedText: string;
+      errorMessage?: never;
+    }
+  | {
+      type: "showSelectionTranslation";
+      sourceText: string;
+      errorMessage: string;
+      translatedText?: never;
     };
 
 export type ContentResponse =

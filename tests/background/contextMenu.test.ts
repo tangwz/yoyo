@@ -36,6 +36,7 @@ describe("context menu registration", () => {
     registerContextMenus();
 
     expect(removeAll).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(2);
     expect(create).toHaveBeenCalledWith({
       id: translatePageMenuId,
       title: "Translate this page",
