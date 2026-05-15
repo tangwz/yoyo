@@ -67,6 +67,32 @@ describe("OpenAiTranslationAdapter", () => {
     expect(generateText.mock.calls[0]?.[0].prompt).toContain("Target language: zh-CN");
   });
 
+  it("translates text selections through the OpenAI-compatible provider", async () => {
+    const abortController = new AbortController();
+    const generateText = vi.fn().mockResolvedValue({
+      model: "gpt-4.1-mini",
+      text: JSON.stringify({
+        items: [{ segmentId: "selection", translatedText: "你好。" }],
+      }),
+    });
+    const adapter = new OpenAiTranslationAdapter({ generateText });
+
+    await expect(
+      adapter.translateText({
+        profile: profile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        text: "Hello.",
+        abortSignal: abortController.signal,
+      }),
+    ).resolves.toEqual({
+      translatedText: "你好。",
+    });
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generateText.mock.calls[0]?.[0].abortSignal).toBe(abortController.signal);
+    expect(generateText.mock.calls[0]?.[0].prompt).toContain("Hello.");
+  });
+
   it("rejects non-OpenAI-compatible profiles for batch translation", async () => {
     const generateText = vi.fn();
     const adapter = new OpenAiTranslationAdapter({ generateText });

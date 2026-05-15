@@ -590,9 +590,9 @@ export class TranslationTaskOrchestrator {
       return { missingSegments: [] };
     }
 
-    const provider = this.dependencies.getTranslationProvider(input.profile);
     let response: Awaited<ReturnType<TranslationProvider["translateBatch"]>>;
     try {
+      const provider = this.dependencies.getTranslationProvider(input.profile);
       response = await provider.translateBatch({
         profile: input.profile,
         sourceLanguage: input.sourceLanguage,

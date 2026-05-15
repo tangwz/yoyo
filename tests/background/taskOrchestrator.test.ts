@@ -1734,6 +1734,46 @@ describe("TranslationTaskOrchestrator", () => {
     );
   });
 
+  it("releases provider slots when translation provider resolution fails", async () => {
+    const getTranslationProvider = vi.fn(() => {
+      throw new Error("resolver failed");
+    });
+    const { orchestrator, sendToContent } = createOrchestrator({
+      getTranslationProvider,
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({ id: "segment-1", sourceText: "One." }),
+            segment({ id: "segment-2", order: 2, sourceText: "Two.", textHash: "hash-2" }),
+            segment({ id: "segment-3", order: 3, sourceText: "Three.", textHash: "hash-3" }),
+          ],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    expect(getTranslationProvider).toHaveBeenCalled();
+    expect(progress).toEqual({
+      taskId: "task-1",
+      state: "completedWithErrors",
+      total: 3,
+      translated: 0,
+      failed: 3,
+    });
+  });
+
   it("splits a repeatedly failing batch and falls back to single segments", async () => {
     const { orchestrator, translateBatch, sendToContent } = createOrchestrator();
 

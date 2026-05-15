@@ -64,7 +64,13 @@ export default defineBackground(() => {
   const orchestrator = new TranslationTaskOrchestrator({
     getActiveProfile,
     getProviderProfile,
-    getTranslationProvider: () => translationProvider,
+    getTranslationProvider: (profile) => {
+      if (profile.type !== "openai-compatible") {
+        throw new Error("Unsupported provider profile.");
+      }
+
+      return translationProvider;
+    },
     sendToContent: (tabId, message) =>
       sendTabMessage<ContentRequest, ContentResponse>(tabId, message),
     emitProgress: (progress, tabId) => {

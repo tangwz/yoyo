@@ -2,7 +2,6 @@ import type { TranslationProvider } from "@/provider/translationProvider";
 import type {
   GenerateTextRequest,
   GenerateTextResponse,
-  OpenAiCompatibleProviderProfile,
 } from "@/provider/types";
 import { parseTranslationBatchResult } from "@/translation/jsonResult";
 import { buildTranslationPrompt } from "@/translation/prompt";
@@ -10,10 +9,6 @@ import { buildTranslationPrompt } from "@/translation/prompt";
 type OpenAiTextProvider = {
   generateText(request: GenerateTextRequest): Promise<GenerateTextResponse>;
 };
-
-function assertOpenAiProfile(profile: GenerateTextRequest["profile"]): OpenAiCompatibleProviderProfile {
-  return profile;
-}
 
 export class OpenAiTranslationAdapter implements TranslationProvider {
   constructor(private readonly provider: OpenAiTextProvider) {}
@@ -52,7 +47,7 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
     }
 
     const response = await this.provider.generateText({
-      profile: assertOpenAiProfile(request.profile),
+      profile: request.profile,
       prompt: buildTranslationPrompt({
         sourceLanguage: request.sourceLanguage,
         targetLanguage: request.targetLanguage,
