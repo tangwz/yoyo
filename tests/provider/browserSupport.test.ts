@@ -48,4 +48,13 @@ describe("browser support", () => {
       }),
     ).toMatchObject({ supported: false, reason: "browserUnsupported" });
   });
+
+  it("rejects mobile Chrome even when the version is 138 or later", () => {
+    expect(
+      getChromeBuiltInAiBrowserSupport({
+        userAgent:
+          "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.0 Mobile Safari/537.36",
+      }),
+    ).toMatchObject({ supported: false, reason: "browserUnsupported" });
+  });
 });

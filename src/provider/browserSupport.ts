@@ -13,8 +13,12 @@ export type ChromeBuiltInAiBrowserSupport = {
   detectedChromeVersion?: number;
 };
 
+function isUnsupportedBrowserOrMobile(userAgent: string): boolean {
+  return /\b(?:Edg|OPR|Firefox|Android|CriOS|FxiOS|Mobile)\b/i.test(userAgent);
+}
+
 export function parseChromeMajorVersion(userAgent: string): number | undefined {
-  if (/\b(?:Edg|OPR|Firefox)\//.test(userAgent)) {
+  if (isUnsupportedBrowserOrMobile(userAgent)) {
     return undefined;
   }
 
@@ -33,7 +37,7 @@ export function getChromeBuiltInAiBrowserSupport(
   const userAgent = input.userAgent ?? globalThis.navigator?.userAgent ?? "";
   const detectedChromeVersion = parseChromeMajorVersion(userAgent);
 
-  if (/\b(?:Edg|OPR|Firefox)\//.test(userAgent) || !/\bChrome\//.test(userAgent)) {
+  if (isUnsupportedBrowserOrMobile(userAgent) || !/\bChrome\//.test(userAgent)) {
     return {
       supported: false,
       reason: "browserUnsupported",

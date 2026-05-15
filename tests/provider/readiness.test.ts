@@ -116,11 +116,11 @@ describe("provider readiness", () => {
     );
   });
 
-  it("formats Chrome Built-in AI provider labels without remote host details", () => {
+  it("formats Chrome Built-in AI provider labels with the canonical local label", () => {
     expect(
       formatProviderLabel({
         id: "chrome-built-in-ai",
-        displayName: "Chrome Built-in AI",
+        displayName: "Custom Built-in Provider",
         type: "chrome-built-in-ai",
       }),
     ).toBe("Chrome Built-in AI / Local only");

@@ -119,7 +119,7 @@ export function formatProviderLabel(profile: ProviderProfile | undefined): strin
   }
 
   if (profile.type === "chrome-built-in-ai") {
-    return `${profile.displayName} / Local only`;
+    return "Chrome Built-in AI / Local only";
   }
 
   try {
