@@ -114,6 +114,26 @@ describe("translateSelection", () => {
     });
   });
 
+  it("sends provider error messages to content", async () => {
+    translateText.mockRejectedValue(new Error("Provider failed"));
+
+    await translateSelection(
+      {
+        tabId: 42,
+        text: "Hello",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+      },
+      dependencies(),
+    );
+
+    expect(sendToContent).toHaveBeenCalledWith(42, {
+      type: "showSelectionTranslation",
+      sourceText: "Hello",
+      errorMessage: "Provider failed",
+    });
+  });
+
   it("maps LocalAiError to the formatted local-only message", async () => {
     translateText.mockRejectedValue(
       new LocalAiError(
