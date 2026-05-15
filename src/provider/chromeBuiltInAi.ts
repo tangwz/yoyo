@@ -54,8 +54,9 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
       throw new LocalAiError("aborted", "Chrome Built-in AI translation was cancelled.");
     }
 
-    const translatorApi =
-      this.dependencies.getTranslatorApi?.() ?? getDefaultTranslatorApi();
+    const translatorApi = this.dependencies.getTranslatorApi
+      ? this.dependencies.getTranslatorApi()
+      : getDefaultTranslatorApi();
     if (!translatorApi) {
       throw new LocalAiError(
         "apiUnavailable",
@@ -64,7 +65,7 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
     }
 
     const options = {
-      sourceLanguage: request.sourceLanguage === "auto" ? "" : request.sourceLanguage,
+      sourceLanguage: request.sourceLanguage,
       targetLanguage: request.targetLanguage,
     };
     const availability = await translatorApi.availability(options);
