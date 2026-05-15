@@ -174,12 +174,6 @@ watch(providerProfileSignature, resetTestFeedback);
 
 watch(selectedProviderType, () => {
   resetTestFeedback();
-  if (
-    selectedProviderType.value === "chrome-built-in-ai" &&
-    !canSelectChromeBuiltInAi.value
-  ) {
-    selectedProviderType.value = "openai-compatible";
-  }
 });
 
 function getProviderTestErrorMessageKey(error: unknown): OptionsMessageKey {
@@ -676,7 +670,10 @@ async function testConnection() {
               </select>
             </label>
 
-            <label class="field">
+            <label
+              v-if="selectedProviderType === 'openai-compatible'"
+              class="field"
+            >
               <span>{{ t("field.timeout") }}</span>
               <input
                 v-model.number="timeoutMs"
@@ -686,7 +683,10 @@ async function testConnection() {
               >
             </label>
 
-            <label class="field">
+            <label
+              v-if="selectedProviderType === 'openai-compatible'"
+              class="field"
+            >
               <span>{{ t("field.temperature") }}</span>
               <input
                 v-model.number="temperature"
@@ -697,7 +697,10 @@ async function testConnection() {
               >
             </label>
 
-            <label class="field">
+            <label
+              v-if="selectedProviderType === 'openai-compatible'"
+              class="field"
+            >
               <span>{{ t("field.maxTokens") }}</span>
               <input
                 v-model.number="maxTokens"

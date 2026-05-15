@@ -215,6 +215,9 @@ describe("options app", () => {
     expect(screen.getByRole("radio", { name: "Chrome Built-in AI" })).toBeChecked();
     expect(screen.queryByRole("combobox", { name: "服务预设" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("访问密钥")).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "超时时间" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "温度" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "最大输出长度" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Chrome Built-in AI" })).toBeVisible();
     expect(screen.getByText("在支持的桌面版 Chrome 中本地运行。无需访问密钥。")).toBeVisible();
     expect(screen.getByText("需要桌面版 Chrome 138 或更高版本。")).toBeVisible();
@@ -228,6 +231,28 @@ describe("options app", () => {
       type: "chrome-built-in-ai",
     });
     expect(setActiveProviderId).toHaveBeenCalledWith("chrome-built-in-ai");
+  });
+
+  it("keeps a saved Chrome Built-in AI provider selected when the browser is unsupported", async () => {
+    listProfiles.mockResolvedValue([
+      {
+        id: "chrome-built-in-ai",
+        displayName: "Chrome Built-in AI",
+        type: "chrome-built-in-ai",
+      },
+    ]);
+    getActiveProviderId.mockResolvedValue("chrome-built-in-ai");
+
+    await renderReady();
+
+    expect(screen.getByRole("radio", { name: "Chrome Built-in AI" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Chrome Built-in AI" })).toBeDisabled();
+    expect(screen.getByText("需要桌面版 Chrome 138 或更高版本。无需访问密钥。")).toBeVisible();
+    expect(screen.getByText("当前浏览器不可使用 Chrome Built-in AI。")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Chrome Built-in AI" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "服务预设" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "超时时间" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "测试连接" })).not.toBeInTheDocument();
   });
 
   it("saves the selected UI language and rerenders options messages", async () => {
