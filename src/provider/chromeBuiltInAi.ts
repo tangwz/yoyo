@@ -68,7 +68,19 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
       sourceLanguage: request.sourceLanguage,
       targetLanguage: request.targetLanguage,
     };
-    const availability = await translatorApi.availability(options);
+    let availability: Awaited<ReturnType<typeof translatorApi.availability>>;
+    try {
+      availability = await translatorApi.availability(options);
+    } catch (error) {
+      if (request.abortSignal?.aborted) {
+        throw new LocalAiError(
+          "aborted",
+          "Chrome Built-in AI translation was cancelled.",
+          error,
+        );
+      }
+      throw new LocalAiError("unknown", "Chrome Built-in AI translation failed.", error);
+    }
     if (availability === "unavailable") {
       throw new LocalAiError(
         "languagePairUnavailable",
@@ -82,7 +94,19 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
       );
     }
 
-    const translator = await translatorApi.create(options);
+    let translator: Awaited<ReturnType<typeof translatorApi.create>>;
+    try {
+      translator = await translatorApi.create(options);
+    } catch (error) {
+      if (request.abortSignal?.aborted) {
+        throw new LocalAiError(
+          "aborted",
+          "Chrome Built-in AI translation was cancelled.",
+          error,
+        );
+      }
+      throw new LocalAiError("unknown", "Chrome Built-in AI translation failed.", error);
+    }
     try {
       return {
         translatedText: await translator.translate(request.text),

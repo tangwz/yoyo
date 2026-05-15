@@ -215,6 +215,112 @@ describe("ChromeBuiltInTranslatorProvider", () => {
     } satisfies Partial<LocalAiError>);
   });
 
+  it("maps availability errors to local unknown errors", async () => {
+    const cause = new Error("availability failed");
+    const provider = new ChromeBuiltInTranslatorProvider({
+      getTranslatorApi: () => ({
+        availability: vi.fn(async () => {
+          throw cause;
+        }),
+        create: vi.fn(async () => ({
+          translate: vi.fn(async (text: string) => `translated:${text}`),
+        })),
+      }),
+    });
+
+    await expect(
+      provider.translateText({
+        profile: profile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        text: "Hello",
+      }),
+    ).rejects.toMatchObject({
+      code: "unknown",
+      cause,
+    } satisfies Partial<LocalAiError>);
+  });
+
+  it("maps availability errors to local aborted errors when aborted", async () => {
+    const abortController = new AbortController();
+    const cause = new Error("availability failed");
+    const provider = new ChromeBuiltInTranslatorProvider({
+      getTranslatorApi: () => ({
+        availability: vi.fn(async () => {
+          abortController.abort();
+          throw cause;
+        }),
+        create: vi.fn(async () => ({
+          translate: vi.fn(async (text: string) => `translated:${text}`),
+        })),
+      }),
+    });
+
+    await expect(
+      provider.translateText({
+        profile: profile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        text: "Hello",
+        abortSignal: abortController.signal,
+      }),
+    ).rejects.toMatchObject({
+      code: "aborted",
+      cause,
+    } satisfies Partial<LocalAiError>);
+  });
+
+  it("maps create errors to local unknown errors", async () => {
+    const cause = new Error("create failed");
+    const provider = new ChromeBuiltInTranslatorProvider({
+      getTranslatorApi: () => ({
+        availability: vi.fn(async () => "available" as const),
+        create: vi.fn(async () => {
+          throw cause;
+        }),
+      }),
+    });
+
+    await expect(
+      provider.translateText({
+        profile: profile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        text: "Hello",
+      }),
+    ).rejects.toMatchObject({
+      code: "unknown",
+      cause,
+    } satisfies Partial<LocalAiError>);
+  });
+
+  it("maps create errors to local aborted errors when aborted", async () => {
+    const abortController = new AbortController();
+    const cause = new Error("create failed");
+    const provider = new ChromeBuiltInTranslatorProvider({
+      getTranslatorApi: () => ({
+        availability: vi.fn(async () => "available" as const),
+        create: vi.fn(async () => {
+          abortController.abort();
+          throw cause;
+        }),
+      }),
+    });
+
+    await expect(
+      provider.translateText({
+        profile: profile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        text: "Hello",
+        abortSignal: abortController.signal,
+      }),
+    ).rejects.toMatchObject({
+      code: "aborted",
+      cause,
+    } satisfies Partial<LocalAiError>);
+  });
+
   it("translates batches one item at a time", async () => {
     const translate = vi.fn(async (text: string) => `translated:${text}`);
     const provider = new ChromeBuiltInTranslatorProvider({
