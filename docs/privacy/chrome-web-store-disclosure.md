@@ -15,6 +15,8 @@ This capability allows Yoyo to:
 
 `<all_urls>` is not automatic data transmission. It does not mean Yoyo reads every visited page, uploads page text in the background, or sends browsing history to any server.
 
+`offscreen` is used to create an extension offscreen document for the Chrome Built-in AI provider. The offscreen document hosts browser Built-in AI APIs that are unavailable in the Manifest V3 background service worker. This permission is not a remote data transfer capability.
+
 ## Page Text Data Flow
 
 Page text is sent only when the user explicitly starts translation from the popup or the context menu.
@@ -27,6 +29,19 @@ When translation starts:
 4. Translation responses are sent back to the content script for injection into the same page.
 
 Yoyo does not provide automatic translation in the beta release. It does not automatically translate every website, every tab, or every page visit.
+
+## Chrome Built-in AI Data Flow
+
+On supported desktop Chrome versions, users can select the Chrome Built-in AI provider to translate locally with no API key.
+
+When this provider is selected:
+
+1. Page text is extracted only after the user explicitly starts translation.
+2. Text batches are sent from the background task to the extension offscreen document.
+3. The offscreen document calls Chrome's browser Built-in AI APIs because those APIs are unavailable in the Manifest V3 background service worker.
+4. Translation responses are sent back through extension messaging for injection into the same page.
+
+The Chrome Built-in AI provider is local-only. It does not use the user-configured OpenAI-compatible Provider, does not require or transmit an API key, and does not automatically fall back to a remote Provider.
 
 ## Provider Test Data Flow
 
@@ -63,6 +78,8 @@ The submission must disclose that:
 - Page access is used to support user-triggered translation on the current page.
 - Page text is transmitted only after the user explicitly starts translation.
 - Page text is transmitted only to the OpenAI-compatible Provider configured by the user.
+- When the Chrome Built-in AI provider is selected, page text is processed locally through Chrome's browser Built-in AI APIs hosted in an extension offscreen document.
+- The `offscreen` permission is used only to host browser Built-in AI APIs that are unavailable in the MV3 background service worker.
 - API keys stay in extension local storage and are used only for requests to the configured Provider.
 - Provider connection tests send only `Reply with exactly: ok` and do not read page text.
 - Provider configuration, API keys, page text, translation requests, and translation responses are not sent to project-owned cloud services.
