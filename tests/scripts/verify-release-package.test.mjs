@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   verifyContentScriptPrivacyBoundary,
   verifyNotificationPermissionReachability,
+  verifyPackagedNotificationPermissionReachability,
   verifyProviderTestPrivacy,
   verifyRuntimePackageEntries,
   verifySourceMapPolicy,
@@ -106,6 +107,34 @@ describe("release package verification", () => {
 
     expect(() =>
       verifyContentScriptPrivacyBoundary(createValidManifest(), packagedTextByEntry, "release.zip"),
+    ).not.toThrow();
+  });
+
+  it("normalizes packaged text entry keys before content script privacy checks", () => {
+    expect(() =>
+      verifyContentScriptPrivacyBoundary(
+        createValidManifest(),
+        new Map([["./content-scripts/content.js", "browser.runtime.sendMessage({ type: 'extractPage' });"]]),
+        "release.zip",
+      ),
+    ).not.toThrow();
+  });
+
+  it("checks notification permission reachability against the packaged manifest and code", () => {
+    expect(() =>
+      verifyPackagedNotificationPermissionReachability(
+        createValidManifest({ permissions: ["storage", "contextMenus"] }),
+        new Map([["background.js", "browser.notifications.create('id', {});"]]),
+      ),
+    ).toThrow(
+      'browser.notifications.create is present but manifest.permissions does not include "notifications".',
+    );
+
+    expect(() =>
+      verifyPackagedNotificationPermissionReachability(
+        createValidManifest(),
+        new Map([["background.js", "t.notifications.create('id', {});"]]),
+      ),
     ).not.toThrow();
   });
 

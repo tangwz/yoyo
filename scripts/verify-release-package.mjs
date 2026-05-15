@@ -238,6 +238,10 @@ function hasNotificationApiCall(source) {
   return /\b(?:browser|chrome)\.notifications\.create\s*\(/.test(source);
 }
 
+function hasPackagedNotificationApiCall(source) {
+  return /\b[$A-Z_a-z][$\w]*\.notifications\.create\s*\(/.test(source);
+}
+
 function hasContextMenuClickPath(source) {
   return (
     /\b(?:browser|chrome)\.contextMenus\.create\s*\(/.test(source) &&
@@ -249,6 +253,15 @@ function hasBackgroundNotificationRoute(source) {
   return (
     /\bonTranslatePageMenuClick\s*\(/.test(source) &&
     /\bnotify(?:ProviderMissing|PageCannotTranslate)\s*\(/.test(source)
+  );
+}
+
+function normalizePackagedTextEntries(packagedTextByEntry) {
+  return new Map(
+    [...packagedTextByEntry.entries()].map(([entry, text]) => [
+      normalizePackagePath(entry),
+      text,
+    ]),
   );
 }
 
@@ -281,6 +294,28 @@ export function verifyNotificationPermissionReachability(manifest, sourceFiles) 
   );
 }
 
+export function verifyPackagedNotificationPermissionReachability(manifest, packagedTextByEntry) {
+  const permissions = manifest.permissions ?? [];
+  assert(Array.isArray(permissions), "manifest.permissions must be an array.");
+
+  const source = [...packagedTextByEntry.values()].join("\n");
+  const hasNotificationPermission = permissions.includes("notifications");
+  const hasNotificationApiCall = hasPackagedNotificationApiCall(source);
+
+  if (!hasNotificationPermission) {
+    assert(
+      !hasNotificationApiCall,
+      'browser.notifications.create is present but manifest.permissions does not include "notifications".',
+    );
+    return;
+  }
+
+  assert(
+    hasNotificationApiCall,
+    'manifest.permissions includes "notifications" but packaged code does not call browser.notifications.create.',
+  );
+}
+
 function collectContentScriptJsEntries(manifest) {
   if (!Array.isArray(manifest.content_scripts)) {
     return [];
@@ -307,8 +342,10 @@ function findPrivateProviderMarker(text) {
 }
 
 export function verifyContentScriptPrivacyBoundary(manifest, packagedTextByEntry, packageName) {
+  const normalizedTextByEntry = normalizePackagedTextEntries(packagedTextByEntry);
+
   for (const contentScriptPath of collectContentScriptJsEntries(manifest)) {
-    const contentScriptText = packagedTextByEntry.get(contentScriptPath);
+    const contentScriptText = normalizedTextByEntry.get(contentScriptPath);
 
     assert(
       typeof contentScriptText === "string",
@@ -498,6 +535,7 @@ async function main() {
   const zipManifest = await readZipManifest(latestZip.path, latestZip.name);
   verifyManifest(zipManifest);
   verifyRuntimePackageEntries(zipManifest, zipEntries, latestZip.name);
+  verifyPackagedNotificationPermissionReachability(zipManifest, zipTextEntries);
   verifyContentScriptPrivacyBoundary(zipManifest, zipTextEntries, latestZip.name);
 
   console.log(`Release package verified: ${latestZip.name}`);
