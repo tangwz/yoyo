@@ -52,6 +52,7 @@ type OffscreenResponse =
 type ChromeRuntimePort = {
   name: string;
   onMessage: { addListener(listener: (request: OffscreenRequest) => void): void };
+  onDisconnect: { addListener(listener: () => void): void };
   postMessage(response: OffscreenResponse): void;
 };
 
@@ -62,6 +63,12 @@ type ChromeRuntimeLike = {
 type ChromeBuiltInAiOffscreenHandlerDependencies = {
   getTranslatorApi: () => TranslatorApi;
   createTranslatorId?: () => string;
+};
+
+type ChromeBuiltInAiOffscreenSession = {
+  handleRequest: (request: OffscreenRequest) => Promise<OffscreenResponse>;
+  disconnect: () => void;
+  hasTranslator: (translatorId: string) => boolean;
 };
 
 function getTranslatorApi(): TranslatorApi {
@@ -89,11 +96,44 @@ function serializeError(error: unknown): { name?: string; message?: string } {
 export function createChromeBuiltInAiOffscreenRequestHandler(
   dependencies: ChromeBuiltInAiOffscreenHandlerDependencies,
 ): (request: OffscreenRequest) => Promise<OffscreenResponse> {
+  return createChromeBuiltInAiOffscreenSession(dependencies).handleRequest;
+}
+
+export function createChromeBuiltInAiOffscreenSession(
+  dependencies: ChromeBuiltInAiOffscreenHandlerDependencies,
+): ChromeBuiltInAiOffscreenSession {
   const translators = new Map<string, TranslatorInstance>();
   const activeRequests = new Map<string, AbortController>();
+  let disconnected = false;
 
-  return async function handleRequest(request: OffscreenRequest): Promise<OffscreenResponse> {
+  function abortActiveRequests(): void {
+    for (const controller of activeRequests.values()) {
+      controller.abort();
+    }
+  }
+
+  function destroyOwnedTranslators(): void {
+    for (const translator of translators.values()) {
+      void translator.destroy?.();
+    }
+    translators.clear();
+  }
+
+  function disconnect(): void {
+    disconnected = true;
+    abortActiveRequests();
+    destroyOwnedTranslators();
+  }
+
+  async function handleRequest(request: OffscreenRequest): Promise<OffscreenResponse> {
     try {
+      if (disconnected) {
+        throw new DOMException(
+          "Chrome Built-in AI offscreen session was disconnected.",
+          "AbortError",
+        );
+      }
+
       switch (request.type) {
         case "chromeBuiltInAi.availability":
           return {
@@ -112,7 +152,7 @@ export function createChromeBuiltInAiOffscreenRequestHandler(
               signal: controller.signal,
             });
 
-            if (controller.signal.aborted) {
+            if (controller.signal.aborted || disconnected) {
               await translator.destroy?.();
               translator = undefined;
               throw new DOMException(
@@ -173,6 +213,12 @@ export function createChromeBuiltInAiOffscreenRequestHandler(
         error: serializeError(error),
       };
     }
+  }
+
+  return {
+    handleRequest,
+    disconnect,
+    hasTranslator: (translatorId) => translators.has(translatorId),
   };
 }
 
@@ -188,8 +234,21 @@ export function setupChromeBuiltInAiOffscreenPort(
       return;
     }
 
+    const session = createChromeBuiltInAiOffscreenSession({
+      getTranslatorApi,
+    });
+    let disconnected = false;
+
+    port.onDisconnect.addListener(() => {
+      disconnected = true;
+      session.disconnect();
+    });
+
     port.onMessage.addListener((request: OffscreenRequest) => {
-      void handleRequest(request).then((response) => {
+      void session.handleRequest(request).then((response) => {
+        if (disconnected) {
+          return;
+        }
         try {
           port.postMessage(response);
         } catch {
