@@ -102,6 +102,112 @@ function createRemoteError(error: { name?: string; message?: string }): Error {
   return remoteError;
 }
 
+class OffscreenPortSession {
+  private readonly port: ChromeRuntimePort;
+  private disconnected = false;
+
+  constructor(private readonly runtime: ChromeRuntimeLike) {
+    this.port = runtime.connect({ name: CHROME_BUILT_IN_AI_OFFSCREEN_PORT });
+  }
+
+  async send(
+    request: OffscreenRequest,
+    signal?: AbortSignal,
+    options: { disconnectOnSettle?: boolean } = {},
+  ): Promise<Extract<OffscreenResponse, { ok: true }>> {
+    if (signal?.aborted) {
+      throw new DOMException("Chrome Built-in AI translation was cancelled.", "AbortError");
+    }
+    if (this.disconnected) {
+      throw new Error("Chrome Built-in AI offscreen document disconnected.");
+    }
+
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(
+          new DOMException("Chrome Built-in AI translation was cancelled.", "AbortError"),
+        );
+        return;
+      }
+
+      let settled = false;
+      let abortListener: (() => void) | undefined;
+
+      const settle = (callback: () => void): void => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        if (abortListener) {
+          signal?.removeEventListener("abort", abortListener);
+        }
+        callback();
+        if (options.disconnectOnSettle) {
+          this.disconnect();
+        }
+      };
+
+      abortListener = () => {
+        settle(() => {
+          try {
+            this.port.postMessage({
+              requestId: createRequestId(),
+              type: "chromeBuiltInAi.cancel",
+              cancelledRequestId: request.requestId,
+            });
+          } catch {
+            // Best effort only; the port may already be disconnected.
+          }
+          this.disconnect();
+          reject(
+            new DOMException("Chrome Built-in AI translation was cancelled.", "AbortError"),
+          );
+        });
+      };
+      signal?.addEventListener("abort", abortListener, { once: true });
+
+      this.port.onMessage.addListener((response) => {
+        if (response.requestId !== request.requestId || settled) {
+          return;
+        }
+
+        settle(() => {
+          if (response.ok) {
+            resolve(response);
+            return;
+          }
+
+          reject(createRemoteError(response.error));
+        });
+      });
+
+      this.port.onDisconnect.addListener(() => {
+        this.disconnected = true;
+        settle(() =>
+          reject(
+            new Error(
+              this.runtime.lastError?.message ??
+                "Chrome Built-in AI offscreen document disconnected.",
+            ),
+          ),
+        );
+      });
+
+      this.port.postMessage(request);
+    });
+  }
+
+  disconnect(): void {
+    if (this.disconnected) {
+      return;
+    }
+
+    this.disconnected = true;
+    this.port.disconnect();
+  }
+}
+
 export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
   private readonly runtime: ChromeRuntimeLike | undefined;
   private readonly offscreen: ChromeOffscreenLike | undefined;
@@ -131,16 +237,27 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
       throw new DOMException("Chrome Built-in AI translation was cancelled.", "AbortError");
     }
 
-    const response = await this.sendRequest({
-      requestId: createRequestId(),
-      type: "chromeBuiltInAi.create",
-      options: {
-        sourceLanguage: options.sourceLanguage,
-        targetLanguage: options.targetLanguage,
-      },
-    }, options.signal);
+    const session = await this.createPortSession();
+    let response: Extract<OffscreenResponse, { ok: true }>;
+    try {
+      response = await session.send(
+        {
+          requestId: createRequestId(),
+          type: "chromeBuiltInAi.create",
+          options: {
+            sourceLanguage: options.sourceLanguage,
+            targetLanguage: options.targetLanguage,
+          },
+        },
+        options.signal,
+      );
+    } catch (error) {
+      session.disconnect();
+      throw error;
+    }
 
     if (!response.translatorId) {
+      session.disconnect();
       throw new Error("Chrome Built-in AI offscreen response omitted translatorId.");
     }
 
@@ -154,12 +271,15 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
           );
         }
 
-        const translateResponse = await this.sendRequest({
-          requestId: createRequestId(),
-          type: "chromeBuiltInAi.translate",
-          translatorId,
-          text,
-        }, translateOptions?.signal);
+        const translateResponse = await session.send(
+          {
+            requestId: createRequestId(),
+            type: "chromeBuiltInAi.translate",
+            translatorId,
+            text,
+          },
+          translateOptions?.signal,
+        );
 
         if (translateResponse.translatedText === undefined) {
           throw new Error("Chrome Built-in AI offscreen response omitted translatedText.");
@@ -168,11 +288,19 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
         return translateResponse.translatedText;
       },
       destroy: async () => {
-        await this.sendRequest({
-          requestId: createRequestId(),
-          type: "chromeBuiltInAi.destroy",
-          translatorId,
-        });
+        try {
+          await session.send(
+            {
+              requestId: createRequestId(),
+              type: "chromeBuiltInAi.destroy",
+              translatorId,
+            },
+            undefined,
+            { disconnectOnSettle: true },
+          );
+        } finally {
+          session.disconnect();
+        }
       },
     };
   }
@@ -208,6 +336,18 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
     await this.creatingDocument;
   }
 
+  private async createPortSession(): Promise<OffscreenPortSession> {
+    await this.ensureDocument();
+
+    if (!this.runtime) {
+      const error = new Error("Chrome offscreen APIs are not available.");
+      error.name = "ApiUnavailableError";
+      throw error;
+    }
+
+    return new OffscreenPortSession(this.runtime);
+  }
+
   private async sendRequest(
     request: OffscreenRequest,
     signal?: AbortSignal,
@@ -218,88 +358,7 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
 
     await this.ensureDocument();
 
-    return new Promise((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(
-          new DOMException("Chrome Built-in AI translation was cancelled.", "AbortError"),
-        );
-        return;
-      }
-
-      const runtime = this.runtime;
-      if (!runtime) {
-        const error = new Error("Chrome offscreen APIs are not available.");
-        error.name = "ApiUnavailableError";
-        reject(error);
-        return;
-      }
-
-      const port = runtime.connect({ name: CHROME_BUILT_IN_AI_OFFSCREEN_PORT });
-      let settled = false;
-      let abortListener: (() => void) | undefined;
-
-      const settle = (callback: () => void): void => {
-        if (settled) {
-          return;
-        }
-
-        settled = true;
-        if (abortListener) {
-          signal?.removeEventListener("abort", abortListener);
-        }
-        callback();
-      };
-
-      abortListener = () => {
-        settle(() =>
-          {
-            const cancelRequestId = createRequestId();
-            try {
-              port.postMessage({
-                requestId: cancelRequestId,
-                type: "chromeBuiltInAi.cancel",
-                cancelledRequestId: request.requestId,
-              });
-            } catch {
-              // Best effort only; the port may already be disconnected.
-            }
-            port.disconnect();
-            reject(
-              new DOMException("Chrome Built-in AI translation was cancelled.", "AbortError"),
-            );
-          },
-        );
-      };
-      signal?.addEventListener("abort", abortListener, { once: true });
-
-      port.onMessage.addListener((response) => {
-        if (response.requestId !== request.requestId || settled) {
-          return;
-        }
-
-        settle(() => {
-          port.disconnect();
-          if (response.ok) {
-            resolve(response);
-            return;
-          }
-
-          reject(createRemoteError(response.error));
-        });
-      });
-
-      port.onDisconnect.addListener(() => {
-        settle(() =>
-          reject(
-            new Error(
-              runtime.lastError?.message ??
-                "Chrome Built-in AI offscreen document disconnected.",
-            ),
-          ),
-        );
-      });
-
-      port.postMessage(request);
-    });
+    const session = await this.createPortSession();
+    return session.send(request, signal, { disconnectOnSettle: true });
   }
 }

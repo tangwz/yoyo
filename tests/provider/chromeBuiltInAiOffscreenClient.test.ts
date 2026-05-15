@@ -3,14 +3,35 @@ import {
   CHROME_BUILT_IN_AI_OFFSCREEN_PORT,
   ChromeBuiltInAiOffscreenClient,
 } from "@/provider/chromeBuiltInAiOffscreenClient";
+import { createChromeBuiltInAiOffscreenSession } from "../../entrypoints/chrome-built-in-ai-offscreen/main";
 
-type RequestMessage = {
-  requestId: string;
-  type: string;
-  options?: { sourceLanguage: string; targetLanguage: string };
-  translatorId?: string;
-  text?: string;
-};
+type RequestMessage =
+  | {
+      requestId: string;
+      type: "chromeBuiltInAi.availability";
+      options: { sourceLanguage: string; targetLanguage: string };
+    }
+  | {
+      requestId: string;
+      type: "chromeBuiltInAi.create";
+      options: { sourceLanguage: string; targetLanguage: string };
+    }
+  | {
+      requestId: string;
+      type: "chromeBuiltInAi.translate";
+      translatorId: string;
+      text: string;
+    }
+  | {
+      requestId: string;
+      type: "chromeBuiltInAi.destroy";
+      translatorId: string;
+    }
+  | {
+      requestId: string;
+      type: "chromeBuiltInAi.cancel";
+      cancelledRequestId: string;
+    };
 
 type ResponseMessage =
   | {
@@ -143,6 +164,66 @@ describe("ChromeBuiltInAiOffscreenClient", () => {
         translatorId: "translator-1",
       }),
     ]);
+  });
+
+  it("keeps the create port alive so translator sessions can translate before destroy", async () => {
+    const destroy = vi.fn(async () => undefined);
+    const translate = vi.fn(async (text: string) => `translated:${text}`);
+    const session = createChromeBuiltInAiOffscreenSession({
+      createTranslatorId: () => "translator-1",
+      getTranslatorApi: () => ({
+        availability: vi.fn(async () => "available" as const),
+        create: vi.fn(async () => ({ translate, destroy })),
+      }),
+    });
+    let messageListener: ((message: ResponseMessage) => void) | undefined;
+    let disconnectListener: (() => void) | undefined;
+    const port: MockPort = {
+      onMessage: {
+        addListener(listener) {
+          messageListener = listener;
+        },
+      },
+      onDisconnect: {
+        addListener(listener) {
+          disconnectListener = listener;
+        },
+      },
+      postMessage: vi.fn((message) => {
+        void session.handleRequest(message).then((response) => {
+          messageListener?.(response);
+        });
+      }),
+      disconnect: vi.fn(() => {
+        session.disconnect();
+        disconnectListener?.();
+      }),
+    };
+    const runtime = {
+      getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
+      getContexts: vi.fn(async () => [{ contextId: "existing" }]),
+      connect: vi.fn(() => port),
+    };
+    const client = new ChromeBuiltInAiOffscreenClient({
+      runtime,
+      offscreen: {
+        createDocument: vi.fn(async () => undefined),
+      },
+    });
+
+    const translator = await client.create({
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+    expect(destroy).not.toHaveBeenCalled();
+
+    await expect(translator.translate("Hello")).resolves.toBe("translated:Hello");
+    expect(translate).toHaveBeenCalledWith("Hello", expect.objectContaining({}));
+    expect(destroy).not.toHaveBeenCalled();
+
+    await translator.destroy?.();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(runtime.connect).toHaveBeenCalledTimes(1);
   });
 
   it("rethrows offscreen errors with the remote error name", async () => {
