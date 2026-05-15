@@ -1,4 +1,15 @@
-import type { ProviderPreset } from "@/provider/types";
+import type {
+  ChromeBuiltInAiProviderProfile,
+  ProviderPreset,
+} from "@/provider/types";
+
+export const chromeBuiltInAiProviderId = "chrome-built-in-ai";
+
+export const chromeBuiltInAiProviderProfile: ChromeBuiltInAiProviderProfile = {
+  id: chromeBuiltInAiProviderId,
+  displayName: "Chrome Built-in AI",
+  type: "chrome-built-in-ai",
+};
 
 export const providerPresets: ProviderPreset[] = [
   {

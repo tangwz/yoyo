@@ -7,20 +7,26 @@ import {
   providerErrorMessageKeys,
   type OptionsMessageKey,
 } from "@/i18n/optionsMessages";
+import { getChromeBuiltInAiBrowserSupport } from "@/provider/browserSupport";
 import { ProviderError } from "@/provider/errors";
 import { normalizeModelNameForProfile } from "@/provider/modelNames";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
-import { defaultProviderPreset, providerPresets } from "@/provider/presets";
+import {
+  chromeBuiltInAiProviderId,
+  chromeBuiltInAiProviderProfile,
+  defaultProviderPreset,
+  providerPresets,
+} from "@/provider/presets";
 import { selectStoredActiveProviderId } from "@/provider/readiness";
 import {
   isOpenAiCompatibleProviderProfile,
-  type OpenAiCompatibleProviderProfile,
   type ProviderProfile,
 } from "@/provider/types";
 import { defaultUiPreferences, type UiPreferences } from "@/storage/defaults";
 import { createStorageRepositories } from "@/storage/repositories";
 import type { TranslationMode } from "@/translation/types";
 
+const selectedProviderType = ref<ProviderProfile["type"]>("openai-compatible");
 const selectedPresetId = ref(defaultProviderPreset.id);
 const displayName = ref(defaultProviderPreset.name);
 const baseUrl = ref(defaultProviderPreset.defaultBaseUrl);
@@ -48,6 +54,8 @@ const isFirstRunProviderLanding =
   shouldLandOnProvider && routeParams.get("source") === "first-run";
 
 const messages = computed(() => optionsMessages[uiLanguage.value]);
+const chromeBuiltInAiSupport = computed(() => getChromeBuiltInAiBrowserSupport());
+const canSelectChromeBuiltInAi = computed(() => chromeBuiltInAiSupport.value.supported);
 
 const providerPresetOptions = computed(() =>
   providerPresets.map((preset) => ({
@@ -121,7 +129,11 @@ function normalizePositiveInteger(value: unknown, defaultValue: number): number 
   return Math.trunc(parsed);
 }
 
-function buildProviderProfile(): OpenAiCompatibleProviderProfile {
+function buildProviderProfile(): ProviderProfile {
+  if (selectedProviderType.value === "chrome-built-in-ai") {
+    return chromeBuiltInAiProviderProfile;
+  }
+
   const profileId = selectedPresetId.value;
   const modelContext = {
     id: profileId,
@@ -159,6 +171,16 @@ function resetTestFeedback() {
 }
 
 watch(providerProfileSignature, resetTestFeedback);
+
+watch(selectedProviderType, () => {
+  resetTestFeedback();
+  if (
+    selectedProviderType.value === "chrome-built-in-ai" &&
+    !canSelectChromeBuiltInAi.value
+  ) {
+    selectedProviderType.value = "openai-compatible";
+  }
+});
 
 function getProviderTestErrorMessageKey(error: unknown): OptionsMessageKey {
   if (error instanceof ProviderError) {
@@ -198,9 +220,12 @@ async function loadUiPreferences() {
 
 function applyProviderProfile(profile: ProviderProfile) {
   if (!isOpenAiCompatibleProviderProfile(profile)) {
+    selectedProviderType.value = "chrome-built-in-ai";
+    displayName.value = profile.displayName;
     return;
   }
 
+  selectedProviderType.value = "openai-compatible";
   const presetId = profile.presetId ?? profile.id;
   selectedPresetId.value = providerPresets.some((item) => item.id === presetId)
     ? presetId
@@ -314,6 +339,9 @@ async function testConnection() {
   const requestId = testRequestId.value + 1;
   testRequestId.value = requestId;
   const profile = buildProviderProfile();
+  if (!isOpenAiCompatibleProviderProfile(profile)) {
+    return;
+  }
   const testedProfileSignature = getProviderProfileSignature(profile);
 
   isTestInFlight.value = true;
@@ -398,7 +426,40 @@ async function testConnection() {
             {{ t("provider.firstRunNote") }}
           </p>
 
-          <div class="settings-grid">
+          <fieldset class="provider-type-group">
+            <legend>{{ t("providerType.legend") }}</legend>
+            <label>
+              <input
+                v-model="selectedProviderType"
+                type="radio"
+                value="openai-compatible"
+              >
+              {{ t("providerType.openAiCompatible") }}
+            </label>
+            <label>
+              <input
+                v-model="selectedProviderType"
+                type="radio"
+                :value="chromeBuiltInAiProviderId"
+                :disabled="!canSelectChromeBuiltInAi"
+              >
+              {{ t("providerType.chromeBuiltInAi") }}
+            </label>
+            <p class="field-hint">
+              {{ t("providerType.chromeBuiltInAiRequirement") }}
+            </p>
+            <p
+              v-if="!canSelectChromeBuiltInAi"
+              class="field-error"
+            >
+              {{ t("providerType.chromeBuiltInAiUnavailable") }}
+            </p>
+          </fieldset>
+
+          <div
+            v-if="selectedProviderType === 'openai-compatible'"
+            class="settings-grid"
+          >
             <label class="field">
               <span>{{ t("field.preset") }}</span>
               <select
@@ -465,6 +526,15 @@ async function testConnection() {
             </label>
           </div>
 
+          <section
+            v-else
+            class="provider-local-card"
+          >
+            <h3>{{ t("providerLocal.title") }}</h3>
+            <p>{{ t("providerLocal.description") }}</p>
+            <p>{{ t("providerLocal.requirement") }}</p>
+          </section>
+
           <div class="button-row">
             <button
               class="primary-button"
@@ -474,6 +544,7 @@ async function testConnection() {
               {{ t("button.saveProvider") }}
             </button>
             <button
+              v-if="selectedProviderType === 'openai-compatible'"
               class="secondary-button"
               type="button"
               :disabled="isTestInFlight"
@@ -737,6 +808,72 @@ async function testConnection() {
   margin: 0 0 16px;
   font-size: 18px;
   line-height: 1.3;
+}
+
+.provider-type-group {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  margin: 0 0 18px;
+  border: 1px solid var(--yoyo-border);
+  border-radius: 10px;
+}
+
+.provider-type-group legend {
+  padding: 0 6px;
+  color: var(--yoyo-text-soft);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.provider-type-group label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--yoyo-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.provider-type-group input {
+  width: 16px;
+  height: 16px;
+}
+
+.field-hint,
+.field-error {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.field-hint {
+  color: var(--yoyo-muted);
+}
+
+.field-error {
+  color: #b3261e;
+}
+
+.provider-local-card {
+  padding: 18px;
+  color: var(--yoyo-text-soft);
+  background: var(--yoyo-surface-muted);
+  border: 1px solid var(--yoyo-border);
+  border-radius: 12px;
+}
+
+.provider-local-card h3 {
+  margin: 0 0 8px;
+  color: var(--yoyo-text);
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.provider-local-card p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .settings-grid {
