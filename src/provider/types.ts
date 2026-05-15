@@ -1,9 +1,9 @@
-export type ProviderType = "openai-compatible";
+export type ProviderType = "openai-compatible" | "chrome-built-in-ai";
 
 export type ProviderPreset = {
   id: string;
   name: string;
-  type: ProviderType;
+  type: "openai-compatible";
   defaultBaseUrl: string;
   defaultTextModel?: string;
   defaultVisionModel?: string;
@@ -15,11 +15,11 @@ export type ProviderRequestParams = {
   timeoutMs?: number;
 };
 
-export type ProviderProfile = {
+export type OpenAiCompatibleProviderProfile = {
   id: string;
   displayName: string;
   presetId?: string;
-  type: ProviderType;
+  type: "openai-compatible";
   baseURL: string;
   apiKey: string;
   textModel: string;
@@ -27,8 +27,18 @@ export type ProviderProfile = {
   requestParams?: ProviderRequestParams;
 };
 
+export type ChromeBuiltInAiProviderProfile = {
+  id: "chrome-built-in-ai";
+  displayName: string;
+  type: "chrome-built-in-ai";
+};
+
+export type ProviderProfile =
+  | OpenAiCompatibleProviderProfile
+  | ChromeBuiltInAiProviderProfile;
+
 export type GenerateTextRequest = {
-  profile: ProviderProfile;
+  profile: OpenAiCompatibleProviderProfile;
   prompt: string;
   abortSignal?: AbortSignal;
 };
