@@ -77,6 +77,14 @@ function createOrchestrator(
   };
 }
 
+async function* streamBatchResponses(
+  responses: ReadonlyArray<{ items: Array<{ segmentId: string; translatedText: string }> }>,
+): AsyncGenerator<{ items: Array<{ segmentId: string; translatedText: string }> }> {
+  for (const response of responses) {
+    await Promise.resolve();
+    yield response;
+  }
+}
 
 describe("TranslationTaskOrchestrator", () => {
   it("creates a task before collecting segments and completes translation", async () => {
@@ -1771,6 +1779,59 @@ describe("TranslationTaskOrchestrator", () => {
       total: 3,
       translated: 0,
       failed: 3,
+    });
+  });
+
+  it("applies streamed translation items progressively through translation providers", async () => {
+    const translateBatch = vi.fn();
+    const streamBatch = vi.fn(() =>
+      streamBatchResponses([
+        { items: [{ segmentId: "segment-1", translatedText: "一。" }] },
+        { items: [{ segmentId: "segment-2", translatedText: "二。" }] },
+      ]),
+    );
+    const { orchestrator, sendToContent } = createOrchestrator({
+      getTranslationProvider: () => ({
+        translateText: vi.fn(),
+        translateBatch,
+        streamBatch,
+      }),
+    });
+    const applyEvents: string[] = [];
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({ id: "segment-1", sourceText: "One." }),
+            segment({ id: "segment-2", order: 2, sourceText: "Two.", textHash: "hash-2" }),
+          ],
+        };
+      }
+
+      if (message.type !== "applyTranslations") {
+        throw new Error(`Unexpected content message: ${message.type}`);
+      }
+
+      applyEvents.push(message.items.map((item) => item.segmentId).join(","));
+      return { type: "contentActionResult", success: true };
+    });
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    expect(streamBatch).toHaveBeenCalledTimes(1);
+    expect(translateBatch).not.toHaveBeenCalled();
+    expect(applyEvents).toEqual(["segment-1", "segment-2"]);
+    expect(progress).toMatchObject({
+      state: "completed",
+      translated: 2,
+      failed: 0,
     });
   });
 

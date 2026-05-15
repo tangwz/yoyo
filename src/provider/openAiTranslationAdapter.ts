@@ -2,12 +2,18 @@ import type { TranslationProvider } from "@/provider/translationProvider";
 import type {
   GenerateTextRequest,
   GenerateTextResponse,
+  StreamTextChunk,
+  StreamTextRequest,
 } from "@/provider/types";
-import { parseTranslationBatchResult } from "@/translation/jsonResult";
-import { buildTranslationPrompt } from "@/translation/prompt";
+import {
+  createStreamingTranslationResultParser,
+  parseTranslationBatchResult,
+} from "@/translation/jsonResult";
+import { buildStreamingTranslationPrompt, buildTranslationPrompt } from "@/translation/prompt";
 
 type OpenAiTextProvider = {
   generateText(request: GenerateTextRequest): Promise<GenerateTextResponse>;
+  streamText?(request: StreamTextRequest): AsyncGenerator<StreamTextChunk>;
 };
 
 export class OpenAiTranslationAdapter implements TranslationProvider {
@@ -62,5 +68,39 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
         request.segments.map((segment) => segment.id),
       ).items,
     };
+  }
+
+  async *streamBatch(request: Parameters<NonNullable<TranslationProvider["streamBatch"]>>[0]) {
+    if (request.profile.type !== "openai-compatible") {
+      throw new Error("OpenAI translation adapter requires an OpenAI-compatible profile.");
+    }
+
+    if (!this.provider.streamText) {
+      return;
+    }
+
+    const parser = createStreamingTranslationResultParser(
+      request.segments.map((segment) => segment.id),
+    );
+
+    for await (const chunk of this.provider.streamText({
+      profile: request.profile,
+      prompt: buildStreamingTranslationPrompt({
+        sourceLanguage: request.sourceLanguage,
+        targetLanguage: request.targetLanguage,
+        segments: request.segments,
+      }),
+      abortSignal: request.abortSignal,
+    })) {
+      const items = parser.push(chunk.text);
+      if (items.length > 0) {
+        yield { items };
+      }
+    }
+
+    const remainingItems = parser.finish().items;
+    if (remainingItems.length > 0) {
+      yield { items: remainingItems };
+    }
   }
 }

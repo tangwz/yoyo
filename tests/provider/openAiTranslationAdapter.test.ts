@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { OpenAiTranslationAdapter } from "@/provider/openAiTranslationAdapter";
-import type { OpenAiCompatibleProviderProfile, ProviderProfile } from "@/provider/types";
+import type {
+  OpenAiCompatibleProviderProfile,
+  ProviderProfile,
+  StreamTextRequest,
+} from "@/provider/types";
 import type { PageSegment } from "@/translation/types";
 
 function profile(): OpenAiCompatibleProviderProfile {
@@ -32,6 +36,13 @@ function segment(id: string, sourceText: string): PageSegment {
     textHash: `hash-${id}`,
     priority: "viewport",
   };
+}
+
+async function* streamTextChunks(chunks: readonly string[]): AsyncGenerator<{ text: string }> {
+  for (const text of chunks) {
+    await Promise.resolve();
+    yield { text };
+  }
 }
 
 describe("OpenAiTranslationAdapter", () => {
@@ -91,6 +102,42 @@ describe("OpenAiTranslationAdapter", () => {
     expect(generateText).toHaveBeenCalledTimes(1);
     expect(generateText.mock.calls[0]?.[0].abortSignal).toBe(abortController.signal);
     expect(generateText.mock.calls[0]?.[0].prompt).toContain("Hello.");
+  });
+
+  it("streams page segment translations through the OpenAI-compatible provider", async () => {
+    const abortController = new AbortController();
+    const generateText = vi.fn();
+    const streamText = vi.fn<(request: StreamTextRequest) => AsyncGenerator<{ text: string }>>(
+      () =>
+        streamTextChunks([
+          '{"id":"segment-1","text":"你好。"}\n',
+          '{"id":"segment-2","text":"早上好。"}\n',
+        ]),
+    );
+    const adapter = new OpenAiTranslationAdapter({ generateText, streamText });
+    const responses = [];
+
+    for await (const response of adapter.streamBatch({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      segments: [
+        segment("segment-1", "Hello."),
+        segment("segment-2", "Good morning."),
+      ],
+      abortSignal: abortController.signal,
+    })) {
+      responses.push(response);
+    }
+
+    expect(responses).toEqual([
+      { items: [{ segmentId: "segment-1", translatedText: "你好。" }] },
+      { items: [{ segmentId: "segment-2", translatedText: "早上好。" }] },
+    ]);
+    expect(streamText).toHaveBeenCalledTimes(1);
+    expect(streamText.mock.calls[0]?.[0].prompt).toContain("Target language: zh-CN");
+    expect(streamText.mock.calls[0]?.[0].abortSignal).toBe(abortController.signal);
+    expect(generateText).not.toHaveBeenCalled();
   });
 
   it("rejects non-OpenAI-compatible profiles for batch translation", async () => {

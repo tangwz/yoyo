@@ -580,7 +580,81 @@ export class TranslationTaskOrchestrator {
   private async requestAndApplyBatch(
     input: TranslationBatchInput,
   ): Promise<TranslationBatchResult> {
+    const streamingResult = await this.requestAndApplyStreamingBatch(input);
+    if (streamingResult) {
+      return streamingResult;
+    }
+
     return this.requestAndApplyBufferedBatch(input);
+  }
+
+  private async requestAndApplyStreamingBatch(
+    input: TranslationBatchInput,
+  ): Promise<TranslationBatchResult | undefined> {
+    const provider = this.dependencies.getTranslationProvider(input.profile);
+    if (!provider.streamBatch) {
+      return undefined;
+    }
+
+    const appliedRepresentativeIds = new Set<string>();
+    let sawValidItem = false;
+    let acquiredProviderSlot = false;
+
+    try {
+      if (!(await this.acquireProviderRequestSlot(input.task))) {
+        return { missingSegments: [] };
+      }
+      acquiredProviderSlot = true;
+
+      for await (const response of provider.streamBatch({
+        profile: input.profile,
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        segments: input.segments,
+        abortSignal: input.task.controller.signal,
+      })) {
+        if (this.isTaskCancelled(input.task)) {
+          return { missingSegments: [] };
+        }
+
+        for (const item of this.filterBatchItems(response.items, input.segments)) {
+          sawValidItem = true;
+          if (await this.applyAndCacheRepresentativeItem(input, item)) {
+            appliedRepresentativeIds.add(item.segmentId);
+          }
+        }
+      }
+
+      if (!sawValidItem) {
+        return undefined;
+      }
+
+      return {
+        missingSegments: input.segments.filter(
+          (segment) => !appliedRepresentativeIds.has(segment.id),
+        ),
+      };
+    } catch (error) {
+      if (this.isTaskCancelled(input.task)) {
+        return { missingSegments: [] };
+      }
+
+      if (!sawValidItem) {
+        await this.handleBatchError(input.task, error);
+        return undefined;
+      }
+
+      return {
+        missingSegments: input.segments.filter(
+          (segment) => !appliedRepresentativeIds.has(segment.id),
+        ),
+        error,
+      };
+    } finally {
+      if (acquiredProviderSlot) {
+        this.releaseProviderRequestSlot(input.task);
+      }
+    }
   }
 
   private async requestAndApplyBufferedBatch(
@@ -608,8 +682,7 @@ export class TranslationTaskOrchestrator {
       return { missingSegments: [] };
     }
 
-    const expectedSegmentIds = new Set(input.segments.map((segment) => segment.id));
-    const validItems = response.items.filter((item) => expectedSegmentIds.has(item.segmentId));
+    const validItems = this.filterBatchItems(response.items, input.segments);
 
     if (validItems.length > 0) {
       const fanOutItems = validItems.flatMap((item) =>
@@ -626,6 +699,38 @@ export class TranslationTaskOrchestrator {
     return {
       missingSegments: input.segments.filter((segment) => !translatedIds.has(segment.id)),
     };
+  }
+
+  private filterBatchItems(
+    items: TranslationResultItem[],
+    segments: PageSegment[],
+  ): TranslationResultItem[] {
+    const expectedSegmentIds = new Set(segments.map((segment) => segment.id));
+    return items.filter((item) => expectedSegmentIds.has(item.segmentId));
+  }
+
+  private async applyAndCacheRepresentativeItem(
+    input: TranslationBatchInput,
+    item: TranslationResultItem,
+  ): Promise<boolean> {
+    const group = input.fanOutGroups.get(item.segmentId) ?? [];
+    const fanOutItems = this.fanOutTranslationItem(item, input.fanOutGroups);
+    const appliedItems = await this.applyTranslations(input.task, fanOutItems, {
+      countFailures: false,
+    });
+    if (appliedItems.length === 0) {
+      return false;
+    }
+
+    const appliedIds = new Set(appliedItems.map((appliedItem) => appliedItem.segmentId));
+    const pendingGroup = group.filter((segment) => !appliedIds.has(segment.id));
+    if (pendingGroup.length > 0) {
+      input.fanOutGroups.set(item.segmentId, pendingGroup);
+      return false;
+    }
+
+    await this.cacheAppliedGroups(input, [item], appliedItems);
+    return group.length > 0;
   }
 
   private fanOutTranslationItem(

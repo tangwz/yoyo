@@ -28,4 +28,5 @@ export type TranslateBatchResponse = {
 export type TranslationProvider = {
   translateText(request: TranslateTextRequest): Promise<TranslateTextResponse>;
   translateBatch(request: TranslateBatchRequest): Promise<TranslateBatchResponse>;
+  streamBatch?(request: TranslateBatchRequest): AsyncGenerator<TranslateBatchResponse>;
 };
