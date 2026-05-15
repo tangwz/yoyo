@@ -282,12 +282,17 @@ describe("TranslationTaskOrchestrator", () => {
     >(async () => ({
       items: [{ segmentId: "segment-1", translatedText: "你好，世界。" }],
     }));
-    const getTranslationProvider = vi.fn((_profile: ProviderProfile) => ({
+    const activeProfile = chromeBuiltInProfile();
+    const getTranslationProvider = vi.fn((profile: ProviderProfile) => {
+      expect(profile).toBe(activeProfile);
+
+      return {
       translateText: vi.fn(),
       translateBatch,
-    }));
+      };
+    });
     const { orchestrator, sendToContent } = createOrchestrator({
-      getActiveProfile: async () => chromeBuiltInProfile(),
+      getActiveProfile: async () => activeProfile,
       getTranslationProvider,
     });
 
