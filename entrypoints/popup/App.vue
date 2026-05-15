@@ -83,6 +83,7 @@ function applyProgress(response: BackgroundResponse): void {
         configured: false,
         readiness: "missingProvider",
         providerLabel: "未配置翻译服务",
+        providerMode: "remote",
       });
       return;
     }

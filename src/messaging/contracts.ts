@@ -11,6 +11,8 @@ export type OptionsSection = "provider";
 
 export type OptionsOpenSource = "first-run" | "popup" | "manual";
 
+export type ProviderMode = "remote" | "local-only";
+
 export type PageTranslationEstimate = {
   canTranslate: boolean;
   estimatedSegments: number;
@@ -101,6 +103,7 @@ export type BackgroundResponse =
       configured: boolean;
       readiness: ProviderReadiness;
       providerLabel: string;
+      providerMode: ProviderMode;
     }
   | { type: "backgroundActionResult"; success: true }
   | { type: "backgroundError"; message: string };

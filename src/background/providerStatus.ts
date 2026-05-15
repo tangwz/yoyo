@@ -52,5 +52,9 @@ export function buildProviderStatusResponse(
     configured: readiness.readiness === "ready",
     readiness: readiness.readiness,
     providerLabel: formatProviderLabel(readiness.profile),
+    providerMode:
+      readiness.readiness === "ready" && readiness.profile.type === "chrome-built-in-ai"
+        ? "local-only"
+        : "remote",
   };
 }

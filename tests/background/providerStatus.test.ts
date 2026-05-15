@@ -31,6 +31,7 @@ describe("provider status", () => {
       configured: false,
       readiness: "missingProvider",
       providerLabel: "未配置翻译服务",
+      providerMode: "remote",
     });
   });
 
@@ -82,6 +83,7 @@ describe("provider status", () => {
       configured: true,
       readiness: "ready",
       providerLabel: "Work Provider / api.example.com",
+      providerMode: "remote",
     });
   });
 
@@ -94,6 +96,7 @@ describe("provider status", () => {
       configured: false,
       readiness: "missingTextModel",
       providerLabel: "未配置翻译服务",
+      providerMode: "remote",
     });
   });
 });

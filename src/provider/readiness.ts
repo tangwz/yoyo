@@ -1,6 +1,9 @@
 import {
+  getChromeBuiltInAiBrowserSupport,
+  type ChromeBuiltInAiBrowserSupport,
+} from "@/provider/browserSupport";
+import {
   isOpenAiCompatibleProviderProfile,
-  type OpenAiCompatibleProviderProfile,
   type ProviderProfile,
 } from "@/provider/types";
 
@@ -10,14 +13,19 @@ export type ProviderReadiness =
   | "missingApiKey"
   | "missingBaseURL"
   | "missingTextModel"
-  | "invalidActiveProvider";
+  | "invalidActiveProvider"
+  | "browserUnsupported";
 
 type ProviderNotReady = Exclude<ProviderReadiness, "ready">;
+
+export type ProviderReadinessContext = {
+  chromeBuiltInAiBrowserSupport?: ChromeBuiltInAiBrowserSupport;
+};
 
 export type ProviderReadinessResult =
   | {
       readiness: "ready";
-      profile: OpenAiCompatibleProviderProfile;
+      profile: ProviderProfile;
     }
   | {
       readiness: ProviderNotReady;
@@ -29,11 +37,21 @@ function hasText(value: string | undefined): boolean {
 }
 
 function isCompleteProfile(profile: ProviderProfile): boolean {
+  if (profile.type === "chrome-built-in-ai") {
+    return true;
+  }
+
   if (!isOpenAiCompatibleProviderProfile(profile)) {
     return false;
   }
 
   return hasText(profile.apiKey) && hasText(profile.baseURL) && hasText(profile.textModel);
+}
+
+function isChromeBuiltInAiSupported(context: ProviderReadinessContext): boolean {
+  return (
+    context.chromeBuiltInAiBrowserSupport ?? getChromeBuiltInAiBrowserSupport()
+  ).supported;
 }
 
 export function selectStoredActiveProviderId(
@@ -50,6 +68,7 @@ export function selectStoredActiveProviderId(
 export function evaluateProviderReadiness(
   profiles: ProviderProfile[],
   activeProviderId: string | undefined,
+  context: ProviderReadinessContext = {},
 ): ProviderReadinessResult {
   if (!hasText(activeProviderId)) {
     return { readiness: "missingProvider" };
@@ -58,6 +77,12 @@ export function evaluateProviderReadiness(
   const profile = profiles.find((candidate) => candidate.id === activeProviderId);
   if (!profile) {
     return { readiness: "invalidActiveProvider" };
+  }
+
+  if (profile.type === "chrome-built-in-ai") {
+    return isChromeBuiltInAiSupported(context)
+      ? { readiness: "ready", profile }
+      : { readiness: "browserUnsupported" };
   }
 
   if (!isOpenAiCompatibleProviderProfile(profile)) {
@@ -82,8 +107,9 @@ export function evaluateProviderReadiness(
 export function resolveReadyProviderProfile(
   profiles: ProviderProfile[],
   activeProviderId: string | undefined,
+  context: ProviderReadinessContext = {},
 ): ProviderProfile | undefined {
-  const result = evaluateProviderReadiness(profiles, activeProviderId);
+  const result = evaluateProviderReadiness(profiles, activeProviderId, context);
   return result.readiness === "ready" ? result.profile : undefined;
 }
 
@@ -92,8 +118,8 @@ export function formatProviderLabel(profile: ProviderProfile | undefined): strin
     return "未配置翻译服务";
   }
 
-  if (!isOpenAiCompatibleProviderProfile(profile)) {
-    return profile.displayName;
+  if (profile.type === "chrome-built-in-ai") {
+    return `${profile.displayName} / Local only`;
   }
 
   try {
