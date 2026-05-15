@@ -5,24 +5,32 @@ import type {
   TranslateTextRequest,
 } from "@/provider/translationProvider";
 
-type TranslatorAvailability =
+export type TranslatorAvailability =
   | "available"
   | "downloadable"
   | "downloading"
   | "unavailable";
 
-type TranslatorCreateOptions = {
+export type TranslatorLanguageOptions = {
   sourceLanguage: string;
   targetLanguage: string;
 };
 
-type TranslatorInstance = {
-  translate(text: string): Promise<string>;
+export type TranslatorCreateOptions = TranslatorLanguageOptions & {
+  signal?: AbortSignal;
+};
+
+export type TranslatorTranslateOptions = {
+  signal?: AbortSignal;
+};
+
+export type TranslatorInstance = {
+  translate(text: string, options?: TranslatorTranslateOptions): Promise<string>;
   destroy?: () => void;
 };
 
-type TranslatorApi = {
-  availability(options: TranslatorCreateOptions): Promise<TranslatorAvailability>;
+export type TranslatorApi = {
+  availability(options: TranslatorLanguageOptions): Promise<TranslatorAvailability>;
   create(options: TranslatorCreateOptions): Promise<TranslatorInstance>;
 };
 
@@ -43,6 +51,57 @@ function assertChromeBuiltInProfile(profile: TranslateTextRequest["profile"]): v
   }
 }
 
+function assertExplicitSourceLanguage(sourceLanguage: string): void {
+  if (sourceLanguage === "auto") {
+    throw new LocalAiError(
+      "languagePairUnavailable",
+      "Chrome Built-in AI requires an explicit source language.",
+    );
+  }
+}
+
+function getErrorName(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("name" in error)) {
+    return undefined;
+  }
+
+  const name = (error as { name?: unknown }).name;
+  return typeof name === "string" ? name : undefined;
+}
+
+function mapTranslatorError(error: unknown, aborted: boolean): LocalAiError {
+  if (aborted || getErrorName(error) === "AbortError") {
+    return new LocalAiError(
+      "aborted",
+      "Chrome Built-in AI translation was cancelled.",
+      error,
+    );
+  }
+
+  switch (getErrorName(error)) {
+    case "NotSupportedError":
+      return new LocalAiError(
+        "languagePairUnavailable",
+        "Chrome Built-in AI is not available for this language pair.",
+        error,
+      );
+    case "QuotaExceededError":
+      return new LocalAiError(
+        "textTooLong",
+        "Chrome Built-in AI cannot translate text of this size.",
+        error,
+      );
+    case "NetworkError":
+      return new LocalAiError(
+        "modelDownloadFailed",
+        "Chrome could not download the local translation model.",
+        error,
+      );
+    default:
+      return new LocalAiError("unknown", "Chrome Built-in AI translation failed.", error);
+  }
+}
+
 export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
   constructor(
     private readonly dependencies: ChromeBuiltInTranslatorProviderDependencies = {},
@@ -50,7 +109,55 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
 
   async translateText(request: TranslateTextRequest) {
     assertChromeBuiltInProfile(request.profile);
-    if (request.abortSignal?.aborted) {
+    const translator = await this.createTranslator({
+      sourceLanguage: request.sourceLanguage,
+      targetLanguage: request.targetLanguage,
+      abortSignal: request.abortSignal,
+    });
+
+    try {
+      return {
+        translatedText: await translator.translate(request.text, {
+          signal: request.abortSignal,
+        }),
+      };
+    } catch (error) {
+      throw mapTranslatorError(error, request.abortSignal?.aborted ?? false);
+    } finally {
+      translator.destroy?.();
+    }
+  }
+
+  async translateBatch(request: TranslateBatchRequest) {
+    assertChromeBuiltInProfile(request.profile);
+    const translator = await this.createTranslator({
+      sourceLanguage: request.sourceLanguage,
+      targetLanguage: request.targetLanguage,
+      abortSignal: request.abortSignal,
+    });
+
+    try {
+      const items = [];
+      for (const segment of request.segments) {
+        items.push({
+          segmentId: segment.id,
+          translatedText: await translator.translate(segment.sourceText, {
+            signal: request.abortSignal,
+          }),
+        });
+      }
+
+      return { items };
+    } catch (error) {
+      throw mapTranslatorError(error, request.abortSignal?.aborted ?? false);
+    } finally {
+      translator.destroy?.();
+    }
+  }
+
+  private async createTranslator(options: TranslatorLanguageOptions & { abortSignal?: AbortSignal }) {
+    assertExplicitSourceLanguage(options.sourceLanguage);
+    if (options.abortSignal?.aborted) {
       throw new LocalAiError("aborted", "Chrome Built-in AI translation was cancelled.");
     }
 
@@ -64,23 +171,18 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
       );
     }
 
-    const options = {
-      sourceLanguage: request.sourceLanguage,
-      targetLanguage: request.targetLanguage,
+    const languageOptions = {
+      sourceLanguage: options.sourceLanguage,
+      targetLanguage: options.targetLanguage,
     };
-    let availability: Awaited<ReturnType<typeof translatorApi.availability>>;
+
+    let availability: TranslatorAvailability;
     try {
-      availability = await translatorApi.availability(options);
+      availability = await translatorApi.availability(languageOptions);
     } catch (error) {
-      if (request.abortSignal?.aborted) {
-        throw new LocalAiError(
-          "aborted",
-          "Chrome Built-in AI translation was cancelled.",
-          error,
-        );
-      }
-      throw new LocalAiError("unknown", "Chrome Built-in AI translation failed.", error);
+      throw mapTranslatorError(error, options.abortSignal?.aborted ?? false);
     }
+
     if (availability === "unavailable") {
       throw new LocalAiError(
         "languagePairUnavailable",
@@ -94,55 +196,13 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
       );
     }
 
-    let translator: Awaited<ReturnType<typeof translatorApi.create>>;
     try {
-      translator = await translatorApi.create(options);
-    } catch (error) {
-      if (request.abortSignal?.aborted) {
-        throw new LocalAiError(
-          "aborted",
-          "Chrome Built-in AI translation was cancelled.",
-          error,
-        );
-      }
-      throw new LocalAiError("unknown", "Chrome Built-in AI translation failed.", error);
-    }
-    try {
-      return {
-        translatedText: await translator.translate(request.text),
-      };
-    } catch (error) {
-      if (request.abortSignal?.aborted) {
-        throw new LocalAiError(
-          "aborted",
-          "Chrome Built-in AI translation was cancelled.",
-          error,
-        );
-      }
-      throw new LocalAiError("unknown", "Chrome Built-in AI translation failed.", error);
-    } finally {
-      translator.destroy?.();
-    }
-  }
-
-  async translateBatch(request: TranslateBatchRequest) {
-    assertChromeBuiltInProfile(request.profile);
-
-    const items = [];
-    for (const segment of request.segments) {
-      const response = await this.translateText({
-        profile: request.profile,
-        sourceLanguage: request.sourceLanguage,
-        targetLanguage: request.targetLanguage,
-        text: segment.sourceText,
-        abortSignal: request.abortSignal,
+      return await translatorApi.create({
+        ...languageOptions,
+        signal: options.abortSignal,
       });
-      items.push({
-        segmentId: segment.id,
-        translatedText: response.translatedText,
-      });
+    } catch (error) {
+      throw mapTranslatorError(error, options.abortSignal?.aborted ?? false);
     }
-
-    return { items };
   }
 }

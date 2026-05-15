@@ -1,4 +1,3 @@
-import type { ChromeBuiltInTranslatorProvider } from "@/provider/chromeBuiltInAi";
 import { OpenAiTranslationAdapter } from "@/provider/openAiTranslationAdapter";
 import type { TranslationProvider } from "@/provider/translationProvider";
 import type {
@@ -16,7 +15,7 @@ type OpenAiProvider = {
 
 type TranslationProviderResolverDependencies = {
   openAiProvider: OpenAiProvider;
-  chromeBuiltInTranslatorProvider: ChromeBuiltInTranslatorProvider;
+  chromeBuiltInTranslatorProvider: TranslationProvider;
 };
 
 export class TranslationProviderResolver {

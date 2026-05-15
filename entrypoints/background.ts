@@ -15,6 +15,7 @@ import type {
 } from "@/messaging/contracts";
 import { addRuntimeMessageListener, sendTabMessage } from "@/messaging/runtime";
 import { ChromeBuiltInTranslatorProvider } from "@/provider/chromeBuiltInAi";
+import { ChromeBuiltInAiOffscreenClient } from "@/provider/chromeBuiltInAiOffscreenClient";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
 import { TranslationProviderResolver } from "@/provider/resolver";
 import type { ProviderProfile } from "@/provider/types";
@@ -34,9 +35,12 @@ function createErrorResponse(error: unknown): BackgroundResponse {
 export default defineBackground(() => {
   const storage = createStorageRepositories();
   const provider = new OpenAiCompatibleProvider();
+  const chromeBuiltInAiOffscreenClient = new ChromeBuiltInAiOffscreenClient();
   const translationProviderResolver = new TranslationProviderResolver({
     openAiProvider: provider,
-    chromeBuiltInTranslatorProvider: new ChromeBuiltInTranslatorProvider(),
+    chromeBuiltInTranslatorProvider: new ChromeBuiltInTranslatorProvider({
+      getTranslatorApi: () => chromeBuiltInAiOffscreenClient,
+    }),
   });
 
   async function listProfiles(): Promise<ProviderProfile[]> {
