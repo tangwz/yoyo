@@ -5,9 +5,11 @@ import {
   selectReadyProviderProfile,
   selectStoredActiveProviderId,
 } from "@/background/providerStatus";
-import type { ProviderProfile } from "@/provider/types";
+import type { OpenAiCompatibleProviderProfile } from "@/provider/types";
 
-function profile(overrides: Partial<ProviderProfile> = {}): ProviderProfile {
+function profile(
+  overrides: Partial<OpenAiCompatibleProviderProfile> = {},
+): OpenAiCompatibleProviderProfile {
   return {
     id: "provider-1",
     displayName: "Work Provider",

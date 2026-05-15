@@ -37,6 +37,12 @@ export type ProviderProfile =
   | OpenAiCompatibleProviderProfile
   | ChromeBuiltInAiProviderProfile;
 
+export function isOpenAiCompatibleProviderProfile(
+  profile: ProviderProfile,
+): profile is OpenAiCompatibleProviderProfile {
+  return profile.type === "openai-compatible";
+}
+
 export type GenerateTextRequest = {
   profile: OpenAiCompatibleProviderProfile;
   prompt: string;

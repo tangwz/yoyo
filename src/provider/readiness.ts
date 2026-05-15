@@ -1,4 +1,8 @@
-import type { ProviderProfile } from "@/provider/types";
+import {
+  isOpenAiCompatibleProviderProfile,
+  type OpenAiCompatibleProviderProfile,
+  type ProviderProfile,
+} from "@/provider/types";
 
 export type ProviderReadiness =
   | "ready"
@@ -13,7 +17,7 @@ type ProviderNotReady = Exclude<ProviderReadiness, "ready">;
 export type ProviderReadinessResult =
   | {
       readiness: "ready";
-      profile: ProviderProfile;
+      profile: OpenAiCompatibleProviderProfile;
     }
   | {
       readiness: ProviderNotReady;
@@ -25,6 +29,10 @@ function hasText(value: string | undefined): boolean {
 }
 
 function isCompleteProfile(profile: ProviderProfile): boolean {
+  if (!isOpenAiCompatibleProviderProfile(profile)) {
+    return false;
+  }
+
   return hasText(profile.apiKey) && hasText(profile.baseURL) && hasText(profile.textModel);
 }
 
@@ -50,6 +58,10 @@ export function evaluateProviderReadiness(
   const profile = profiles.find((candidate) => candidate.id === activeProviderId);
   if (!profile) {
     return { readiness: "invalidActiveProvider" };
+  }
+
+  if (!isOpenAiCompatibleProviderProfile(profile)) {
+    return { readiness: "missingApiKey" };
   }
 
   if (!hasText(profile.apiKey)) {
@@ -78,6 +90,10 @@ export function resolveReadyProviderProfile(
 export function formatProviderLabel(profile: ProviderProfile | undefined): string {
   if (!profile) {
     return "未配置翻译服务";
+  }
+
+  if (!isOpenAiCompatibleProviderProfile(profile)) {
+    return profile.displayName;
   }
 
   try {

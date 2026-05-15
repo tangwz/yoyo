@@ -4,9 +4,14 @@ import {
   formatProviderLabel,
   resolveReadyProviderProfile,
 } from "@/provider/readiness";
-import type { ProviderProfile } from "@/provider/types";
+import type {
+  OpenAiCompatibleProviderProfile,
+  ProviderProfile,
+} from "@/provider/types";
 
-function profile(overrides: Partial<ProviderProfile> = {}): ProviderProfile {
+function profile(
+  overrides: Partial<OpenAiCompatibleProviderProfile> = {},
+): OpenAiCompatibleProviderProfile {
   return {
     id: "provider-1",
     displayName: "Work Provider",
@@ -58,7 +63,7 @@ describe("provider readiness", () => {
       profile: activeProfile,
     });
     if (result.readiness === "ready") {
-      expectTypeOf(result.profile).toEqualTypeOf<ProviderProfile>();
+      expectTypeOf(result.profile).toEqualTypeOf<OpenAiCompatibleProviderProfile>();
     }
     expect(resolveReadyProviderProfile([activeProfile], "provider-1")).toBe(
       activeProfile,

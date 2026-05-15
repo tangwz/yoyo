@@ -7,12 +7,15 @@ import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
 import { ProviderError } from "@/provider/errors";
 import type {
   GenerateTextRequest,
+  OpenAiCompatibleProviderProfile,
   ProviderProfile,
   StreamTextRequest,
 } from "@/provider/types";
 import type { PageSegment } from "@/translation/types";
 
-function providerProfile(overrides: Partial<ProviderProfile> = {}): ProviderProfile {
+function providerProfile(
+  overrides: Partial<OpenAiCompatibleProviderProfile> = {},
+): OpenAiCompatibleProviderProfile {
   return {
     id: "profile-1",
     displayName: "Test Provider",

@@ -5,7 +5,11 @@ import type {
 } from "@/messaging/contracts";
 import { ProviderError } from "@/provider/errors";
 import type { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
-import type { ProviderProfile } from "@/provider/types";
+import {
+  isOpenAiCompatibleProviderProfile,
+  type OpenAiCompatibleProviderProfile,
+  type ProviderProfile,
+} from "@/provider/types";
 import { splitSegmentsIntoBatches } from "@/translation/batch";
 import { SessionTranslationCache } from "@/translation/cache";
 import { createCacheKey, serializeCacheKey } from "@/translation/hash";
@@ -55,7 +59,7 @@ export type TranslatePageInput = {
 };
 
 type TaskTranslationContext = {
-  profile: ProviderProfile;
+  profile: OpenAiCompatibleProviderProfile;
   sourceLanguage: string;
   targetLanguage: string;
   translationMode: TranslationMode;
@@ -213,13 +217,16 @@ export class TranslationTaskOrchestrator {
 
   private async getRecoveryProfile(
     recovery: LazySegmentRecoverySnapshot,
-  ): Promise<ProviderProfile | undefined> {
+  ): Promise<OpenAiCompatibleProviderProfile | undefined> {
     if (!recovery.providerId) {
-      return this.dependencies.getActiveProfile();
+      const activeProfile = await this.dependencies.getActiveProfile();
+      return activeProfile && isOpenAiCompatibleProviderProfile(activeProfile)
+        ? activeProfile
+        : undefined;
     }
 
     const profile = await this.dependencies.getProviderProfile(recovery.providerId);
-    if (!profile) {
+    if (!profile || !isOpenAiCompatibleProviderProfile(profile)) {
       return undefined;
     }
 
@@ -309,6 +316,9 @@ export class TranslationTaskOrchestrator {
       const profile = await this.dependencies.getActiveProfile();
       if (!profile) {
         return this.failTask(task, "No active provider profile.");
+      }
+      if (!isOpenAiCompatibleProviderProfile(profile)) {
+        return this.failTask(task, "Unsupported provider profile.");
       }
 
       const translationMode = input.translationMode ?? "lazyViewport";
@@ -996,7 +1006,7 @@ export class TranslationTaskOrchestrator {
   private async cacheKeyForSegment(
     segment: PageSegment,
     input: {
-      profile: ProviderProfile;
+      profile: OpenAiCompatibleProviderProfile;
       sourceLanguage: string;
       targetLanguage: string;
     },

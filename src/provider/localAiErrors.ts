@@ -14,7 +14,7 @@ export class LocalAiError extends Error {
     message: string,
     readonly cause?: unknown,
   ) {
-    super(message);
+    super(message, { cause });
     this.name = "LocalAiError";
   }
 }

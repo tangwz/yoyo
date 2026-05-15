@@ -12,7 +12,11 @@ import { normalizeModelNameForProfile } from "@/provider/modelNames";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
 import { defaultProviderPreset, providerPresets } from "@/provider/presets";
 import { selectStoredActiveProviderId } from "@/provider/readiness";
-import type { ProviderProfile } from "@/provider/types";
+import {
+  isOpenAiCompatibleProviderProfile,
+  type OpenAiCompatibleProviderProfile,
+  type ProviderProfile,
+} from "@/provider/types";
 import { defaultUiPreferences, type UiPreferences } from "@/storage/defaults";
 import { createStorageRepositories } from "@/storage/repositories";
 import type { TranslationMode } from "@/translation/types";
@@ -117,7 +121,7 @@ function normalizePositiveInteger(value: unknown, defaultValue: number): number 
   return Math.trunc(parsed);
 }
 
-function buildProviderProfile(): ProviderProfile {
+function buildProviderProfile(): OpenAiCompatibleProviderProfile {
   const profileId = selectedPresetId.value;
   const modelContext = {
     id: profileId,
@@ -193,6 +197,10 @@ async function loadUiPreferences() {
 }
 
 function applyProviderProfile(profile: ProviderProfile) {
+  if (!isOpenAiCompatibleProviderProfile(profile)) {
+    return;
+  }
+
   const presetId = profile.presetId ?? profile.id;
   selectedPresetId.value = providerPresets.some((item) => item.id === presetId)
     ? presetId

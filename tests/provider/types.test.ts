@@ -30,4 +30,27 @@ describe("provider profile types", () => {
     expect(profile.type).toBe("chrome-built-in-ai");
     expectTypeOf(profile).toMatchTypeOf<ChromeBuiltInAiProviderProfile>();
   });
+
+  it("rejects remote provider settings on Chrome Built-in AI profiles", () => {
+    const profile: ChromeBuiltInAiProviderProfile = {
+      id: "chrome-built-in-ai",
+      displayName: "Chrome Built-in AI",
+      type: "chrome-built-in-ai",
+      // @ts-expect-error Chrome Built-in AI profiles must not include remote settings.
+      baseURL: "https://api.example.test/v1",
+    };
+
+    expect(profile.type).toBe("chrome-built-in-ai");
+  });
+
+  it("requires remote provider settings on OpenAI-compatible profiles", () => {
+    // @ts-expect-error OpenAI-compatible profiles require remote settings.
+    const profile: OpenAiCompatibleProviderProfile = {
+      id: "openai",
+      displayName: "OpenAI Compatible",
+      type: "openai-compatible",
+    };
+
+    expect(profile.type).toBe("openai-compatible");
+  });
 });

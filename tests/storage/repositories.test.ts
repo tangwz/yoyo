@@ -101,7 +101,9 @@ describe("storage repositories", () => {
     });
 
     const profiles = await repository.listProfiles();
-    profiles[0].apiKey = "mutated";
+    if (profiles[0]?.type === "openai-compatible") {
+      profiles[0].apiKey = "mutated";
+    }
     profiles.push({
       id: "provider-2",
       displayName: "Mutated Provider",
