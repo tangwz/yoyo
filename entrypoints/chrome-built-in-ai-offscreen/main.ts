@@ -114,7 +114,7 @@ export function createChromeBuiltInAiOffscreenSession(
 
   function destroyOwnedTranslators(): void {
     for (const translator of translators.values()) {
-      void translator.destroy?.();
+      void translator.destroy?.()?.catch(() => undefined);
     }
     translators.clear();
   }
@@ -225,10 +225,6 @@ export function createChromeBuiltInAiOffscreenSession(
 export function setupChromeBuiltInAiOffscreenPort(
   chromeRuntime: ChromeRuntimeLike,
 ): void {
-  const handleRequest = createChromeBuiltInAiOffscreenRequestHandler({
-    getTranslatorApi,
-  });
-
   chromeRuntime.onConnect.addListener((port) => {
     if (port.name !== CHROME_BUILT_IN_AI_OFFSCREEN_PORT) {
       return;

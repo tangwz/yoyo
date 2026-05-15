@@ -131,7 +131,6 @@ class OffscreenPortSession {
       }
 
       let settled = false;
-      let abortListener: (() => void) | undefined;
 
       const settle = (callback: () => void): void => {
         if (settled) {
@@ -139,16 +138,14 @@ class OffscreenPortSession {
         }
 
         settled = true;
-        if (abortListener) {
-          signal?.removeEventListener("abort", abortListener);
-        }
+        signal?.removeEventListener("abort", abortListener);
         callback();
         if (options.disconnectOnSettle) {
           this.disconnect();
         }
       };
 
-      abortListener = () => {
+      const abortListener = () => {
         settle(() => {
           try {
             this.port.postMessage({
