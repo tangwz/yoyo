@@ -30,6 +30,7 @@ type PopupState =
 const sourceLanguage = ref("auto");
 const targetLanguage = ref("zh-CN");
 const providerLabel = ref("正在读取翻译服务...");
+const providerMode = ref<"remote" | "local-only">("remote");
 const isProviderConfigured = ref(true);
 const tabId = ref<number>();
 const isInitializing = ref(true);
@@ -67,8 +68,7 @@ const primaryLabel = computed(() => {
 
 const isPrimaryDisabled = computed(
   () =>
-    isProviderConfigured.value &&
-    (isInitializing.value || (!canTranslate.value && state.value !== "translating")),
+    isInitializing.value || (!canTranslate.value && state.value !== "translating"),
 );
 
 function isRuntimeResponse(message: unknown): message is BackgroundResponse {
@@ -137,16 +137,19 @@ function applyProgress(response: BackgroundResponse): void {
 }
 
 function applyProviderStatus(response: Extract<BackgroundResponse, { type: "providerStatus" }>) {
-  isProviderConfigured.value = response.configured;
   providerLabel.value = response.providerLabel;
+  providerMode.value = response.providerMode;
 
   if (isUnsupportedLocalProvider(response)) {
+    isProviderConfigured.value = true;
+    canTranslate.value = false;
     state.value = "error";
     currentTaskId.value = "";
     errorMessage.value = "Chrome Built-in AI requires desktop Chrome 138 or later.";
     return;
   }
 
+  isProviderConfigured.value = response.configured;
   if (!response.configured) {
     state.value = "onboarding";
     currentTaskId.value = "";
@@ -510,6 +513,12 @@ async function onRemoveTranslations(): Promise<void> {
       />
 
       <ProviderCard :provider-label="providerLabel" />
+      <p
+        v-if="providerMode === 'local-only'"
+        class="provider-mode"
+      >
+        Local only. No remote provider will be used.
+      </p>
 
       <button
         class="primary-action"
@@ -634,6 +643,18 @@ async function onRemoveTranslations(): Promise<void> {
 .primary-action:focus-visible {
   outline: 3px solid var(--yoyo-focus-ring);
   outline-offset: 3px;
+}
+
+.provider-mode {
+  margin: -6px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #c7e6d4;
+  border-radius: 10px;
+  color: #155c35;
+  background: #f0fbf4;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .existing-translations {

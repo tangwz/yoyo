@@ -298,6 +298,39 @@ describe("popup app", () => {
     });
   });
 
+  it("shows local-only copy for a configured local provider", async () => {
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return {
+          type: "providerStatus",
+          configured: true,
+          readiness: "ready",
+          providerLabel: "Chrome Built-in AI / Local only",
+          providerMode: "local-only",
+        };
+      }
+
+      if (message.type === "getTaskForTab") {
+        return idleTaskProgress();
+      }
+
+      throw new Error(`Unexpected runtime message: ${message.type}`);
+    });
+
+    render(PopupApp);
+
+    expect(await screen.findByText("Chrome Built-in AI / Local only")).toBeVisible();
+    expect(screen.getByText("Local only. No remote provider will be used.")).toBeVisible();
+    expect(browserMock.runtimeSendMessage).not.toHaveBeenCalledWith({
+      type: "openOptions",
+      section: "provider",
+      source: "first-run",
+    });
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+  });
+
   it("shows unsupported local provider errors without opening Provider settings", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
       if (message.type === "getProviderStatus") {
@@ -320,9 +353,12 @@ describe("popup app", () => {
     render(PopupApp);
 
     expect(await screen.findByText("Chrome Built-in AI / Local only")).toBeVisible();
+    expect(screen.getByText("Local only. No remote provider will be used.")).toBeVisible();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Chrome Built-in AI requires desktop Chrome 138 or later.",
     );
+    expect(screen.getByRole("button", { name: "翻译当前页面" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "打开设置" })).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
