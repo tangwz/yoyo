@@ -26,7 +26,7 @@ export type TranslatorTranslateOptions = {
 
 export type TranslatorInstance = {
   translate(text: string, options?: TranslatorTranslateOptions): Promise<string>;
-  destroy?: () => void;
+  destroy?: () => void | Promise<void>;
 };
 
 export type TranslatorApi = {
@@ -97,8 +97,22 @@ function mapTranslatorError(error: unknown, aborted: boolean): LocalAiError {
         "Chrome could not download the local translation model.",
         error,
       );
+    case "ApiUnavailableError":
+      return new LocalAiError(
+        "apiUnavailable",
+        "Chrome Built-in AI Translator API is not available.",
+        error,
+      );
     default:
       return new LocalAiError("unknown", "Chrome Built-in AI translation failed.", error);
+  }
+}
+
+async function destroyTranslator(translator: TranslatorInstance): Promise<void> {
+  try {
+    await translator.destroy?.();
+  } catch (error) {
+    console.warn("[yoyo] failed to destroy Chrome Built-in AI translator", error);
   }
 }
 
@@ -124,7 +138,7 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
     } catch (error) {
       throw mapTranslatorError(error, request.abortSignal?.aborted ?? false);
     } finally {
-      translator.destroy?.();
+      await destroyTranslator(translator);
     }
   }
 
@@ -151,7 +165,7 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
     } catch (error) {
       throw mapTranslatorError(error, request.abortSignal?.aborted ?? false);
     } finally {
-      translator.destroy?.();
+      await destroyTranslator(translator);
     }
   }
 

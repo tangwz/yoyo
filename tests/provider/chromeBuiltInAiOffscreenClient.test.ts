@@ -78,7 +78,7 @@ describe("ChromeBuiltInAiOffscreenClient", () => {
       documentUrls: [`chrome-extension://test/${CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT}`],
     });
     expect(offscreen.createDocument).toHaveBeenCalledWith({
-      url: `chrome-extension://test/${CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT}`,
+      url: CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT,
       reasons: ["DOM_PARSER"],
       justification:
         "Run Chrome Built-in AI Translator API from an extension document context.",
@@ -125,7 +125,7 @@ describe("ChromeBuiltInAiOffscreenClient", () => {
       targetLanguage: "zh-CN",
     });
     await expect(translator.translate("Hello")).resolves.toBe("translated:Hello");
-    translator.destroy?.();
+    await translator.destroy?.();
     await vi.waitFor(() => expect(sentMessages).toHaveLength(3));
 
     expect(offscreen.createDocument).not.toHaveBeenCalled();
@@ -169,5 +169,78 @@ describe("ChromeBuiltInAiOffscreenClient", () => {
       name: "NotSupportedError",
       message: "Unsupported pair",
     });
+  });
+
+  it("rejects malformed translate responses", async () => {
+    const port = createPort((message) => {
+      if (message.type === "chromeBuiltInAi.create") {
+        return { requestId: message.requestId, ok: true, translatorId: "translator-1" };
+      }
+      return { requestId: message.requestId, ok: true };
+    });
+    const client = new ChromeBuiltInAiOffscreenClient({
+      runtime: {
+        getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
+        getContexts: vi.fn(async () => [{ contextId: "existing" }]),
+        connect: vi.fn(() => port),
+      },
+      offscreen: {
+        createDocument: vi.fn(async () => undefined),
+      },
+    });
+
+    const translator = await client.create({
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    await expect(translator.translate("Hello")).rejects.toThrow(
+      "Chrome Built-in AI offscreen response omitted translatedText.",
+    );
+  });
+
+  it("rejects and disconnects when an in-flight request is aborted", async () => {
+    let disconnectListener: (() => void) | undefined;
+    const port: MockPort = {
+      onMessage: {
+        addListener: vi.fn(),
+      },
+      onDisconnect: {
+        addListener(listener) {
+          disconnectListener = listener;
+        },
+      },
+      postMessage: vi.fn(),
+      disconnect: vi.fn(() => {
+        disconnectListener?.();
+      }),
+    };
+    const abortController = new AbortController();
+    const client = new ChromeBuiltInAiOffscreenClient({
+      runtime: {
+        getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
+        getContexts: vi.fn(async () => [{ contextId: "existing" }]),
+        connect: vi.fn(() => port),
+      },
+      offscreen: {
+        createDocument: vi.fn(async () => undefined),
+      },
+    });
+
+    const createPromise = client.create({
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      signal: abortController.signal,
+    });
+    await vi.waitFor(() => expect(port.postMessage).toHaveBeenCalledTimes(1));
+    abortController.abort();
+
+    await expect(createPromise).rejects.toMatchObject({ name: "AbortError" });
+    expect(port.disconnect).toHaveBeenCalledTimes(1);
+    expect(port.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "chromeBuiltInAi.cancel",
+      }),
+    );
   });
 });

@@ -306,6 +306,12 @@ export class TranslationTaskOrchestrator {
       if (!profile) {
         return this.failTask(task, "No active provider profile.");
       }
+      if (profile.type === "chrome-built-in-ai" && input.sourceLanguage === "auto") {
+        return this.failTask(
+          task,
+          "Chrome Built-in AI requires an explicit source language.",
+        );
+      }
 
       const translationMode = input.translationMode ?? "lazyViewport";
       const collectResponse = await this.dependencies.sendToContent(input.tabId, {

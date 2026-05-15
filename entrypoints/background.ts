@@ -35,11 +35,14 @@ function createErrorResponse(error: unknown): BackgroundResponse {
 export default defineBackground(() => {
   const storage = createStorageRepositories();
   const provider = new OpenAiCompatibleProvider();
-  const chromeBuiltInAiOffscreenClient = new ChromeBuiltInAiOffscreenClient();
+  let chromeBuiltInAiOffscreenClient: ChromeBuiltInAiOffscreenClient | undefined;
   const translationProviderResolver = new TranslationProviderResolver({
     openAiProvider: provider,
     chromeBuiltInTranslatorProvider: new ChromeBuiltInTranslatorProvider({
-      getTranslatorApi: () => chromeBuiltInAiOffscreenClient,
+      getTranslatorApi: () => {
+        chromeBuiltInAiOffscreenClient ??= new ChromeBuiltInAiOffscreenClient();
+        return chromeBuiltInAiOffscreenClient;
+      },
     }),
   });
 
@@ -93,14 +96,15 @@ export default defineBackground(() => {
 
   onTranslatePageMenuClick(
     async (tabId) => {
-      if (!(await getActiveProfile())) {
+      const activeProfile = await getActiveProfile();
+      if (!activeProfile) {
         await notifyProviderMissing();
         return;
       }
 
       const progress = await orchestrator.translatePage({
         tabId,
-        sourceLanguage: "auto",
+        sourceLanguage: activeProfile.type === "chrome-built-in-ai" ? "en" : "auto",
         targetLanguage: "zh-CN",
         translationMode: (await storage.translationPreferences.get()).mode,
       });

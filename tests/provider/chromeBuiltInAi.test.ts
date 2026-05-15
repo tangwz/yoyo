@@ -133,6 +133,33 @@ describe("ChromeBuiltInTranslatorProvider", () => {
     } satisfies Partial<LocalAiError>);
   });
 
+  it("maps offscreen API unavailable errors to local API unavailable errors", async () => {
+    const cause = new Error("Chrome offscreen APIs are not available.");
+    cause.name = "ApiUnavailableError";
+    const provider = new ChromeBuiltInTranslatorProvider({
+      getTranslatorApi: () => ({
+        availability: vi.fn(async () => {
+          throw cause;
+        }),
+        create: vi.fn(async () => ({
+          translate: vi.fn(async (text: string) => `translated:${text}`),
+        })),
+      }),
+    });
+
+    await expect(
+      provider.translateText({
+        profile: profile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        text: "Hello",
+      }),
+    ).rejects.toMatchObject({
+      code: "apiUnavailable",
+      cause,
+    } satisfies Partial<LocalAiError>);
+  });
+
   it("does not fall back to the global Translator when an injected API getter returns undefined", async () => {
     vi.stubGlobal("Translator", {
       availability: vi.fn(async () => "available" as const),
@@ -412,7 +439,7 @@ describe("ChromeBuiltInTranslatorProvider", () => {
 
   it("translates batches with one translator session", async () => {
     const translate = vi.fn(async (text: string) => `translated:${text}`);
-    const destroy = vi.fn();
+    const destroy = vi.fn(async () => undefined);
     const availability = vi.fn(async () => "available" as const);
     const create = vi.fn(async () => ({ translate, destroy }));
     const provider = new ChromeBuiltInTranslatorProvider({
@@ -458,7 +485,7 @@ describe("ChromeBuiltInTranslatorProvider", () => {
   });
 
   it("destroys batch translator sessions on failure", async () => {
-    const destroy = vi.fn();
+    const destroy = vi.fn(async () => undefined);
     const provider = new ChromeBuiltInTranslatorProvider({
       getTranslatorApi: () => ({
         availability: vi.fn(async () => "available" as const),

@@ -28,6 +28,11 @@ type OffscreenRequest =
       requestId: string;
       type: "chromeBuiltInAi.destroy";
       translatorId: string;
+    }
+  | {
+      requestId: string;
+      type: "chromeBuiltInAi.cancel";
+      cancelledRequestId: string;
     };
 
 type OffscreenResponse =
@@ -106,8 +111,10 @@ async function handleRequest(request: OffscreenRequest): Promise<OffscreenRespon
         };
       }
       case "chromeBuiltInAi.destroy":
-        translators.get(request.translatorId)?.destroy?.();
+        await translators.get(request.translatorId)?.destroy?.();
         translators.delete(request.translatorId);
+        return { requestId: request.requestId, ok: true };
+      case "chromeBuiltInAi.cancel":
         return { requestId: request.requestId, ok: true };
     }
   } catch (error) {

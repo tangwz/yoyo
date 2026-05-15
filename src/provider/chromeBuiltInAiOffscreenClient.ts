@@ -8,7 +8,8 @@ import type {
 } from "@/provider/chromeBuiltInAi";
 
 export const CHROME_BUILT_IN_AI_OFFSCREEN_PORT = "yoyo.chrome-built-in-ai-offscreen";
-export const CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT = "chrome-built-in-ai-offscreen.html";
+export const CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT =
+  "chrome-built-in-ai-offscreen/index.html";
 
 type ChromeRuntimePort = {
   onMessage: { addListener(listener: (message: OffscreenResponse) => void): void };
@@ -61,6 +62,11 @@ type OffscreenRequest =
       requestId: string;
       type: "chromeBuiltInAi.destroy";
       translatorId: string;
+    }
+  | {
+      requestId: string;
+      type: "chromeBuiltInAi.cancel";
+      cancelledRequestId: string;
     };
 
 type OffscreenResponse =
@@ -98,20 +104,13 @@ function createRemoteError(error: { name?: string; message?: string }): Error {
 }
 
 export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
-  private readonly runtime: ChromeRuntimeLike;
-  private readonly offscreen: ChromeOffscreenLike;
+  private readonly runtime: ChromeRuntimeLike | undefined;
+  private readonly offscreen: ChromeOffscreenLike | undefined;
   private creatingDocument: Promise<void> | undefined;
 
   constructor(dependencies: ChromeBuiltInAiOffscreenClientDependencies = {}) {
-    const runtime = dependencies.runtime ?? getDefaultRuntime();
-    const offscreen = dependencies.offscreen ?? getDefaultOffscreen();
-
-    if (!runtime || !offscreen) {
-      throw new Error("Chrome offscreen APIs are not available.");
-    }
-
-    this.runtime = runtime;
-    this.offscreen = offscreen;
+    this.runtime = dependencies.runtime ?? getDefaultRuntime();
+    this.offscreen = dependencies.offscreen ?? getDefaultOffscreen();
   }
 
   async availability(options: TranslatorLanguageOptions): Promise<TranslatorAvailability> {
@@ -140,7 +139,7 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
         sourceLanguage: options.sourceLanguage,
         targetLanguage: options.targetLanguage,
       },
-    });
+    }, options.signal);
 
     if (!response.translatorId) {
       throw new Error("Chrome Built-in AI offscreen response omitted translatorId.");
@@ -161,25 +160,35 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
           type: "chromeBuiltInAi.translate",
           translatorId,
           text,
-        });
+        }, translateOptions?.signal);
 
-        return translateResponse.translatedText ?? "";
+        if (translateResponse.translatedText === undefined) {
+          throw new Error("Chrome Built-in AI offscreen response omitted translatedText.");
+        }
+
+        return translateResponse.translatedText;
       },
-      destroy: () => {
-        void this.sendRequest({
+      destroy: async () => {
+        await this.sendRequest({
           requestId: createRequestId(),
           type: "chromeBuiltInAi.destroy",
           translatorId,
-        }).catch(() => undefined);
+        });
       },
     };
   }
 
   private async ensureDocument(): Promise<void> {
-    const url = this.runtime.getURL(CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT);
+    if (!this.runtime || !this.offscreen) {
+      const error = new Error("Chrome offscreen APIs are not available.");
+      error.name = "ApiUnavailableError";
+      throw error;
+    }
+
+    const documentUrl = this.runtime.getURL(CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT);
     const contexts = await this.runtime.getContexts?.({
       contextTypes: ["OFFSCREEN_DOCUMENT"],
-      documentUrls: [url],
+      documentUrls: [documentUrl],
     });
 
     if (contexts && contexts.length > 0) {
@@ -188,7 +197,7 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
 
     this.creatingDocument ??= this.offscreen
       .createDocument({
-        url,
+        url: CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT,
         reasons: ["DOM_PARSER"],
         justification:
           "Run Chrome Built-in AI Translator API from an extension document context.",
@@ -200,39 +209,93 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
     await this.creatingDocument;
   }
 
-  private async sendRequest(request: OffscreenRequest): Promise<Extract<OffscreenResponse, { ok: true }>> {
+  private async sendRequest(
+    request: OffscreenRequest,
+    signal?: AbortSignal,
+  ): Promise<Extract<OffscreenResponse, { ok: true }>> {
+    if (signal?.aborted) {
+      throw new DOMException("Chrome Built-in AI translation was cancelled.", "AbortError");
+    }
+
     await this.ensureDocument();
 
     return new Promise((resolve, reject) => {
-      const port = this.runtime.connect({ name: CHROME_BUILT_IN_AI_OFFSCREEN_PORT });
+      if (signal?.aborted) {
+        reject(
+          new DOMException("Chrome Built-in AI translation was cancelled.", "AbortError"),
+        );
+        return;
+      }
+
+      const runtime = this.runtime;
+      if (!runtime) {
+        const error = new Error("Chrome offscreen APIs are not available.");
+        error.name = "ApiUnavailableError";
+        reject(error);
+        return;
+      }
+
+      const port = runtime.connect({ name: CHROME_BUILT_IN_AI_OFFSCREEN_PORT });
       let settled = false;
+      let abortListener: (() => void) | undefined;
+
+      const settle = (callback: () => void): void => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        if (abortListener) {
+          signal?.removeEventListener("abort", abortListener);
+        }
+        callback();
+      };
+
+      abortListener = () => {
+        settle(() =>
+          {
+            const cancelRequestId = createRequestId();
+            try {
+              port.postMessage({
+                requestId: cancelRequestId,
+                type: "chromeBuiltInAi.cancel",
+                cancelledRequestId: request.requestId,
+              });
+            } catch {
+              // Best effort only; the port may already be disconnected.
+            }
+            port.disconnect();
+            reject(
+              new DOMException("Chrome Built-in AI translation was cancelled.", "AbortError"),
+            );
+          },
+        );
+      };
+      signal?.addEventListener("abort", abortListener, { once: true });
 
       port.onMessage.addListener((response) => {
         if (response.requestId !== request.requestId || settled) {
           return;
         }
 
-        settled = true;
-        port.disconnect();
+        settle(() => {
+          port.disconnect();
+          if (response.ok) {
+            resolve(response);
+            return;
+          }
 
-        if (response.ok) {
-          resolve(response);
-          return;
-        }
-
-        reject(createRemoteError(response.error));
+          reject(createRemoteError(response.error));
+        });
       });
 
       port.onDisconnect.addListener(() => {
-        if (settled) {
-          return;
-        }
-
-        settled = true;
-        reject(
-          new Error(
-            this.runtime.lastError?.message ??
-              "Chrome Built-in AI offscreen document disconnected.",
+        settle(() =>
+          reject(
+            new Error(
+              runtime.lastError?.message ??
+                "Chrome Built-in AI offscreen document disconnected.",
+            ),
           ),
         );
       });

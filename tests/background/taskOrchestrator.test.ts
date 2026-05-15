@@ -5,7 +5,11 @@ import {
 } from "@/background/taskOrchestrator";
 import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
 import { ProviderError } from "@/provider/errors";
-import type { OpenAiCompatibleProviderProfile, ProviderProfile } from "@/provider/types";
+import type {
+  ChromeBuiltInAiProviderProfile,
+  OpenAiCompatibleProviderProfile,
+  ProviderProfile,
+} from "@/provider/types";
 import type { TranslateBatchRequest } from "@/provider/translationProvider";
 import type { PageSegment } from "@/translation/types";
 
@@ -20,6 +24,14 @@ function providerProfile(
     apiKey: "secret",
     textModel: "gpt-4.1-mini",
     ...overrides,
+  };
+}
+
+function chromeBuiltInProfile(): ChromeBuiltInAiProviderProfile {
+  return {
+    id: "chrome-built-in-ai",
+    displayName: "Chrome Built-in AI",
+    type: "chrome-built-in-ai",
   };
 }
 
@@ -229,6 +241,28 @@ describe("TranslationTaskOrchestrator", () => {
     });
 
     expect(missingProvider).toHaveBeenCalledTimes(1);
+    expect(sendToContent).not.toHaveBeenCalled();
+    expect(translateBatch).not.toHaveBeenCalled();
+    expect(progress).toMatchObject({
+      taskId: "task-1",
+      state: "failed",
+      total: 0,
+      translated: 0,
+      failed: 0,
+    });
+  });
+
+  it("fails before collecting content when Chrome Built-in AI receives auto source language", async () => {
+    const { orchestrator, sendToContent, translateBatch } = createOrchestrator({
+      getActiveProfile: vi.fn(async () => chromeBuiltInProfile()),
+    });
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+    });
+
     expect(sendToContent).not.toHaveBeenCalled();
     expect(translateBatch).not.toHaveBeenCalled();
     expect(progress).toMatchObject({
