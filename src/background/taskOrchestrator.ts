@@ -313,6 +313,10 @@ export class TranslationTaskOrchestrator {
         taskId: task.progress.taskId,
         translationMode,
         sourceLanguage: input.sourceLanguage,
+        deferLazyCollection:
+          profile.type === "chrome-built-in-ai" &&
+          input.sourceLanguage === "auto" &&
+          translationMode === "lazyViewport",
         targetLanguage: input.targetLanguage,
         providerId: profile.id,
         textModel: isOpenAiCompatibleProviderProfile(profile) ? profile.textModel : undefined,
@@ -345,6 +349,29 @@ export class TranslationTaskOrchestrator {
         state: "translating",
         total: segments.length,
       });
+
+      if (
+        translationMode === "lazyViewport" &&
+        profile.type === "chrome-built-in-ai" &&
+        input.sourceLanguage === "auto" &&
+        segments.length > 0
+      ) {
+        const finalizeResponse = await this.dependencies.sendToContent(input.tabId, {
+          type: "finalizeLazyRecoverySourceLanguage",
+          taskId: task.progress.taskId,
+          sourceLanguage,
+        });
+        if (
+          finalizeResponse.type !== "contentActionResult" ||
+          !finalizeResponse.success
+        ) {
+          return this.failTask(
+            task,
+            "Content script could not finalize Chrome Built-in AI language detection.",
+            segments.length,
+          );
+        }
+      }
 
       await this.processSegmentsForTask(
         task,

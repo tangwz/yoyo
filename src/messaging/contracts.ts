@@ -39,9 +39,15 @@ export type ContentRequest =
       taskId: string;
       translationMode: TranslationMode;
       sourceLanguage: string;
+      deferLazyCollection?: boolean;
       targetLanguage: string;
       providerId?: string;
       textModel?: string;
+    }
+  | {
+      type: "finalizeLazyRecoverySourceLanguage";
+      taskId: string;
+      sourceLanguage: string;
     }
   | { type: "applyTranslations"; taskId: string; items: TranslationResultItem[] }
   | { type: "taskProgress"; progress: TranslationProgress }

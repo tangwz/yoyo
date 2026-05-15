@@ -14,6 +14,7 @@ import {
   applyTranslationResults,
   collectSegments,
   estimatePage,
+  finalizeLazyRecoverySourceLanguage,
   getPageRuntimeState,
   handleTaskProgress,
   hidePageTranslations,
@@ -993,6 +994,78 @@ describe("page runtime", () => {
       hasTranslations: true,
       taskId: "task-from-dom",
       visibility: "hidden",
+    });
+  });
+
+  it("defers lazy recovery reporting until source language is finalized", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+      </article>
+    `;
+
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments(
+      "task-1",
+      "lazyViewport",
+      "auto",
+      "zh-CN",
+      "chrome-built-in-ai",
+      undefined,
+      true,
+    );
+
+    rects.second = { top: 80, bottom: 96 };
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+    expect(runtimeMock.sendRuntimeMessage).not.toHaveBeenCalled();
+
+    expect(finalizeLazyRecoverySourceLanguage("task-1", "en")).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalled();
+    });
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        segmentIds: ["seg_2"],
+        recovery: expect.objectContaining({
+          sourceLanguage: "en",
+        }),
+      }),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
     });
   });
 });

@@ -7,6 +7,7 @@ import {
   hidePageTranslations,
   removePageTranslations,
   showPageTranslations,
+  finalizeLazyRecoverySourceLanguage,
 } from "@/content/pageRuntime";
 import { showSelectionTranslation } from "@/content/selectionPanel";
 import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
@@ -53,6 +54,7 @@ export default defineContentScript({
               request.targetLanguage,
               request.providerId,
               request.textModel,
+              request.deferLazyCollection,
             );
             return {
               type: "collectSegmentsResult",
@@ -60,6 +62,17 @@ export default defineContentScript({
               segments,
               collectionComplete: request.translationMode !== "lazyViewport",
             };
+          }
+          case "finalizeLazyRecoverySourceLanguage": {
+            const request = message as Extract<
+              ContentRequest,
+              { type: "finalizeLazyRecoverySourceLanguage" }
+            >;
+            const success = finalizeLazyRecoverySourceLanguage(
+              request.taskId,
+              request.sourceLanguage,
+            );
+            return { type: "contentActionResult", success };
           }
           case "applyTranslations": {
             const request = message as Extract<

@@ -157,6 +157,7 @@ describe("TranslationTaskOrchestrator", () => {
       taskId: "task-1",
       translationMode: "lazyViewport",
       sourceLanguage: "en",
+      deferLazyCollection: false,
       targetLanguage: "zh-CN",
       providerId: "profile-1",
       textModel: "gpt-4.1-mini",
@@ -261,6 +262,7 @@ describe("TranslationTaskOrchestrator", () => {
 
     sendToContent.mockImplementation(async (_tabId, message) => {
       if (message.type === "collectSegments") {
+        expect(message.deferLazyCollection).toBe(true);
         return {
           type: "collectSegmentsResult",
           taskId: "task-1",
@@ -273,6 +275,13 @@ describe("TranslationTaskOrchestrator", () => {
           type: "contentActionResult",
           success: true,
           appliedSegmentIds: message.items.map((item) => item.segmentId),
+        };
+      }
+
+      if (message.type === "finalizeLazyRecoverySourceLanguage") {
+        return {
+          type: "contentActionResult",
+          success: true,
         };
       }
 
@@ -294,6 +303,21 @@ describe("TranslationTaskOrchestrator", () => {
     );
     expect(translateBatch).toHaveBeenCalledWith(
       expect.objectContaining({
+        sourceLanguage: "en",
+      }),
+    );
+    expect(sendToContent).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        type: "collectSegments",
+        sourceLanguage: "auto",
+        deferLazyCollection: true,
+      }),
+    );
+    expect(sendToContent).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        type: "finalizeLazyRecoverySourceLanguage",
         sourceLanguage: "en",
       }),
     );
