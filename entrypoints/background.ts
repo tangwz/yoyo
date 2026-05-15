@@ -133,15 +133,17 @@ export default defineBackground(() => {
 
   onTranslateSelectionMenuClick(
     async ({ tabId, text }) => {
+      const activeProfile = await getActiveProfile();
+
       await translateSelection(
         {
           tabId,
           text,
-          sourceLanguage: "auto",
+          sourceLanguage: activeProfile?.type === "chrome-built-in-ai" ? "en" : "auto",
           targetLanguage: "zh-CN",
         },
         {
-          getActiveProfile,
+          getActiveProfile: async () => activeProfile,
           getTranslationProvider: (profile) =>
             translationProviderResolver.getTranslationProvider(profile),
           sendToContent: (targetTabId, message) =>

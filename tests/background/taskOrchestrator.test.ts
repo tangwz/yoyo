@@ -275,15 +275,20 @@ describe("TranslationTaskOrchestrator", () => {
   });
 
   it("uses the resolved translation provider for Chrome Built-in AI profiles", async () => {
-    const translateBatch = vi.fn(async () => ({
+    const translateBatch = vi.fn<
+      (request: TranslateBatchRequest) => Promise<{
+        items: Array<{ segmentId: string; translatedText: string }>;
+      }>
+    >(async () => ({
       items: [{ segmentId: "segment-1", translatedText: "你好，世界。" }],
+    }));
+    const getTranslationProvider = vi.fn((profile: ProviderProfile) => ({
+      translateText: vi.fn(),
+      translateBatch,
     }));
     const { orchestrator, sendToContent } = createOrchestrator({
       getActiveProfile: async () => chromeBuiltInProfile(),
-      getTranslationProvider: () => ({
-        translateText: vi.fn(),
-        translateBatch,
-      }),
+      getTranslationProvider,
     });
 
     sendToContent.mockImplementation(async (_tabId, message) => {
@@ -305,7 +310,11 @@ describe("TranslationTaskOrchestrator", () => {
         targetLanguage: "zh-CN",
       }),
     ).resolves.toMatchObject({ state: "completed" });
+    expect(getTranslationProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "chrome-built-in-ai" }),
+    );
     expect(translateBatch).toHaveBeenCalledTimes(1);
+    expect(translateBatch.mock.calls[0]?.[0].profile.type).toBe("chrome-built-in-ai");
   });
 
   it("completes with errors when provider output omits an expected segment", async () => {
