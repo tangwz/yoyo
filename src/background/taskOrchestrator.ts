@@ -4,7 +4,7 @@ import type {
   LazySegmentRecoverySnapshot,
 } from "@/messaging/contracts";
 import { ProviderError } from "@/provider/errors";
-import type { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
+import type { TranslationProvider } from "@/provider/translationProvider";
 import {
   isOpenAiCompatibleProviderProfile,
   type OpenAiCompatibleProviderProfile,
@@ -13,15 +13,7 @@ import {
 import { splitSegmentsIntoBatches } from "@/translation/batch";
 import { SessionTranslationCache } from "@/translation/cache";
 import { createCacheKey, serializeCacheKey } from "@/translation/hash";
-import {
-  createStreamingTranslationResultParser,
-  parseTranslationBatchResult,
-} from "@/translation/jsonResult";
-import {
-  buildStreamingTranslationPrompt,
-  buildTranslationPrompt,
-  translationPromptVersion,
-} from "@/translation/prompt";
+import { translationPromptVersion } from "@/translation/prompt";
 import { isTerminalTaskState } from "@/translation/types";
 import type {
   CancelReason,
@@ -43,8 +35,7 @@ const rateLimitBackoffMs = 250;
 export type TranslationTaskOrchestratorDependencies = {
   getActiveProfile: () => Promise<ProviderProfile | undefined>;
   getProviderProfile: (providerId: string) => Promise<ProviderProfile | undefined>;
-  provider: Pick<OpenAiCompatibleProvider, "generateText"> &
-    Partial<Pick<OpenAiCompatibleProvider, "streamText">>;
+  getTranslationProvider: (profile: ProviderProfile) => TranslationProvider;
   sendToContent: (tabId: number, message: ContentRequest) => Promise<ContentResponse>;
   emitProgress?: (progress: TranslationProgress, tabId: number) => void | Promise<void>;
   now: () => number;
@@ -594,95 +585,7 @@ export class TranslationTaskOrchestrator {
   private async requestAndApplyBatch(
     input: TranslationBatchInput,
   ): Promise<TranslationBatchResult> {
-    if (this.dependencies.provider.streamText) {
-      const streamingResult = await this.requestAndApplyStreamingBatch(input);
-      if (streamingResult) {
-        return streamingResult;
-      }
-    }
-
     return this.requestAndApplyBufferedBatch(input);
-  }
-
-  private async requestAndApplyStreamingBatch(
-    input: TranslationBatchInput,
-  ): Promise<TranslationBatchResult | undefined> {
-    const streamText = this.dependencies.provider.streamText;
-    if (!streamText) {
-      return undefined;
-    }
-
-    const parser = createStreamingTranslationResultParser(
-      input.segments.map((segment) => segment.id),
-    );
-    const appliedRepresentativeIds = new Set<string>();
-    let sawValidItem = false;
-    let acquiredProviderSlot = false;
-
-    try {
-      if (!(await this.acquireProviderRequestSlot(input.task))) {
-        return { missingSegments: [] };
-      }
-      acquiredProviderSlot = true;
-
-      for await (const chunk of streamText({
-        profile: input.profile,
-        prompt: buildStreamingTranslationPrompt({
-          sourceLanguage: input.sourceLanguage,
-          targetLanguage: input.targetLanguage,
-          segments: input.segments,
-        }),
-        abortSignal: input.task.controller.signal,
-      })) {
-        if (this.isTaskCancelled(input.task)) {
-          return { missingSegments: [] };
-        }
-
-        for (const item of parser.push(chunk.text)) {
-          sawValidItem = true;
-          if (await this.applyAndCacheRepresentativeItem(input, item)) {
-            appliedRepresentativeIds.add(item.segmentId);
-          }
-        }
-      }
-
-      for (const item of parser.finish().items) {
-        sawValidItem = true;
-        if (await this.applyAndCacheRepresentativeItem(input, item)) {
-          appliedRepresentativeIds.add(item.segmentId);
-        }
-      }
-
-      if (!sawValidItem) {
-        return undefined;
-      }
-
-      return {
-        missingSegments: input.segments.filter(
-          (segment) => !appliedRepresentativeIds.has(segment.id),
-        ),
-      };
-    } catch (error) {
-      if (this.isTaskCancelled(input.task)) {
-        return { missingSegments: [] };
-      }
-
-      if (!sawValidItem) {
-        await this.handleBatchError(input.task, error);
-        return undefined;
-      }
-
-      return {
-        missingSegments: input.segments.filter(
-          (segment) => !appliedRepresentativeIds.has(segment.id),
-        ),
-        error,
-      };
-    } finally {
-      if (acquiredProviderSlot) {
-        this.releaseProviderRequestSlot(input.task);
-      }
-    }
   }
 
   private async requestAndApplyBufferedBatch(
@@ -692,15 +595,14 @@ export class TranslationTaskOrchestrator {
       return { missingSegments: [] };
     }
 
-    let response: Awaited<ReturnType<TranslationTaskOrchestratorDependencies["provider"]["generateText"]>>;
+    const provider = this.dependencies.getTranslationProvider(input.profile);
+    let response: Awaited<ReturnType<TranslationProvider["translateBatch"]>>;
     try {
-      response = await this.dependencies.provider.generateText({
+      response = await provider.translateBatch({
         profile: input.profile,
-        prompt: buildTranslationPrompt({
-          sourceLanguage: input.sourceLanguage,
-          targetLanguage: input.targetLanguage,
-          segments: input.segments,
-        }),
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        segments: input.segments,
         abortSignal: input.task.controller.signal,
       });
     } finally {
@@ -711,52 +613,24 @@ export class TranslationTaskOrchestrator {
       return { missingSegments: [] };
     }
 
-    const expectedSegmentIds = input.segments.map((segment) => segment.id);
-    const parsed = parseTranslationBatchResult(response.text, expectedSegmentIds);
+    const expectedSegmentIds = new Set(input.segments.map((segment) => segment.id));
+    const validItems = response.items.filter((item) => expectedSegmentIds.has(item.segmentId));
 
-    if (this.isTaskCancelled(input.task)) {
-      return { missingSegments: [] };
-    }
-
-    if (parsed.items.length > 0) {
-      const fanOutItems = parsed.items.flatMap((item) =>
+    if (validItems.length > 0) {
+      const fanOutItems = validItems.flatMap((item) =>
         this.fanOutTranslationItem(item, input.fanOutGroups),
       );
       const appliedItems = await this.applyTranslations(input.task, fanOutItems);
 
       if (appliedItems.length > 0) {
-        await this.cacheAppliedGroups(input, parsed.items, appliedItems);
+        await this.cacheAppliedGroups(input, validItems, appliedItems);
       }
     }
 
-    const missingIds = new Set(parsed.missingSegmentIds);
+    const translatedIds = new Set(validItems.map((item) => item.segmentId));
     return {
-      missingSegments: input.segments.filter((segment) => missingIds.has(segment.id)),
+      missingSegments: input.segments.filter((segment) => !translatedIds.has(segment.id)),
     };
-  }
-
-  private async applyAndCacheRepresentativeItem(
-    input: TranslationBatchInput,
-    item: TranslationResultItem,
-  ): Promise<boolean> {
-    const group = input.fanOutGroups.get(item.segmentId) ?? [];
-    const fanOutItems = this.fanOutTranslationItem(item, input.fanOutGroups);
-    const appliedItems = await this.applyTranslations(input.task, fanOutItems, {
-      countFailures: false,
-    });
-    if (appliedItems.length === 0) {
-      return false;
-    }
-
-    const appliedIds = new Set(appliedItems.map((appliedItem) => appliedItem.segmentId));
-    const pendingGroup = group.filter((segment) => !appliedIds.has(segment.id));
-    if (pendingGroup.length > 0) {
-      input.fanOutGroups.set(item.segmentId, pendingGroup);
-      return false;
-    }
-
-    await this.cacheAppliedGroups(input, [item], appliedItems);
-    return group.length > 0;
   }
 
   private fanOutTranslationItem(

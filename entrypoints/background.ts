@@ -15,6 +15,7 @@ import type {
 } from "@/messaging/contracts";
 import { addRuntimeMessageListener, sendTabMessage } from "@/messaging/runtime";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
+import { OpenAiTranslationAdapter } from "@/provider/openAiTranslationAdapter";
 import type { ProviderProfile } from "@/provider/types";
 import { createStorageRepositories } from "@/storage/repositories";
 
@@ -32,6 +33,7 @@ function createErrorResponse(error: unknown): BackgroundResponse {
 export default defineBackground(() => {
   const storage = createStorageRepositories();
   const provider = new OpenAiCompatibleProvider();
+  const translationProvider = new OpenAiTranslationAdapter(provider);
 
   async function listProfiles(): Promise<ProviderProfile[]> {
     return storage.providers.listProfiles();
@@ -62,7 +64,7 @@ export default defineBackground(() => {
   const orchestrator = new TranslationTaskOrchestrator({
     getActiveProfile,
     getProviderProfile,
-    provider,
+    getTranslationProvider: () => translationProvider,
     sendToContent: (tabId, message) =>
       sendTabMessage<ContentRequest, ContentResponse>(tabId, message),
     emitProgress: (progress, tabId) => {
