@@ -165,7 +165,15 @@ export class TranslationTaskOrchestrator {
   async enqueueTranslationBatch(
     input: EnqueueTranslationBatchInput,
   ): Promise<TranslationProgress> {
-    const task = this.tasks.get(input.taskId) ?? this.createTask(input.taskId, input.tabId);
+    const existingTask = this.tasks.get(input.taskId);
+    if (!existingTask) {
+      const activeTabTask = this.getActiveTaskForTab(input.tabId);
+      if (activeTabTask && activeTabTask.progress.taskId !== input.taskId) {
+        return this.missingTaskProgress(input.taskId);
+      }
+    }
+
+    const task = existingTask ?? this.createTask(input.taskId, input.tabId);
 
     if (this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state)) {
       return this.cloneProgress(task.progress);
@@ -407,26 +415,33 @@ export class TranslationTaskOrchestrator {
         return this.failTask(task, "Content script did not return page segments.");
       }
 
-      const segments = collectResponse.segments;
-      task.segmentsById = new Map(segments.map((segment) => [segment.id, segment]));
-      task.collectionComplete = collectResponse.collectionComplete ?? true;
-      task.context = {
-        profile,
-        sourceLanguage: input.sourceLanguage,
-        targetLanguage: input.targetLanguage,
-        translationMode,
-      };
+      const collectedSegments = collectResponse.segments;
+      const hadContext = task.context !== undefined;
+      const segmentsToProcess = this.mergeTranslationBatchSegments(task, collectedSegments);
+      const collectionComplete = collectResponse.collectionComplete ?? true;
+
+      if (!hadContext) {
+        task.collectionComplete = collectionComplete;
+        task.context = {
+          profile,
+          sourceLanguage: input.sourceLanguage,
+          targetLanguage: input.targetLanguage,
+          translationMode,
+        };
+      } else if (collectionComplete) {
+        task.collectionComplete = true;
+      }
 
       this.updateProgress(task, {
         state: "translating",
-        total: segments.length,
+        total: task.segmentsById.size,
       });
 
       await this.processSegmentsForTask(
         task,
         translationMode === "lazyViewport"
-          ? segments.filter((segment) => segment.priority !== "normal")
-          : segments,
+          ? segmentsToProcess.filter((segment) => segment.priority !== "normal")
+          : segmentsToProcess,
       );
 
       if (task.progress.state === "cancelled") {
@@ -523,6 +538,16 @@ export class TranslationTaskOrchestrator {
     return [...this.tasks.values()].some(
       (task) => task.tabId === tabId,
     );
+  }
+
+  private getActiveTaskForTab(tabId: number): RunningTask | undefined {
+    return [...this.tasks.values()]
+      .filter(
+        (task) =>
+          task.tabId === tabId &&
+          !isTerminalTaskState(task.progress.state),
+      )
+      .sort((left, right) => right.createdAt - left.createdAt || right.sequence - left.sequence)[0];
   }
 
   private async processSegmentsForTask(
