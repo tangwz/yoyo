@@ -58,6 +58,8 @@ let translationQueueContext:
     }
   | undefined;
 let pendingFailedRuntimeBatchSegments = new Map<string, PageSegment>();
+let visibilityObserver: IntersectionObserver | undefined;
+let observedSegmentIdsByElement = new WeakMap<Element, string>();
 
 export async function estimatePage(): Promise<PageTranslationEstimate> {
   if (!isPageUrlSupported(location.href)) {
@@ -82,6 +84,8 @@ export async function estimatePage(): Promise<PageTranslationEstimate> {
 }
 
 function stopLazySegmentReporting(): void {
+  stopVisibilityObserver();
+
   if (lazyReportTimer !== undefined) {
     globalThis.clearTimeout(lazyReportTimer);
     lazyReportTimer = undefined;
@@ -119,6 +123,64 @@ function resetTranslationQueue(): void {
   translationQueue.clear();
   translationQueueContext = undefined;
   pendingFailedRuntimeBatchSegments = new Map();
+}
+
+function stopVisibilityObserver(): void {
+  visibilityObserver?.disconnect();
+  visibilityObserver = undefined;
+  observedSegmentIdsByElement = new WeakMap();
+}
+
+function observeCurrentSegments(taskId: string): void {
+  if (!visibilityObserver) {
+    return;
+  }
+
+  for (const anchor of currentAnchors.listByTask(taskId)) {
+    observedSegmentIdsByElement.set(anchor.sourceNode, anchor.segmentId);
+    visibilityObserver.observe(anchor.sourceNode);
+  }
+}
+
+function startVisibilityObserver(taskId: string): void {
+  stopVisibilityObserver();
+
+  if (typeof IntersectionObserver === "undefined") {
+    return;
+  }
+
+  visibilityObserver = new IntersectionObserver(
+    (entries) => {
+      const newlyVisible: PageSegment[] = [];
+
+      for (const entry of entries) {
+        if (!entry.isIntersecting) {
+          continue;
+        }
+
+        const segmentId = observedSegmentIdsByElement.get(entry.target);
+        const segment = segmentId ? currentSegmentsById.get(segmentId) : undefined;
+        if (!segment) {
+          continue;
+        }
+
+        newlyVisible.push({
+          ...segment,
+          priority: priorityForElement(entry.target as Element),
+        });
+      }
+
+      if (newlyVisible.length === 0) {
+        return;
+      }
+
+      translationQueue.enqueue(newlyVisible);
+      scheduleTranslationQueueFlush();
+    },
+    { threshold: 0.01, rootMargin: "500px 0px 500px 0px" },
+  );
+
+  observeCurrentSegments(taskId);
 }
 
 function scheduleTranslationQueueFlush(): void {
@@ -427,6 +489,7 @@ function mergeLazySegmentCollection(
   }
 
   currentSegmentsById = nextSegmentsById;
+  observeCurrentSegments(taskId);
 }
 
 function nextAvailableSegmentOrdinal(segmentIds: ReadonlySet<string>): number {
@@ -489,6 +552,7 @@ export async function collectSegments(
   scheduleTranslationQueueFlush();
 
   if (translationMode === "lazyViewport") {
+    startVisibilityObserver(taskId);
     startLazySegmentReporting(taskId, {
       sourceLanguage,
       targetLanguage,
@@ -498,6 +562,8 @@ export async function collectSegments(
       segments,
     });
     scheduleDeferredLazyCollection(taskId);
+  } else {
+    stopVisibilityObserver();
   }
 
   return segments;

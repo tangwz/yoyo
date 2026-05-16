@@ -53,10 +53,50 @@ describe("page runtime", () => {
     await Promise.resolve();
   }
 
+  class MockIntersectionObserver {
+    static instances: MockIntersectionObserver[] = [];
+    readonly observed = new Set<Element>();
+
+    constructor(private readonly callback: IntersectionObserverCallback) {
+      MockIntersectionObserver.instances.push(this);
+    }
+
+    observe(element: Element): void {
+      this.observed.add(element);
+    }
+
+    unobserve(element: Element): void {
+      this.observed.delete(element);
+    }
+
+    disconnect(): void {
+      this.observed.clear();
+    }
+
+    emitIntersecting(element: Element): void {
+      this.callback(
+        [
+          {
+            target: element,
+            isIntersecting: true,
+            intersectionRatio: 1,
+            time: 0,
+            boundingClientRect: element.getBoundingClientRect(),
+            intersectionRect: element.getBoundingClientRect(),
+            rootBounds: null,
+          } as IntersectionObserverEntry,
+        ],
+        this as unknown as IntersectionObserver,
+      );
+    }
+  }
+
   beforeEach(() => {
     removePageTranslations();
     document.body.innerHTML = "";
     setUrl("https://example.com/article");
+    MockIntersectionObserver.instances = [];
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
     runtimeMock.sendRuntimeMessage.mockReset();
     runtimeMock.sendRuntimeMessage.mockResolvedValue({
       type: "taskProgress",
@@ -75,6 +115,7 @@ describe("page runtime", () => {
     removePageTranslations();
     await drainPendingTimers();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     document.body.innerHTML = "";
     setUrl("https://example.com/article");
   });
@@ -371,6 +412,89 @@ describe("page runtime", () => {
         segments: [
           expect.objectContaining({ id: "seg_1" }),
           expect.objectContaining({ id: "seg_2" }),
+        ],
+      }),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
+  it("queues a normal segment when IntersectionObserver reports it visible", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+
+    document.body.innerHTML = `
+      <main>
+        <article>
+          <p id="visible">Visible paragraph.</p>
+          <p id="later">Later paragraph.</p>
+        </article>
+      </main>
+    `;
+
+    const visible = document.querySelector("#visible") as HTMLElement;
+    const later = document.querySelector("#later") as HTMLElement;
+    visible.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 10,
+        top: 10,
+        bottom: 30,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 20,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    later.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 500,
+        top: 500,
+        bottom: 530,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 30,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
+
+    expect(MockIntersectionObserver.instances[0]?.observed.has(later)).toBe(true);
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    later.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 20,
+        top: 20,
+        bottom: 50,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 30,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    MockIntersectionObserver.instances[0]?.emitIntersecting(later);
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueTranslationBatch",
+        segments: [
+          expect.objectContaining({
+            sourceText: "Later paragraph.",
+            priority: "viewport",
+          }),
         ],
       }),
     );
