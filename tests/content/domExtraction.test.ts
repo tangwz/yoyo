@@ -198,6 +198,24 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("keeps normal article generic numeric spans", async () => {
+    const sourceText =
+      "Revenue in 2024 grew because the platform reduced operational complexity across multiple product teams.";
+    document.body.innerHTML = `
+      <article>
+        <section>
+          Revenue in <span>2024</span> grew because the platform reduced operational complexity across multiple product teams.
+        </section>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      sourceText,
+    ]);
+  });
+
   it("keeps article header headings and body text", async () => {
     document.body.innerHTML = `
       <article>
@@ -630,7 +648,7 @@ describe("collectPageSegments", () => {
     const bodyText =
       "This generic feed item contains enough meaningful text for translation extraction without including controls.";
     document.body.innerHTML = `
-      <article>
+      <article data-testid="tweet">
         <section>
           ${bodyText}
           <div aria-label="Post actions">

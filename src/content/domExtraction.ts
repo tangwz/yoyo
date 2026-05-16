@@ -85,15 +85,28 @@ function isGenericLowValueElement(element: Element): boolean {
 }
 
 function isFeedHeuristicContext(element: Element): boolean {
-  return element.closest(
+  if (
+    element.closest(
+      [
+        '[data-testid="tweet"]',
+        '[data-testid="tweetText"]',
+        '[data-testid="cellInnerDiv"]',
+        '[role="feed"]',
+        '[role="listitem"]',
+      ].join(","),
+    )
+  ) {
+    return true;
+  }
+
+  const roleArticle = element.closest('[role="article"]');
+  if (!roleArticle) return false;
+  if (roleArticle.closest('[role="feed"], [role="listitem"]')) return true;
+  return roleArticle.querySelector(
     [
       '[data-testid="tweet"]',
       '[data-testid="tweetText"]',
       '[data-testid="cellInnerDiv"]',
-      '[role="feed"]',
-      '[role="listitem"]',
-      '[role="article"]',
-      "article",
     ].join(","),
   ) !== null;
 }
