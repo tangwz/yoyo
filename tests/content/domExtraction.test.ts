@@ -475,6 +475,51 @@ describe("collectPageSegments", () => {
 
     expect(result.segments).toEqual([]);
   });
+
+  it("keeps repeated independent text nodes as separate anchors", async () => {
+    document.body.innerHTML = `
+      <main>
+        <p>Repeated visible text.</p>
+        <p>Repeated visible text.</p>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Repeated visible text.",
+      "Repeated visible text.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelectorAll("p")[0],
+    );
+    expect(result.anchors.get("seg_2")?.sourceNode).toBe(
+      document.querySelectorAll("p")[1],
+    );
+  });
+
+  it("excludes low-value feed descendants from generic source text", async () => {
+    const bodyText =
+      "This generic feed item contains enough meaningful text for translation extraction without including controls.";
+    document.body.innerHTML = `
+      <article>
+        <section>
+          ${bodyText}
+          <div aria-label="Post actions">
+            <button>Like</button>
+            <button>Reply</button>
+          </div>
+          <span>42</span>
+        </section>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
+    ]);
+  });
 });
 
 describe("isPageUrlSupported", () => {

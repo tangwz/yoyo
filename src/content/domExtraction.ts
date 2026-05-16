@@ -55,16 +55,17 @@ const lowValueSelector = [
 ].join(",");
 
 function discoverRoots(): Element[] {
-  const roots = [...document.querySelectorAll(rootSelector)];
-  const discoveredRoots = roots.filter((root, index, allRoots) => {
-    if (root === document.documentElement) return false;
-    if (root === document.body) return false;
-    if (isElementSkippable(root)) return false;
-    return !allRoots.some(
-      (other, otherIndex) =>
-        otherIndex !== index && other !== root && other.contains(root),
-    );
-  });
+  const discoveredRoots: Element[] = [];
+  let currentRoot: Element | null = null;
+
+  for (const root of document.querySelectorAll(rootSelector)) {
+    if (root === document.documentElement || root === document.body) continue;
+    if (currentRoot?.contains(root)) continue;
+    if (isElementSkippable(root)) continue;
+
+    discoveredRoots.push(root);
+    currentRoot = root;
+  }
 
   return discoveredRoots.length > 0 ? discoveredRoots : [document.body];
 }
@@ -149,6 +150,7 @@ function collectTextStream(
 
     const childElement = child as Element;
     if (isElementSkippable(childElement)) continue;
+    if (isLowValueFeedElement(childElement)) continue;
     if (excludedTags.has(childElement.tagName)) continue;
 
     parts.push(collectTextStream(childElement, excludedTags));
@@ -217,7 +219,6 @@ export async function collectPageSegments(
   const anchors = new AnchorRegistry();
   const segments: PageSegment[] = [];
   const seenNodes = new WeakSet<Element>();
-  const seenTextHashes = new Set<string>();
   let order = 1;
 
   async function addSegment(
@@ -225,7 +226,7 @@ export async function collectPageSegments(
     sourceText: string,
   ): Promise<void> {
     const normalizedText = normalizeSourceText(sourceText);
-    if (!normalizedText || seenTextHashes.has(normalizedText)) {
+    if (!normalizedText) {
       return;
     }
 
@@ -235,7 +236,6 @@ export async function collectPageSegments(
     }
 
     const segmentId = `seg_${order}`;
-    seenTextHashes.add(normalizedText);
     segments.push({
       id: segmentId,
       order,
