@@ -86,6 +86,8 @@ type RunningTask = {
   inFlightSegmentIds: Set<string>;
   context?: TaskTranslationContext;
   pendingContext?: PendingTranslationContext;
+  pendingContextSource?: "translatePage" | "runtime";
+  contextWaiters: Array<() => void>;
   currentConcurrency: number;
   consecutiveSuccessfulBatches: number;
   activeProviderRequests: number;
@@ -174,6 +176,7 @@ export class TranslationTaskOrchestrator {
       input.collectionComplete ?? input.translationMode !== "lazyViewport";
     const existingTask = this.tasks.get(input.taskId);
     let task = existingTask;
+    const isNewRuntimeTask = !task;
     let shouldRemoveTaskAfterDrain = false;
 
     if (task && task.tabId !== input.tabId) {
@@ -189,18 +192,36 @@ export class TranslationTaskOrchestrator {
     if (!task) {
       task = this.createTask(input.taskId, input.tabId);
       task.collectionComplete = collectionComplete;
+      task.pendingContext = {
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        translationMode: input.translationMode,
+      };
+      task.pendingContextSource = "runtime";
     }
 
     this.enterRuntimeBatch(task);
 
     try {
-      if (!task.context && task.pendingContext) {
-        this.mergeTranslationBatchSegments(task, input.segments);
+      if (!task.context && task.pendingContext && !isNewRuntimeTask) {
+        const segmentsToProcess = this.mergeTranslationBatchSegments(task, input.segments);
+        if (collectionComplete) {
+          task.collectionComplete = true;
+        }
         this.updateProgress(task, {
           total: task.segmentsById.size,
         });
         this.markSegmentsFailed(task, input.failedSegmentIds ?? []);
-        return this.cloneProgress(task.progress);
+        if (task.pendingContextSource === "runtime") {
+          await this.waitForContext(task);
+          if (this.isTaskStopped(task) || !task.context) {
+            return this.cloneProgress(task.progress);
+          }
+
+          await this.processSegmentsForTask(task, segmentsToProcess);
+        } else {
+          return this.cloneProgress(task.progress);
+        }
       }
 
       if (!task.context) {
@@ -229,6 +250,8 @@ export class TranslationTaskOrchestrator {
             ...context,
           };
           task.pendingContext = undefined;
+          task.pendingContextSource = undefined;
+          this.wakeContextWaiters(task);
         }
       }
 
@@ -440,6 +463,7 @@ export class TranslationTaskOrchestrator {
       targetLanguage: input.targetLanguage,
       translationMode: input.translationMode ?? "lazyViewport",
     };
+    task.pendingContextSource = "translatePage";
     return task;
   }
 
@@ -461,12 +485,13 @@ export class TranslationTaskOrchestrator {
         targetLanguage: input.targetLanguage,
         translationMode: input.translationMode ?? "lazyViewport",
       };
-      task.collectionComplete = false;
       task.context = task.context ?? {
         profile,
         ...context,
       };
       task.pendingContext = undefined;
+      task.pendingContextSource = undefined;
+      this.wakeContextWaiters(task);
 
       const collectResponse = await this.dependencies.sendToContent(input.tabId, {
         type: "collectSegments",
@@ -541,6 +566,7 @@ export class TranslationTaskOrchestrator {
     }
 
     task.controller.abort();
+    this.wakeContextWaiters(task);
     this.updateProgress(task, { state: "cancelled" });
     return this.cloneProgress(task.progress);
   }
@@ -581,6 +607,7 @@ export class TranslationTaskOrchestrator {
       consecutiveSuccessfulBatches: 0,
       activeProviderRequests: 0,
       providerSlotWaiters: [],
+      contextWaiters: [],
       pendingRuntimeBatchCount: 0,
       runtimeBatchWaiters: [],
       collectionComplete: true,
@@ -632,6 +659,22 @@ export class TranslationTaskOrchestrator {
     await new Promise<void>((resolve) => {
       task.runtimeBatchWaiters.push(resolve);
     });
+  }
+
+  private async waitForContext(task: RunningTask): Promise<void> {
+    if (task.context || this.isTaskStopped(task)) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      task.contextWaiters.push(resolve);
+    });
+  }
+
+  private wakeContextWaiters(task: RunningTask): void {
+    for (const wake of task.contextWaiters.splice(0)) {
+      wake();
+    }
   }
 
   private async processSegmentsForTask(
@@ -1248,6 +1291,7 @@ export class TranslationTaskOrchestrator {
       failed: Math.min(failed, remaining),
       errorMessage,
     });
+    this.wakeContextWaiters(task);
     return this.cloneProgress(task.progress);
   }
 
@@ -1303,13 +1347,6 @@ export class TranslationTaskOrchestrator {
     return {
       ...this.emptyProgress(taskId, "cancelled"),
       errorMessage: "Translation task is no longer available. Start translation again.",
-    };
-  }
-
-  private noActiveProfileProgress(taskId: string): TranslationProgress {
-    return {
-      ...this.emptyProgress(taskId, "failed"),
-      errorMessage: "No active provider profile.",
     };
   }
 

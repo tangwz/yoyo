@@ -1079,7 +1079,7 @@ describe("TranslationTaskOrchestrator", () => {
     });
 
     await vi.waitFor(() => {
-      expect(getActiveProfile).toHaveBeenCalledTimes(2);
+      expect(getActiveProfile).toHaveBeenCalledTimes(1);
     });
     resolveProfile?.(providerProfile());
 
@@ -1123,21 +1123,13 @@ describe("TranslationTaskOrchestrator", () => {
     let resolveFirstProfile:
       | ((profile: ProviderProfile | undefined) => void)
       | undefined;
-    let resolveSecondProfile:
-      | ((profile: ProviderProfile | undefined) => void)
-      | undefined;
     let resolveFirstProvider:
       | ((response: { text: string; model: string }) => void)
       | undefined;
     const firstProfilePromise = new Promise<ProviderProfile | undefined>((resolve) => {
       resolveFirstProfile = resolve;
     });
-    const secondProfilePromise = new Promise<ProviderProfile | undefined>((resolve) => {
-      resolveSecondProfile = resolve;
-    });
-    const getActiveProfile = vi.fn()
-      .mockReturnValueOnce(firstProfilePromise)
-      .mockReturnValueOnce(secondProfilePromise);
+    const getActiveProfile = vi.fn().mockReturnValueOnce(firstProfilePromise);
     const { orchestrator, generateText, sendToContent } = createOrchestrator({
       getActiveProfile,
     });
@@ -1199,11 +1191,16 @@ describe("TranslationTaskOrchestrator", () => {
     });
 
     await vi.waitFor(() => {
-      expect(getActiveProfile).toHaveBeenCalledTimes(2);
+      expect(getActiveProfile).toHaveBeenCalledTimes(1);
     });
     resolveFirstProfile?.(providerProfile());
     await vi.waitFor(() => {
-      expect(generateText).toHaveBeenCalledTimes(1);
+      expect(generateText).toHaveBeenCalledTimes(2);
+      expect(orchestrator.getTask("runtime-task")).toMatchObject({
+        state: "translating",
+        total: 2,
+        translated: 1,
+      });
     });
     resolveFirstProvider?.({
       text: JSON.stringify({
@@ -1211,15 +1208,6 @@ describe("TranslationTaskOrchestrator", () => {
       }),
       model: "gpt-4.1-mini",
     });
-    await vi.waitFor(() => {
-      expect(orchestrator.getTask("runtime-task")).toMatchObject({
-        state: "translating",
-        total: 1,
-        translated: 1,
-      });
-    });
-    resolveSecondProfile?.(providerProfile());
-
     await expect(Promise.all([firstBatch, secondBatch])).resolves.toEqual([
       {
         taskId: "runtime-task",
@@ -1245,6 +1233,105 @@ describe("TranslationTaskOrchestrator", () => {
       type: "applyTranslations",
       taskId: "runtime-task",
       items: [{ segmentId: "runtime-2", translatedText: "Translated runtime-2" }],
+    });
+  });
+
+  it("locks standalone runtime context to the first batch before profile lookup resolves", async () => {
+    let resolveFirstProfile:
+      | ((profile: ProviderProfile | undefined) => void)
+      | undefined;
+    const firstProfilePromise = new Promise<ProviderProfile | undefined>((resolve) => {
+      resolveFirstProfile = resolve;
+    });
+    const getActiveProfile = vi.fn()
+      .mockReturnValueOnce(firstProfilePromise)
+      .mockResolvedValueOnce(providerProfile({ id: "later-profile" }));
+    const { orchestrator, generateText, sendToContent } = createOrchestrator({
+      getActiveProfile,
+    });
+
+    sendToContent.mockResolvedValue({ type: "contentActionResult", success: true });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+      return {
+        text: JSON.stringify({
+          items: (input.items ?? []).map((item) => ({
+            id: item.id,
+            text: `Translated ${item.id}`,
+          })),
+        }),
+        model: request.profile.textModel,
+      };
+    });
+
+    const firstBatch = orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "runtime-task",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "fullPage",
+      collectionComplete: true,
+      segments: [
+        segment({
+          id: "runtime-1",
+          sourceText: "First runtime text.",
+          textHash: "hash-runtime-1",
+          priority: "viewport",
+        }),
+      ],
+    });
+    const secondBatch = orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "runtime-task",
+      sourceLanguage: "ja",
+      targetLanguage: "fr",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "runtime-2",
+          sourceText: "Second runtime text.",
+          textHash: "hash-runtime-2",
+          priority: "viewport",
+        }),
+      ],
+    });
+
+    await vi.waitFor(() => {
+      expect(getActiveProfile).toHaveBeenCalled();
+    });
+    await Promise.resolve();
+    resolveFirstProfile?.(providerProfile({ id: "first-profile" }));
+
+    await expect(Promise.all([firstBatch, secondBatch])).resolves.toEqual([
+      {
+        taskId: "runtime-task",
+        state: "completed",
+        total: 2,
+        translated: 2,
+        failed: 0,
+      },
+      {
+        taskId: "runtime-task",
+        state: "completed",
+        total: 2,
+        translated: 2,
+        failed: 0,
+      },
+    ]);
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(generateText.mock.calls[0]?.[0].prompt).toContain("Target language: zh-CN");
+    expect(generateText.mock.calls[0]?.[0].prompt).not.toContain("Target language: fr");
+    expect(generateText.mock.calls[1]?.[0].prompt).toContain("Target language: zh-CN");
+    expect(generateText.mock.calls[1]?.[0].prompt).not.toContain("Target language: fr");
+    expect(orchestrator.getTask("runtime-task")).toEqual({
+      taskId: "runtime-task",
+      state: "completed",
+      total: 2,
+      translated: 2,
+      failed: 0,
     });
   });
 
@@ -1685,7 +1772,7 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
-  it("defers a mismatched runtime batch while translatePage profile lookup is pending", async () => {
+  it("preserves runtime collection completion while translatePage profile lookup is pending", async () => {
     let resolveProfile:
       | ((profile: ProviderProfile | undefined) => void)
       | undefined;
@@ -1782,7 +1869,7 @@ describe("TranslationTaskOrchestrator", () => {
     });
     await expect(running).resolves.toMatchObject({
       taskId: "task-1",
-      state: "waitingForViewport",
+      state: "completed",
       total: 1,
       translated: 1,
       failed: 0,
