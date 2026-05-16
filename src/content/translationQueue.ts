@@ -49,7 +49,13 @@ export class TranslationQueue {
     const segments = Array.isArray(input) ? input : [input];
 
     for (const segment of segments) {
-      if (this.entries.has(segment.id)) {
+      const existing = this.entries.get(segment.id);
+      if (existing?.state === "pending") {
+        existing.segment = segment;
+        continue;
+      }
+
+      if (existing) {
         continue;
       }
 
@@ -121,7 +127,7 @@ export class TranslationQueue {
   markTranslated(segmentIds: readonly string[]): void {
     for (const segmentId of segmentIds) {
       const entry = this.entries.get(segmentId);
-      if (entry) {
+      if (entry?.state === "translating") {
         entry.state = "translated";
       }
     }
@@ -130,7 +136,7 @@ export class TranslationQueue {
   markFailed(segmentIds: readonly string[]): void {
     for (const segmentId of segmentIds) {
       const entry = this.entries.get(segmentId);
-      if (entry) {
+      if (entry?.state === "translating") {
         entry.state = "failed";
       }
     }

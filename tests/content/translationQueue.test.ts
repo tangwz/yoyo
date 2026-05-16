@@ -114,6 +114,51 @@ describe("TranslationQueue", () => {
     expect(queue.size()).toBe(0);
   });
 
+  it("refreshes pending duplicate segment metadata before batching", () => {
+    const queue = new TranslationQueue(defaultTranslationQueueOptions);
+
+    queue.enqueue(segment("one", 2, "Old text.", "normal"));
+    queue.enqueue(segment("two", 1, "Other text.", "normal"));
+    queue.enqueue(segment("one", 2, "Visible text.", "viewport"));
+
+    expect(queue.takeNextBatch()).toEqual([
+      segment("one", 2, "Visible text.", "viewport"),
+      segment("two", 1, "Other text.", "normal"),
+    ]);
+  });
+
+  it("does not let a translated entry regress to failed or retry", () => {
+    const queue = new TranslationQueue(defaultTranslationQueueOptions);
+    const item = segment("one", 1, "One.", "viewport");
+
+    queue.enqueue(item);
+    const batch = queue.takeNextBatch();
+    queue.markTranslated(batch.map((entry) => entry.id));
+    queue.markFailed(["one"]);
+    queue.retryFailed(["one"], [item]);
+
+    expect(queue.hasPending()).toBe(false);
+    expect(queue.takeNextBatch()).toEqual([]);
+  });
+
+  it("ignores terminal marks for entries that are still pending", () => {
+    const translatedQueue = new TranslationQueue(defaultTranslationQueueOptions);
+    const failedQueue = new TranslationQueue(defaultTranslationQueueOptions);
+
+    translatedQueue.enqueue(segment("translated", 1, "One.", "viewport"));
+    translatedQueue.markTranslated(["translated"]);
+    expect(translatedQueue.takeNextBatch().map((entry) => entry.id)).toEqual([
+      "translated",
+    ]);
+
+    failedQueue.enqueue(segment("failed", 1, "Two.", "viewport"));
+    failedQueue.markFailed(["failed"]);
+    failedQueue.retryFailed(["failed"], [segment("failed", 1, "Two.", "viewport")]);
+    expect(failedQueue.takeNextBatch().map((entry) => entry.id)).toEqual([
+      "failed",
+    ]);
+  });
+
   it("allows failed segments to be retried explicitly", () => {
     const queue = new TranslationQueue(defaultTranslationQueueOptions);
     const item = segment("one", 1, "One.", "viewport");
