@@ -1507,6 +1507,105 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("does not apply runtime provider results after pending collection fails the task", async () => {
+    let resolveCollect:
+      | ((response: ContentResponse) => void)
+      | undefined;
+    let resolveProvider:
+      | ((response: { text: string; model: string }) => void)
+      | undefined;
+    const generateText = vi.fn<
+      (request: GenerateTextRequest) => Promise<{ text: string; model: string }>
+    >(
+      async () =>
+        new Promise((resolve) => {
+          resolveProvider = resolve;
+        }),
+    );
+    const { orchestrator, sendToContent } = createOrchestrator({
+      provider: { generateText },
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return new Promise<ContentResponse>((resolve) => {
+          resolveCollect = resolve;
+        });
+      }
+
+      if (message.type === "applyTranslations") {
+        throw new Error("Translations must not be applied after task failure.");
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+
+    const running = orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    await vi.waitFor(() => {
+      expect(resolveCollect).toBeDefined();
+    });
+
+    const runtimeBatch = orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "runtime-1",
+          sourceText: "Runtime text.",
+          textHash: "hash-runtime",
+          priority: "viewport",
+        }),
+      ],
+    });
+    await vi.waitFor(() => {
+      expect(generateText).toHaveBeenCalledTimes(1);
+    });
+
+    resolveCollect?.({
+      type: "contentActionResult",
+      success: true,
+    });
+    await expect(running).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "failed",
+      total: 1,
+      translated: 0,
+      failed: 1,
+      errorMessage: "Content script did not return page segments.",
+    });
+
+    resolveProvider?.({
+      text: JSON.stringify({
+        items: [{ id: "runtime-1", text: "Translated runtime." }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+    await expect(runtimeBatch).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "failed",
+      translated: 0,
+      failed: 1,
+      errorMessage: "Content script did not return page segments.",
+    });
+    expect(sendToContent).toHaveBeenCalledTimes(1);
+    expect(orchestrator.getTask("task-1")).toMatchObject({
+      taskId: "task-1",
+      state: "failed",
+      translated: 0,
+      failed: 1,
+      errorMessage: "Content script did not return page segments.",
+    });
+  });
+
   it("keeps original context when a runtime batch resumes after collection initializes it", async () => {
     const originalProfile = providerProfile({
       id: "original-provider",

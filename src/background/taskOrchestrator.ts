@@ -631,7 +631,7 @@ export class TranslationTaskOrchestrator {
     const representativeGroups = new Map<string, PageSegment[]>();
 
     for (const segment of input.segments) {
-      if (this.isTaskCancelled(input.task)) {
+      if (this.isTaskStopped(input.task)) {
         return;
       }
 
@@ -690,7 +690,7 @@ export class TranslationTaskOrchestrator {
     try {
       const result = await this.requestAndApplyBatch(input);
 
-      if (this.isTaskCancelled(input.task)) {
+      if (this.isTaskStopped(input.task)) {
         return;
       }
 
@@ -706,7 +706,7 @@ export class TranslationTaskOrchestrator {
 
       await this.retryOrDegradeBatch({ ...input, segments: result.missingSegments }, attempt);
     } catch (error) {
-      if (this.isTaskCancelled(input.task)) {
+      if (this.isTaskStopped(input.task)) {
         return;
       }
 
@@ -758,11 +758,15 @@ export class TranslationTaskOrchestrator {
         }),
         abortSignal: input.task.controller.signal,
       })) {
-        if (this.isTaskCancelled(input.task)) {
+        if (this.isTaskStopped(input.task)) {
           return { missingSegments: [] };
         }
 
         for (const item of parser.push(chunk.text)) {
+          if (this.isTaskStopped(input.task)) {
+            return { missingSegments: [] };
+          }
+
           sawValidItem = true;
           if (await this.applyAndCacheRepresentativeItem(input, item)) {
             appliedRepresentativeIds.add(item.segmentId);
@@ -770,7 +774,15 @@ export class TranslationTaskOrchestrator {
         }
       }
 
+      if (this.isTaskStopped(input.task)) {
+        return { missingSegments: [] };
+      }
+
       for (const item of parser.finish().items) {
+        if (this.isTaskStopped(input.task)) {
+          return { missingSegments: [] };
+        }
+
         sawValidItem = true;
         if (await this.applyAndCacheRepresentativeItem(input, item)) {
           appliedRepresentativeIds.add(item.segmentId);
@@ -787,7 +799,7 @@ export class TranslationTaskOrchestrator {
         ),
       };
     } catch (error) {
-      if (this.isTaskCancelled(input.task)) {
+      if (this.isTaskStopped(input.task)) {
         return { missingSegments: [] };
       }
 
@@ -831,14 +843,14 @@ export class TranslationTaskOrchestrator {
       this.releaseProviderRequestSlot(input.task);
     }
 
-    if (this.isTaskCancelled(input.task)) {
+    if (this.isTaskStopped(input.task)) {
       return { missingSegments: [] };
     }
 
     const expectedSegmentIds = input.segments.map((segment) => segment.id);
     const parsed = parseTranslationBatchResult(response.text, expectedSegmentIds);
 
-    if (this.isTaskCancelled(input.task)) {
+    if (this.isTaskStopped(input.task)) {
       return { missingSegments: [] };
     }
 
@@ -847,6 +859,10 @@ export class TranslationTaskOrchestrator {
         this.fanOutTranslationItem(item, input.fanOutGroups),
       );
       const appliedItems = await this.applyTranslations(input.task, fanOutItems);
+
+      if (this.isTaskStopped(input.task)) {
+        return { missingSegments: [] };
+      }
 
       if (appliedItems.length > 0) {
         await this.cacheAppliedGroups(input, parsed.items, appliedItems);
@@ -868,7 +884,7 @@ export class TranslationTaskOrchestrator {
     const appliedItems = await this.applyTranslations(input.task, fanOutItems, {
       countFailures: false,
     });
-    if (appliedItems.length === 0) {
+    if (appliedItems.length === 0 || this.isTaskStopped(input.task)) {
       return false;
     }
 
@@ -914,7 +930,7 @@ export class TranslationTaskOrchestrator {
     input: TranslationBatchInput,
     attempt: number,
   ): Promise<void> {
-    if (this.isTaskCancelled(input.task) || input.segments.length === 0) {
+    if (this.isTaskStopped(input.task) || input.segments.length === 0) {
       return;
     }
 
@@ -924,6 +940,10 @@ export class TranslationTaskOrchestrator {
     }
 
     if (input.segments.length === 1) {
+      if (this.isTaskStopped(input.task)) {
+        return;
+      }
+
       const failedCount = input.fanOutGroups.get(input.segments[0].id)?.length ?? 1;
       this.incrementProgress(input.task, { failed: failedCount });
       return;
@@ -945,7 +965,7 @@ export class TranslationTaskOrchestrator {
     items: TranslationResultItem[],
     options: ApplyTranslationsOptions = {},
   ): Promise<TranslationResultItem[]> {
-    if (items.length === 0 || this.isTaskCancelled(task)) {
+    if (items.length === 0 || this.isTaskStopped(task)) {
       return [];
     }
 
@@ -956,7 +976,7 @@ export class TranslationTaskOrchestrator {
         items,
       });
 
-      if (this.isTaskCancelled(task)) {
+      if (this.isTaskStopped(task)) {
         return [];
       }
 
@@ -989,7 +1009,7 @@ export class TranslationTaskOrchestrator {
       }
       return [];
     } catch {
-      if (this.isTaskCancelled(task)) {
+      if (this.isTaskStopped(task)) {
         return [];
       }
 
@@ -1024,7 +1044,7 @@ export class TranslationTaskOrchestrator {
           return;
         }
 
-        if (this.isTaskCancelled(task)) {
+        if (this.isTaskStopped(task)) {
           if (activeCount === 0) {
             finish();
           }
@@ -1054,22 +1074,30 @@ export class TranslationTaskOrchestrator {
   }
 
   private async handleBatchError(task: RunningTask, error: unknown): Promise<void> {
+    if (this.isTaskStopped(task)) {
+      return;
+    }
+
     if (error instanceof ProviderError && error.code === "rateLimited") {
       task.currentConcurrency = minConcurrency;
       task.consecutiveSuccessfulBatches = 0;
       this.wakeProviderRequestWaiters(task);
       await new Promise((resolve) => globalThis.setTimeout(resolve, rateLimitBackoffMs));
+
+      if (this.isTaskStopped(task)) {
+        return;
+      }
     }
   }
 
   private async acquireProviderRequestSlot(task: RunningTask): Promise<boolean> {
-    while (!this.isTaskCancelled(task) && task.activeProviderRequests >= task.currentConcurrency) {
+    while (!this.isTaskStopped(task) && task.activeProviderRequests >= task.currentConcurrency) {
       await new Promise<void>((resolve) => {
         task.providerSlotWaiters.push(resolve);
       });
     }
 
-    if (this.isTaskCancelled(task)) {
+    if (this.isTaskStopped(task)) {
       return false;
     }
 
