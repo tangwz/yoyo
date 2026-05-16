@@ -227,6 +227,7 @@ function isFeedLowValueElement(
   if (!isFeedHeuristicContext(element)) return false;
   if (element.tagName === "HEADER" && isFeedPostContext(element)) return true;
   if (element.matches(feedLowValueSelector)) return true;
+  if (isDirectReadableChromeInPostWithExplicitBody(element, textCache)) return true;
   if (isNonBodyTextHintInPostWithExplicitBody(element)) return true;
   if (isInsideBodySafeTextContainer(element)) return false;
 
@@ -236,6 +237,25 @@ function isFeedLowValueElement(
   if (/^\d+[smhdw]$/.test(text)) return true;
 
   return false;
+}
+
+function isDirectReadableChromeInPostWithExplicitBody(
+  element: Element,
+  textCache?: TextNormalizationCache,
+): boolean {
+  if (!isDirectReadableCandidate(element)) return false;
+  if (!isInsidePostWithExplicitBody(element)) return false;
+  if (element.closest('[data-testid="tweetText"]')) return false;
+
+  return [...element.children].some((child) => {
+    if (child.matches(feedLowValueSelector)) return true;
+    const text = normalizedElementText(child, textCache);
+    return (
+      /^@\w{1,30}$/.test(text) ||
+      /^\d+([.,]\d+)?[KMB]?$/.test(text) ||
+      /^\d+[smhdw]$/.test(text)
+    );
+  });
 }
 
 function isInsideBodySafeTextContainer(element: Element): boolean {
@@ -265,7 +285,23 @@ function isInsideFallbackBodyTextContainer(element: Element): boolean {
 function closestDirectReadableFeedElement(element: Element): Element | null {
   const readable = element.closest("p, li, blockquote, h1, h2, h3, h4, h5, h6");
   if (!readable || !isDirectReadableCandidate(readable)) return null;
+  if (isInsidePostWithExplicitBody(readable)) return null;
   return isFeedHeuristicContext(readable) ? readable : null;
+}
+
+function isInsidePostWithExplicitBody(element: Element): boolean {
+  if (element.closest('[data-testid="tweetText"]')) return false;
+
+  const post = element.closest(
+    [
+      '[data-testid="tweet"]',
+      '[data-testid="cellInnerDiv"]',
+      '[role="feed"]',
+      '[role="listitem"]',
+      '[role="article"]',
+    ].join(","),
+  );
+  return post !== null && post.querySelector('[data-testid="tweetText"]') !== null;
 }
 
 function isLowValueElement(
