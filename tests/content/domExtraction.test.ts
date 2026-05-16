@@ -323,6 +323,84 @@ describe("collectPageSegments", () => {
       visibleText,
     ]);
   });
+
+  it("extracts X-like tweet text from information-feed roots", async () => {
+    document.body.innerHTML = `
+      <main>
+        <article data-testid="tweet">
+          <div>
+            <a href="/author">Terence</a>
+            <span>@terence</span>
+            <time>1h</time>
+          </div>
+          <div data-testid="tweetText" lang="en" dir="auto">
+            <span>Shipping reliable software is mostly about</span>
+            <span> reducing accidental complexity.</span>
+          </div>
+          <div role="group" aria-label="Post actions">
+            <button>Reply</button>
+            <button>Repost</button>
+            <button>Like</button>
+          </div>
+        </article>
+        <article data-testid="tweet">
+          <div data-testid="tweetText" lang="en" dir="auto">
+            <span>Short tweet text should still translate.</span>
+          </div>
+        </article>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Shipping reliable software is mostly about reducing accidental complexity.",
+      "Short tweet text should still translate.",
+    ]);
+    expect(result.segments.map((segment) => segment.kind)).toEqual([
+      "paragraph",
+      "paragraph",
+    ]);
+  });
+
+  it("skips common feed chrome while keeping body text", async () => {
+    document.body.innerHTML = `
+      <main>
+        <nav>Home Search Notifications Messages</nav>
+        <article>
+          <div lang="en" dir="auto">Actual comment text.</div>
+          <div aria-label="Timeline controls">Show more</div>
+          <button>Like</button>
+          <a href="/user">@handle</a>
+          <span>42</span>
+        </article>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual comment text.",
+    ]);
+  });
+
+  it("deduplicates nested multi-root discoveries", async () => {
+    document.body.innerHTML = `
+      <main>
+        <article>
+          <div data-testid="tweetText" lang="en" dir="auto">
+            <span>Nested root text should appear once.</span>
+          </div>
+        </article>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Nested root text should appear once.",
+    ]);
+  });
 });
 
 describe("isPageUrlSupported", () => {

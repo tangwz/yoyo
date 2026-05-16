@@ -19,13 +19,74 @@ const genericMinimumTextLength = 80;
 const textNodeType = 3;
 const elementNodeType = 1;
 
-function chooseRoot(): Element {
-  return (
-    document.querySelector("article") ??
-    document.querySelector("main") ??
-    document.querySelector('[role="main"]') ??
-    document.body
-  );
+const rootSelector = [
+  "article",
+  "main",
+  '[role="main"]',
+  '[role="article"]',
+  '[data-testid="tweet"]',
+  '[data-testid="tweetText"]',
+  "[lang]",
+  '[dir="auto"]',
+].join(",");
+
+const lowValueSelector = [
+  "nav",
+  "header",
+  "footer",
+  "[role='navigation']",
+  "[role='button']",
+  "[role='menu']",
+  "[role='menubar']",
+  "[role='toolbar']",
+  "[aria-label*='action' i]",
+  "[aria-label*='control' i]",
+  "[data-testid='reply']",
+  "[data-testid='retweet']",
+  "[data-testid='like']",
+].join(",");
+
+function discoverRoots(): Element[] {
+  const roots = [...document.querySelectorAll(rootSelector)];
+  roots.push(document.body);
+
+  return roots.filter((root, index, allRoots) => {
+    if (isElementSkippable(root)) return false;
+    return !allRoots.some(
+      (other, otherIndex) =>
+        otherIndex !== index && other !== root && other.contains(root),
+    );
+  });
+}
+
+function isLowValueFeedElement(element: Element): boolean {
+  if (element.matches(lowValueSelector)) return true;
+
+  const text = normalizeSourceText(element.textContent ?? "");
+  if (!text) return true;
+  if (/^@\w{1,30}$/.test(text)) return true;
+  if (/^\d+([.,]\d+)?[KMB]?$/.test(text)) return true;
+  if (/^\d+[smhdw]$/.test(text)) return true;
+
+  return false;
+}
+
+function isHighConfidenceShortTextElement(element: Element): boolean {
+  if (element.matches('[data-testid="tweetText"]')) return true;
+  if (element.closest('[data-testid="tweetText"]')) return true;
+  if (element.closest("article, [role='article'], [data-testid='tweet']")) {
+    return element.hasAttribute("lang") || element.getAttribute("dir") === "auto";
+  }
+  return element.hasAttribute("lang") || element.getAttribute("dir") === "auto";
+}
+
+function hasHighConfidenceReadableChild(element: Element): boolean {
+  return [...element.children].some((child) => {
+    if (isElementSkippable(child) || isLowValueFeedElement(child)) {
+      return false;
+    }
+    return isHighConfidenceShortTextElement(child) || hasHighConfidenceReadableChild(child);
+  });
 }
 
 function isDirectReadableCandidate(element: Element): boolean {
@@ -87,10 +148,18 @@ function collectTextStream(
 
 function shouldExtractElement(element: Element): boolean {
   if (isElementSkippable(element)) return false;
+  if (isLowValueFeedElement(element)) return false;
   if (isDirectReadableCandidate(element)) return true;
+  if (!isHighConfidenceShortTextElement(element) && hasHighConfidenceReadableChild(element)) {
+    return false;
+  }
   if (hasReadableChildCandidate(element)) return false;
 
-  return collectExtractableText(element).length >= genericMinimumTextLength;
+  const text = collectExtractableText(element);
+  if (text.length === 0) return false;
+  if (isHighConfidenceShortTextElement(element)) return true;
+
+  return text.length >= genericMinimumTextLength;
 }
 
 function pathHintFor(element: Element): string {
@@ -136,33 +205,44 @@ export async function collectPageSegments(
 ): Promise<SegmentCollection> {
   const anchors = new AnchorRegistry();
   const segments: PageSegment[] = [];
+  const seenNodes = new WeakSet<Element>();
+  const seenTextHashes = new Set<string>();
   let order = 1;
 
   async function addSegment(
     element: Element,
     sourceText: string,
   ): Promise<void> {
+    const normalizedText = normalizeSourceText(sourceText);
+    if (!normalizedText || seenTextHashes.has(normalizedText)) {
+      return;
+    }
+
     const priority = priorityForElement(element);
     if (options.visibleRangeOnly && priority === "normal") {
       return;
     }
 
     const segmentId = `seg_${order}`;
+    seenTextHashes.add(normalizedText);
     segments.push({
       id: segmentId,
       order,
-      sourceText,
+      sourceText: normalizedText,
       kind: segmentKindFor(element),
       priority,
       pathHint: pathHintFor(element),
-      textHash: await hashNormalizedText(sourceText),
+      textHash: await hashNormalizedText(normalizedText),
     });
     anchors.set({ segmentId, sourceNode: element, taskId });
     order += 1;
   }
 
   async function walk(element: Element): Promise<void> {
+    if (seenNodes.has(element)) return;
+    seenNodes.add(element);
     if (isElementSkippable(element)) return;
+    if (isLowValueFeedElement(element)) return;
     if (options.visibleRangeOnly && element !== document.body && isOutsideVisibleCollectionRange(element)) {
       return;
     }
@@ -194,7 +274,9 @@ export async function collectPageSegments(
     }
   }
 
-  await walk(chooseRoot());
+  for (const root of discoverRoots()) {
+    await walk(root);
+  }
 
   return { segments, anchors };
 }
