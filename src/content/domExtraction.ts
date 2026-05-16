@@ -13,6 +13,10 @@ export type SegmentCollectionOptions = {
 };
 
 type TextNormalizationCache = WeakMap<Element, string>;
+type DiscoveredRootCandidate = {
+  element: Element;
+  isWeak: boolean;
+};
 
 const leafReadableTags = new Set(["P", "LI", "BLOCKQUOTE"]);
 const headingTags = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
@@ -80,15 +84,16 @@ function discoverRoots(): Element[] {
   let hasStrongRoot = false;
 
   for (const candidateRoot of document.querySelectorAll(rootSelector)) {
-    const root = rootForCandidate(candidateRoot);
-    if (!root) continue;
+    const candidate = rootForCandidate(candidateRoot);
+    if (!candidate) continue;
+    const root = candidate.element;
     if (root === document.documentElement || root === document.body) continue;
     if (currentRoot?.contains(root)) continue;
     if (isElementSkippable(root)) continue;
     if (isInsideGenericChrome(root)) continue;
 
     discoveredRoots.push(root);
-    hasStrongRoot ||= isStrongRoot(root);
+    hasStrongRoot ||= !candidate.isWeak && isStrongRoot(root);
     currentRoot = root;
   }
 
@@ -103,12 +108,13 @@ function isWeakRoot(element: Element): boolean {
   );
 }
 
-function rootForCandidate(element: Element): Element | null {
+function rootForCandidate(element: Element): DiscoveredRootCandidate | null {
   if (element.hasAttribute("contenteditable")) {
-    return element.parentElement;
+    const parent = element.parentElement;
+    return parent ? { element: parent, isWeak: true } : null;
   }
 
-  return element;
+  return { element, isWeak: isWeakRoot(element) };
 }
 
 function isFeedListItemContext(element: Element): boolean {
