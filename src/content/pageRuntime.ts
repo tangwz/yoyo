@@ -821,7 +821,21 @@ export function applyTranslationResults(
   taskId: string,
   items: TranslationResultItem[],
 ): ReturnType<typeof applyTranslations> {
-  return applyTranslations(currentAnchors, taskId, items);
+  if (translationQueueContext?.taskId !== taskId) {
+    return {
+      appliedSegmentIds: [],
+      failedSegmentIds: items.map((item) => item.segmentId),
+    };
+  }
+
+  const result = applyTranslations(currentAnchors, taskId, items);
+  translationQueue.markTranslating([
+    ...result.appliedSegmentIds,
+    ...result.failedSegmentIds,
+  ]);
+  translationQueue.markTranslated(result.appliedSegmentIds);
+  translationQueue.markFailed(result.failedSegmentIds);
+  return result;
 }
 
 export function handleTaskProgress(progress: TranslationProgress): void {

@@ -219,7 +219,10 @@ export class TranslationTaskOrchestrator {
             return this.cloneProgress(task.progress);
           }
 
-          await this.processSegmentsForTask(task, segmentsToProcess);
+          await this.processSegmentsForTask(
+            task,
+            this.processableSegmentsForTask(task, segmentsToProcess),
+          );
         } else {
           return this.cloneProgress(task.progress);
         }
@@ -260,7 +263,10 @@ export class TranslationTaskOrchestrator {
         return this.cloneProgress(task.progress);
       }
 
-      await this.processSegmentsForTask(task, segmentsToProcess);
+      await this.processSegmentsForTask(
+        task,
+        this.processableSegmentsForTask(task, segmentsToProcess),
+      );
     } finally {
       this.leaveRuntimeBatch(task);
       if (task.pendingRuntimeBatchCount > 0) {
@@ -298,6 +304,17 @@ export class TranslationTaskOrchestrator {
     }
 
     return segmentsToProcess;
+  }
+
+  private processableSegmentsForTask(
+    task: RunningTask,
+    segments: readonly PageSegment[],
+  ): PageSegment[] {
+    return segments.filter(
+      (segment) =>
+        !task.processedSegmentIds.has(segment.id) &&
+        !task.inFlightSegmentIds.has(segment.id),
+    );
   }
 
   private async recoverLazyTask(

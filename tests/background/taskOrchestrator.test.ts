@@ -874,6 +874,119 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("does not reprocess a runtime segment already translated through streaming", async () => {
+    const { orchestrator, streamText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          collectionComplete: false,
+          segments: [],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    streamText.mockReturnValue(streamChunks(['{"id":"dynamic-1","text":"一。"}\n']));
+
+    await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+
+    const input = {
+      taskId: "task-1",
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport" as const,
+      segments: [
+        segment({
+          id: "dynamic-1",
+          sourceText: "One.",
+          priority: "viewport",
+        }),
+      ],
+    };
+
+    await orchestrator.enqueueTranslationBatch(input);
+    await orchestrator.enqueueTranslationBatch(input);
+
+    expect(streamText).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reprocess a runtime segment while it is already in flight", async () => {
+    const { orchestrator, streamText, sendToContent } = createOrchestrator();
+    let releaseStream: (() => void) | undefined;
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          collectionComplete: false,
+          segments: [],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    streamText.mockImplementation(
+      () =>
+        (async function* () {
+          await new Promise<void>((resolve) => {
+            releaseStream = resolve;
+          });
+          yield { text: '{"id":"dynamic-1","text":"一。"}\n' };
+        })(),
+    );
+
+    await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+
+    const input = {
+      taskId: "task-1",
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport" as const,
+      segments: [
+        segment({
+          id: "dynamic-1",
+          sourceText: "One.",
+          priority: "viewport",
+        }),
+      ],
+    };
+
+    const firstBatch = orchestrator.enqueueTranslationBatch(input);
+    await vi.waitFor(() => {
+      expect(streamText).toHaveBeenCalledTimes(1);
+    });
+    const secondBatch = orchestrator.enqueueTranslationBatch(input);
+    await Promise.resolve();
+
+    expect(streamText).toHaveBeenCalledTimes(1);
+    releaseStream?.();
+    await expect(Promise.all([firstBatch, secondBatch])).resolves.toEqual([
+      expect.objectContaining({
+        translated: 1,
+      }),
+      expect.objectContaining({
+        translated: 1,
+      }),
+    ]);
+    expect(streamText).toHaveBeenCalledTimes(1);
+  });
+
   it("marks runtime batch failed segment ids before translating the current batch", async () => {
     const { orchestrator, generateText, sendToContent } = createOrchestrator();
 

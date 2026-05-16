@@ -1233,6 +1233,154 @@ describe("page runtime", () => {
     });
   });
 
+  it("marks queued segments translated when page results are applied", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <article>
+        <p>Visible paragraph.</p>
+      </article>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    applyTranslationResults("task-1", [
+      { segmentId: "seg_1", translatedText: "Translated paragraph." },
+    ]);
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(runtimeMock.sendRuntimeMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueTranslationBatch",
+        segments: [expect.objectContaining({ id: "seg_1" })],
+      }),
+    );
+  });
+
+  it("marks queued segments failed when page results cannot be applied", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <article>
+        <p id="source">Visible paragraph.</p>
+      </article>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    document.querySelector("#source")?.remove();
+    applyTranslationResults("task-1", [
+      { segmentId: "seg_1", translatedText: "Translated paragraph." },
+    ]);
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(runtimeMock.sendRuntimeMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueTranslationBatch",
+        segments: [expect.objectContaining({ id: "seg_1" })],
+      }),
+    );
+  });
+
+  it("does not let stale apply results mutate a newer task queue", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+      </article>
+    `;
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+    await flushDeferredLazyCollection();
+    await collectSegments("task-2", "lazyViewport");
+    await flushDeferredLazyCollection();
+    applyTranslationResults("task-1", [
+      { segmentId: "seg_2", translatedText: "Stale translated paragraph." },
+    ]);
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    rects.second = { top: 80, bottom: 96 };
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueLazySegments",
+        taskId: "task-2",
+        segmentIds: ["seg_2"],
+      }),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
+  it.each(["cancelled", "failed"] as const)(
+    "does not apply late translation results after task progress is %s",
+    async (terminalState) => {
+      vi.useFakeTimers();
+      document.body.innerHTML = `
+        <article>
+          <p>Visible readable paragraph.</p>
+        </article>
+      `;
+
+      await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+      handleTaskProgress({
+        taskId: "task-1",
+        state: terminalState,
+        total: 1,
+        translated: terminalState === "failed" ? 0 : 1,
+        failed: terminalState === "failed" ? 1 : 0,
+      });
+
+      const result = applyTranslationResults("task-1", [
+        { segmentId: "seg_1", translatedText: "Translated paragraph." },
+      ]);
+      const translatedNodes = [
+        ...document.querySelectorAll<HTMLElement>(
+          "[data-yoyo-translation][data-yoyo-segment-id='seg_1']",
+        ),
+      ].filter((node) => node.dataset.yoyoPending !== "true");
+
+      expect(result).toEqual({
+        appliedSegmentIds: [],
+        failedSegmentIds: ["seg_1"],
+      });
+      expect(translatedNodes).toHaveLength(0);
+    },
+  );
+
   it("cancels deferred lazy collection when the task is removed before the scan starts", async () => {
     vi.useFakeTimers();
     const originalInnerHeight = window.innerHeight;
