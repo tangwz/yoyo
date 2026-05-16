@@ -165,16 +165,15 @@ export class TranslationTaskOrchestrator {
   async enqueueTranslationBatch(
     input: EnqueueTranslationBatchInput,
   ): Promise<TranslationProgress> {
-    const task = await this.getOrCreateTranslationBatchTask(input);
-    if (!task) {
-      return this.missingTaskProgress(input.taskId);
-    }
+    const task = this.tasks.get(input.taskId) ?? this.createTask(input.taskId, input.tabId);
 
     if (this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state)) {
       return this.cloneProgress(task.progress);
     }
 
     if (!task.context) {
+      task.collectionComplete =
+        input.collectionComplete ?? input.translationMode !== "lazyViewport";
       const profile = await this.dependencies.getActiveProfile();
       if (!profile) {
         return this.failTask(task, "No active provider profile.");
@@ -205,31 +204,6 @@ export class TranslationTaskOrchestrator {
     await this.processSegmentsForTask(task, segmentsToProcess);
     this.finishOrWaitForLazySegments(task);
     return this.cloneProgress(task.progress);
-  }
-
-  private async getOrCreateTranslationBatchTask(
-    input: EnqueueTranslationBatchInput,
-  ): Promise<RunningTask | undefined> {
-    const existingTask = this.tasks.get(input.taskId);
-    if (existingTask) {
-      return existingTask;
-    }
-
-    const profile = await this.dependencies.getActiveProfile();
-    if (!profile) {
-      return undefined;
-    }
-
-    const task = this.createTask(input.taskId, input.tabId);
-    task.collectionComplete =
-      input.collectionComplete ?? input.translationMode !== "lazyViewport";
-    task.context = {
-      profile,
-      sourceLanguage: input.sourceLanguage,
-      targetLanguage: input.targetLanguage,
-      translationMode: input.translationMode,
-    };
-    return task;
   }
 
   private mergeTranslationBatchSegments(

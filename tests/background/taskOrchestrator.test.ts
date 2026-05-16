@@ -874,6 +874,98 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("keeps an existing task without context waiting when runtime lazy collection is incomplete", async () => {
+    const getActiveProfile = vi.fn()
+      .mockReturnValueOnce(new Promise<ProviderProfile | undefined>(() => {}))
+      .mockResolvedValueOnce(providerProfile());
+    const { orchestrator, generateText, sendToContent } = createOrchestrator({
+      getActiveProfile,
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      expect(message).toEqual({
+        type: "applyTranslations",
+        taskId: "task-1",
+        items: [{ segmentId: "dynamic-1", translatedText: "动态文本。" }],
+      });
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ id: "dynamic-1", text: "动态文本。" }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+
+    orchestrator.startTranslatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+
+    const progress = await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "dynamic-1",
+          sourceText: "Dynamic text.",
+          priority: "viewport",
+        }),
+      ],
+    });
+
+    expect(getActiveProfile).toHaveBeenCalledTimes(2);
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(progress).toEqual({
+      taskId: "task-1",
+      state: "waitingForViewport",
+      total: 1,
+      translated: 1,
+      failed: 0,
+    });
+  });
+
+  it("fails a missing runtime-enqueued task when no active provider profile exists", async () => {
+    const getActiveProfile = vi.fn(async () => undefined);
+    const { orchestrator, generateText, sendToContent } = createOrchestrator({
+      getActiveProfile,
+    });
+
+    const progress = await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "missing-task",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "dynamic-1",
+          sourceText: "Dynamic text.",
+          priority: "viewport",
+        }),
+      ],
+    });
+
+    expect(getActiveProfile).toHaveBeenCalledTimes(1);
+    expect(sendToContent).not.toHaveBeenCalled();
+    expect(generateText).not.toHaveBeenCalled();
+    expect(progress).toEqual({
+      taskId: "missing-task",
+      state: "failed",
+      total: 0,
+      translated: 0,
+      failed: 0,
+      errorMessage: "No active provider profile.",
+    });
+  });
+
   it("returns cancelled progress when lazy enqueue references a missing task", async () => {
     const { orchestrator } = createOrchestrator();
 
