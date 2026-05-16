@@ -16,6 +16,10 @@ export class AnchorRegistry {
     return this.anchors.get(segmentId);
   }
 
+  delete(segmentId: string): void {
+    this.anchors.delete(segmentId);
+  }
+
   listByTask(taskId: string): SegmentRuntimeAnchor[] {
     return [...this.anchors.values()].filter(
       (anchor) => anchor.taskId === taskId,

@@ -82,6 +82,12 @@ export class TranslationQueue {
     }
   }
 
+  remove(segmentIds: readonly string[]): void {
+    for (const segmentId of segmentIds) {
+      this.entries.delete(segmentId);
+    }
+  }
+
   takeNextBatch(): PageSegment[] {
     const limits = this.currentLimits();
     const batch: PageSegment[] = [];

@@ -171,4 +171,16 @@ describe("TranslationQueue", () => {
 
     expect(queue.takeNextBatch().map((entry) => entry.id)).toEqual(["one"]);
   });
+
+  it("removes stale entries before they are flushed", () => {
+    const queue = new TranslationQueue(defaultTranslationQueueOptions);
+
+    queue.enqueue([
+      segment("stale", 1, "Old text.", "viewport"),
+      segment("current", 2, "Current text.", "viewport"),
+    ]);
+    queue.remove(["stale"]);
+
+    expect(queue.takeNextBatch().map((entry) => entry.id)).toEqual(["current"]);
+  });
 });

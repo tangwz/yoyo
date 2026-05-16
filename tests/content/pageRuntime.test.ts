@@ -566,16 +566,351 @@ describe("page runtime", () => {
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(500);
 
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "enqueueTranslationBatch",
+          segments: [
+            expect.objectContaining({
+              sourceText: "New tweet text.",
+            }),
+          ],
+        }),
+      );
+    });
+  });
+
+  it("requeues existing source nodes when their text changes", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <main>
+        <article>
+          <div id="tweet" data-testid="tweetText" lang="en" dir="auto">Initial tweet text.</div>
+        </article>
+      </main>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    const tweet = document.querySelector("#tweet") as HTMLElement;
+    const textNode = tweet.firstChild as Text;
+    textNode.textContent = "Updated tweet text.";
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "characterData",
+        target: textNode,
+        addedNodes: [] as unknown as NodeList,
+        removedNodes: [] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "enqueueTranslationBatch",
+          segments: [
+            expect.objectContaining({
+              sourceText: "Updated tweet text.",
+            }),
+          ],
+        }),
+      );
+    });
+  });
+
+  it("observes newly inserted offscreen lazy text without enqueueing it immediately", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+    document.body.innerHTML = `
+      <main id="feed">
+        <article>
+          <div data-testid="tweetText" lang="en" dir="auto">Initial tweet text.</div>
+        </article>
+      </main>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    document.querySelector("#feed")?.insertAdjacentHTML(
+      "beforeend",
+      `
+        <article>
+          <div id="later" data-testid="tweetText" lang="en" dir="auto">Offscreen tweet text.</div>
+        </article>
+      `,
+    );
+    const later = document.querySelector("#later") as HTMLElement;
+    later.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 1200,
+        top: 1200,
+        bottom: 1230,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 30,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    const insertedArticle = document.querySelector(
+      "#feed article:last-child",
+    ) as Element;
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "childList",
+        target: document.querySelector("#feed") as Node,
+        addedNodes: [insertedArticle] as unknown as NodeList,
+        removedNodes: [] as unknown as NodeList,
+      } as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(runtimeMock.sendRuntimeMessage).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(MockIntersectionObserver.instances[0]?.observed.has(later)).toBe(true);
+    });
+
+    later.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 20,
+        top: 20,
+        bottom: 50,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 30,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    MockIntersectionObserver.instances[0]?.emitIntersecting(later);
+    await vi.advanceTimersByTimeAsync(150);
+
     expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "enqueueTranslationBatch",
         segments: [
           expect.objectContaining({
-            sourceText: "New tweet text.",
+            sourceText: "Offscreen tweet text.",
           }),
         ],
       }),
     );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
+  it("drops source nodes when text changes to non-extractable content", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <main>
+        <article>
+          <div id="tweet" data-testid="tweetText" lang="en" dir="auto">Initial tweet text.</div>
+        </article>
+      </main>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    const tweet = document.querySelector("#tweet") as HTMLElement;
+    const textNode = tweet.firstChild as Text;
+    textNode.textContent = "";
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "characterData",
+        target: textNode,
+        addedNodes: [] as unknown as NodeList,
+        removedNodes: [] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(
+      document.querySelector("[data-yoyo-translation][data-yoyo-segment-id='seg_1']"),
+    ).toBeNull();
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueTranslationBatch",
+        failedSegmentIds: ["seg_1"],
+      }),
+    );
+  });
+
+  it("requeues an owning segment when descendant text changes", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <article>
+        <p id="paragraph">Readable paragraph with enough context around <span id="child">old text</span> for extraction.</p>
+      </article>
+    `;
+
+    await collectSegments("task-1", "fullPage", "en", "zh-CN");
+    await vi.advanceTimersByTimeAsync(1);
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    const child = document.querySelector("#child") as HTMLElement;
+    const textNode = child.firstChild as Text;
+    textNode.textContent = "new text";
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "characterData",
+        target: textNode,
+        addedNodes: [] as unknown as NodeList,
+        removedNodes: [] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "enqueueTranslationBatch",
+          segments: [
+            expect.objectContaining({
+              sourceText:
+                "Readable paragraph with enough context around new text for extraction.",
+            }),
+          ],
+        }),
+      );
+    });
+  });
+
+  it("drops source nodes removed by dynamic page updates", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <main>
+        <article>
+          <div id="tweet" data-testid="tweetText" lang="en" dir="auto">Initial tweet text.</div>
+        </article>
+      </main>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    const tweet = document.querySelector("#tweet") as HTMLElement;
+    tweet.remove();
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "childList",
+        target: document.querySelector("article") as Node,
+        addedNodes: [] as unknown as NodeList,
+        removedNodes: [tweet] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueTranslationBatch",
+        failedSegmentIds: ["seg_1"],
+      }),
+    );
+    expect(
+      document.querySelector("[data-yoyo-translation][data-yoyo-segment-id='seg_1']"),
+    ).toBeNull();
+  });
+
+  it("requeues an owning segment when descendant content is removed", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <article>
+        <p id="paragraph">Readable paragraph with enough context and <span id="child">temporary text</span> for extraction.</p>
+      </article>
+    `;
+
+    await collectSegments("task-1", "fullPage", "en", "zh-CN");
+    await vi.advanceTimersByTimeAsync(1);
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    const paragraph = document.querySelector("#paragraph") as HTMLElement;
+    const child = document.querySelector("#child") as HTMLElement;
+    child.remove();
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "childList",
+        target: paragraph,
+        addedNodes: [] as unknown as NodeList,
+        removedNodes: [child] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "enqueueTranslationBatch",
+          segments: [
+            expect.objectContaining({
+              sourceText:
+                "Readable paragraph with enough context and for extraction.",
+            }),
+          ],
+        }),
+      );
+    });
+  });
+
+  it("does not let a stale collection overwrite a newer task", async () => {
+    const realDigest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle);
+    let resolveFirstDigest: ((value: ArrayBuffer) => void) | undefined;
+    const firstDigest = new Promise<ArrayBuffer>((resolve) => {
+      resolveFirstDigest = resolve;
+    });
+    const digestSpy = vi
+      .spyOn(globalThis.crypto.subtle, "digest")
+      .mockImplementationOnce(async () => firstDigest)
+      .mockImplementation((algorithm, data) => realDigest(algorithm, data));
+
+    document.body.innerHTML = `
+      <article>
+        <p>Slow task paragraph.</p>
+      </article>
+    `;
+    const staleCollection = collectSegments("task-1", "fullPage", "en", "fr");
+    await vi.waitFor(() => {
+      expect(digestSpy).toHaveBeenCalled();
+    });
+
+    document.body.innerHTML = `
+      <article>
+        <p>Newer task paragraph.</p>
+      </article>
+    `;
+    await expect(collectSegments("task-2", "fullPage", "en", "de")).resolves.toEqual([
+      expect.objectContaining({
+        sourceText: "Newer task paragraph.",
+      }),
+    ]);
+
+    resolveFirstDigest?.(new ArrayBuffer(32));
+    await expect(staleCollection).rejects.toThrow(
+      "Translation collection was superseded.",
+    );
+    expect(getPageRuntimeState()).toMatchObject({ taskId: "task-2" });
+
+    digestSpy.mockRestore();
   });
 
   it("clears non-lazy translation batches after terminal broadcast progress", async () => {
