@@ -13,6 +13,10 @@ import {
   removeTranslations,
   showTranslations,
 } from "@/content/injection";
+import {
+  defaultTranslationQueueOptions,
+  TranslationQueue,
+} from "@/content/translationQueue";
 import type {
   BackgroundRequest,
   BackgroundResponse,
@@ -41,6 +45,18 @@ let reportedLazySegmentIds = new Set<string>();
 let failedLazySegmentIds = new Set<string>();
 let currentSegmentsById = new Map<string, PageSegment>();
 let lazyCollectionComplete = true;
+const translationQueue = new TranslationQueue(defaultTranslationQueueOptions);
+let translationQueueFlushTimer:
+  | ReturnType<typeof globalThis.setTimeout>
+  | undefined;
+let translationQueueContext:
+  | {
+      taskId: string;
+      sourceLanguage: string;
+      targetLanguage: string;
+      translationMode: TranslationMode;
+    }
+  | undefined;
 
 export async function estimatePage(): Promise<PageTranslationEstimate> {
   if (!isPageUrlSupported(location.href)) {
@@ -87,6 +103,74 @@ function stopLazySegmentReporting(): void {
   lazyCollectionComplete = true;
   reportedLazySegmentIds = new Set();
   failedLazySegmentIds = new Set();
+  resetTranslationQueue();
+}
+
+function stopTranslationQueueFlushTimer(): void {
+  if (translationQueueFlushTimer !== undefined) {
+    globalThis.clearTimeout(translationQueueFlushTimer);
+    translationQueueFlushTimer = undefined;
+  }
+}
+
+function resetTranslationQueue(): void {
+  stopTranslationQueueFlushTimer();
+  translationQueue.clear();
+  translationQueueContext = undefined;
+}
+
+function scheduleTranslationQueueFlush(): void {
+  if (!translationQueueContext || !translationQueue.hasPending()) {
+    return;
+  }
+
+  stopTranslationQueueFlushTimer();
+  translationQueueFlushTimer = globalThis.setTimeout(() => {
+    translationQueueFlushTimer = undefined;
+    void flushTranslationQueue();
+  }, translationQueue.nextDelayMs());
+}
+
+async function flushTranslationQueue(): Promise<void> {
+  const context = translationQueueContext;
+  if (!context) {
+    return;
+  }
+
+  const segments = translationQueue.takeNextBatch();
+  if (segments.length === 0) {
+    return;
+  }
+
+  const segmentIds = segments.map((segment) => segment.id);
+  const response = await Promise.resolve(
+    sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
+      type: "enqueueTranslationBatch",
+      taskId: context.taskId,
+      sourceLanguage: context.sourceLanguage,
+      targetLanguage: context.targetLanguage,
+      translationMode: context.translationMode,
+      segments,
+      collectionComplete: context.translationMode !== "lazyViewport",
+    }),
+  ).catch(() => undefined);
+
+  if (translationQueueContext !== context) {
+    return;
+  }
+
+  if (!response || response.type !== "taskProgress") {
+    translationQueue.markFailed(segmentIds);
+    return;
+  }
+
+  if (isTerminalTaskState(response.progress.state)) {
+    resetTranslationQueue();
+    return;
+  }
+
+  translationQueue.markTranslated(segmentIds);
+  scheduleTranslationQueueFlush();
 }
 
 function scheduleLazySegmentReport(): void {
@@ -360,6 +444,19 @@ export async function collectSegments(
       : undefined;
   insertPendingTranslations(currentAnchors, taskId, initialPendingSegmentIds);
 
+  translationQueueContext = {
+    taskId,
+    sourceLanguage,
+    targetLanguage,
+    translationMode,
+  };
+  translationQueue.enqueue(
+    translationMode === "lazyViewport"
+      ? segments.filter((segment) => segment.priority !== "normal")
+      : segments,
+  );
+  scheduleTranslationQueueFlush();
+
   if (translationMode === "lazyViewport") {
     startLazySegmentReporting(taskId, {
       sourceLanguage,
@@ -389,6 +486,7 @@ export function handleTaskProgress(progress: TranslationProgress): void {
 
   if (isTerminalTaskState(progress.state)) {
     stopLazySegmentReporting();
+    resetTranslationQueue();
   }
 }
 
