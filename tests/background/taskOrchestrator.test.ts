@@ -802,6 +802,78 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("translates runtime-enqueued batches after an empty incomplete lazy collection", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          collectionComplete: false,
+          segments: [],
+        };
+      }
+
+      expect(message).toEqual({
+        type: "applyTranslations",
+        taskId: "task-1",
+        items: [{ segmentId: "dynamic-1", translatedText: "动态文本。" }],
+      });
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ id: "dynamic-1", text: "动态文本。" }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+
+    const initialProgress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+
+    expect(initialProgress).toMatchObject({
+      state: "waitingForViewport",
+      total: 0,
+      translated: 0,
+      failed: 0,
+    });
+
+    const progress = await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      segments: [
+        segment({
+          id: "dynamic-1",
+          sourceText: "Dynamic text.",
+          priority: "viewport",
+        }),
+      ],
+    });
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generateText.mock.calls[0]?.[0].prompt).toContain("dynamic-1");
+    expect(sendToContent).toHaveBeenLastCalledWith(7, {
+      type: "applyTranslations",
+      taskId: "task-1",
+      items: [{ segmentId: "dynamic-1", translatedText: "动态文本。" }],
+    });
+    expect(progress).toEqual({
+      taskId: "task-1",
+      state: "waitingForViewport",
+      total: 1,
+      translated: 1,
+      failed: 0,
+    });
+  });
+
   it("returns cancelled progress when lazy enqueue references a missing task", async () => {
     const { orchestrator } = createOrchestrator();
 

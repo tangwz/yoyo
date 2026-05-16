@@ -54,6 +54,17 @@ export type TranslatePageInput = {
   translationMode?: TranslationMode;
 };
 
+export type EnqueueTranslationBatchInput = {
+  tabId: number;
+  taskId: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  translationMode: TranslationMode;
+  segments: PageSegment[];
+  collectionComplete?: boolean;
+  failedSegmentIds?: string[];
+};
+
 type TaskTranslationContext = {
   profile: ProviderProfile;
   sourceLanguage: string;
@@ -149,6 +160,99 @@ export class TranslationTaskOrchestrator {
     await this.processSegmentsForTask(task, segments);
     this.finishOrWaitForLazySegments(task);
     return this.cloneProgress(task.progress);
+  }
+
+  async enqueueTranslationBatch(
+    input: EnqueueTranslationBatchInput,
+  ): Promise<TranslationProgress> {
+    const task = await this.getOrCreateTranslationBatchTask(input);
+    if (!task) {
+      return this.missingTaskProgress(input.taskId);
+    }
+
+    if (this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state)) {
+      return this.cloneProgress(task.progress);
+    }
+
+    if (!task.context) {
+      const profile = await this.dependencies.getActiveProfile();
+      if (!profile) {
+        return this.failTask(task, "No active provider profile.");
+      }
+
+      task.context = {
+        profile,
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        translationMode: input.translationMode,
+      };
+    }
+
+    const segmentsToProcess = this.mergeTranslationBatchSegments(task, input.segments);
+    if (input.collectionComplete === true) {
+      task.collectionComplete = true;
+    }
+
+    this.updateProgress(task, {
+      total: task.segmentsById.size,
+    });
+    this.markSegmentsFailed(
+      task,
+      input.failedSegmentIds ?? [],
+      segmentsToProcess.map((segment) => segment.id),
+    );
+
+    await this.processSegmentsForTask(task, segmentsToProcess);
+    this.finishOrWaitForLazySegments(task);
+    return this.cloneProgress(task.progress);
+  }
+
+  private async getOrCreateTranslationBatchTask(
+    input: EnqueueTranslationBatchInput,
+  ): Promise<RunningTask | undefined> {
+    const existingTask = this.tasks.get(input.taskId);
+    if (existingTask) {
+      return existingTask;
+    }
+
+    const profile = await this.dependencies.getActiveProfile();
+    if (!profile) {
+      return undefined;
+    }
+
+    const task = this.createTask(input.taskId, input.tabId);
+    task.collectionComplete =
+      input.collectionComplete ?? input.translationMode !== "lazyViewport";
+    task.context = {
+      profile,
+      sourceLanguage: input.sourceLanguage,
+      targetLanguage: input.targetLanguage,
+      translationMode: input.translationMode,
+    };
+    return task;
+  }
+
+  private mergeTranslationBatchSegments(
+    task: RunningTask,
+    segments: readonly PageSegment[],
+  ): PageSegment[] {
+    const segmentsToProcess: PageSegment[] = [];
+    const queuedIds = new Set<string>();
+
+    for (const segment of segments) {
+      const existingSegment = task.segmentsById.get(segment.id);
+      const candidate = existingSegment ?? segment;
+      if (!existingSegment) {
+        task.segmentsById.set(segment.id, segment);
+      }
+
+      if (!queuedIds.has(candidate.id)) {
+        segmentsToProcess.push(candidate);
+        queuedIds.add(candidate.id);
+      }
+    }
+
+    return segmentsToProcess;
   }
 
   private async recoverLazyTask(

@@ -138,6 +138,29 @@ export default defineBackground(() => {
             ),
           };
         }
+        case "enqueueTranslationBatch": {
+          const tabId = sender.tab?.id;
+          if (tabId === undefined) {
+            return {
+              type: "backgroundError",
+              message: "Cannot enqueue translation batch without a sender tab id.",
+            };
+          }
+
+          return {
+            type: "taskProgress",
+            progress: await orchestrator.enqueueTranslationBatch({
+              tabId,
+              taskId: request.taskId,
+              sourceLanguage: request.sourceLanguage,
+              targetLanguage: request.targetLanguage,
+              translationMode: request.translationMode,
+              segments: request.segments,
+              collectionComplete: request.collectionComplete,
+              failedSegmentIds: request.failedSegmentIds,
+            }),
+          };
+        }
         case "cancelTask":
           return {
             type: "taskProgress",
