@@ -465,6 +465,42 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("extracts nested tweet text instead of the cell wrapper", async () => {
+    document.body.innerHTML = `
+      <main>
+        <div data-testid="cellInnerDiv">
+          <article data-testid="tweet">
+            <div>
+              <a href="/terence">Terence</a>
+              <span>@terence</span>
+            </div>
+            <header>
+              <h1>Terence</h1>
+              <span>@terence</span>
+              <time>1h</time>
+            </header>
+            <div data-testid="tweetText">
+              <span>Actual tweet body only.</span>
+            </div>
+            <div role="group" aria-label="Post actions">
+              <button>Reply</button>
+              <button>Like</button>
+            </div>
+          </article>
+        </div>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual tweet body only.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelector('[data-testid="tweetText"]'),
+    );
+  });
+
   it("skips role-based feed header chrome while keeping body text", async () => {
     document.body.innerHTML = `
       <section role="feed">

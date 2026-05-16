@@ -134,11 +134,25 @@ function isLowValueElement(element: Element): boolean {
   return isGenericLowValueElement(element) || isFeedLowValueElement(element);
 }
 
+function hasNestedPostTextCandidate(element: Element): boolean {
+  return element.querySelector(
+    [
+      '[data-testid="tweet"]',
+      '[data-testid="tweetText"]',
+      '[role="article"]',
+      '[role="listitem"]',
+    ].join(","),
+  ) !== null;
+}
+
 function isHighConfidenceShortTextElement(element: Element): boolean {
   if (element === document.documentElement || element === document.body) return false;
-  if (element.matches('[data-testid="cellInnerDiv"], [role="listitem"]')) return true;
+  if (element.matches('[data-testid="cellInnerDiv"]')) {
+    return !hasNestedPostTextCandidate(element);
+  }
+  if (element.matches('[role="listitem"]')) return true;
   if (element.matches('[data-testid="tweetText"]')) return true;
-  if (element.closest('[data-testid="tweetText"], [data-testid="cellInnerDiv"]')) return true;
+  if (element.closest('[data-testid="tweetText"]')) return true;
   if (element.matches('[role="article"]') && element.closest('[role="feed"]')) {
     return true;
   }
