@@ -10,6 +10,7 @@ export type SegmentCollection = {
 
 export type SegmentCollectionOptions = {
   visibleRangeOnly?: boolean;
+  root?: Element;
 };
 
 type TextNormalizationCache = WeakMap<Element, string>;
@@ -724,7 +725,8 @@ export async function collectPageSegments(
     }
   }
 
-  for (const root of discoverRoots()) {
+  const roots = options.root ? [options.root] : discoverRoots();
+  for (const root of roots) {
     await walk(root);
   }
 

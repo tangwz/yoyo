@@ -91,12 +91,35 @@ describe("page runtime", () => {
     }
   }
 
+  class MockMutationObserver {
+    static instances: MockMutationObserver[] = [];
+    readonly observed = new Set<Node>();
+
+    constructor(private readonly callback: MutationCallback) {
+      MockMutationObserver.instances.push(this);
+    }
+
+    observe(target: Node): void {
+      this.observed.add(target);
+    }
+
+    disconnect(): void {
+      this.observed.clear();
+    }
+
+    emit(mutations: MutationRecord[]): void {
+      this.callback(mutations, this as unknown as MutationObserver);
+    }
+  }
+
   beforeEach(() => {
     removePageTranslations();
     document.body.innerHTML = "";
     setUrl("https://example.com/article");
     MockIntersectionObserver.instances = [];
+    MockMutationObserver.instances = [];
     vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+    vi.stubGlobal("MutationObserver", MockMutationObserver);
     runtimeMock.sendRuntimeMessage.mockReset();
     runtimeMock.sendRuntimeMessage.mockResolvedValue({
       type: "taskProgress",
@@ -505,6 +528,54 @@ describe("page runtime", () => {
       configurable: true,
       value: originalInnerHeight,
     });
+  });
+
+  it("discovers and enqueues newly inserted feed text while translation is active", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <main id="feed">
+        <article>
+          <div data-testid="tweetText" lang="en" dir="auto">Initial tweet text.</div>
+        </article>
+      </main>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
+
+    document.querySelector("#feed")?.insertAdjacentHTML(
+      "beforeend",
+      `
+        <article>
+          <div data-testid="tweetText" lang="en" dir="auto">New tweet text.</div>
+        </article>
+      `,
+    );
+    const insertedArticle = document.querySelector(
+      "#feed article:last-child",
+    ) as Element;
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "childList",
+        target: document.querySelector("#feed") as Node,
+        addedNodes: [insertedArticle] as unknown as NodeList,
+        removedNodes: [] as unknown as NodeList,
+      } as MutationRecord,
+    ]);
+
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueTranslationBatch",
+        segments: [
+          expect.objectContaining({
+            sourceText: "New tweet text.",
+          }),
+        ],
+      }),
+    );
   });
 
   it("clears non-lazy translation batches after terminal broadcast progress", async () => {

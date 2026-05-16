@@ -60,6 +60,11 @@ let translationQueueContext:
 let pendingFailedRuntimeBatchSegments = new Map<string, PageSegment>();
 let visibilityObserver: IntersectionObserver | undefined;
 let observedSegmentIdsByElement = new WeakMap<Element, string>();
+let mutationObserver: MutationObserver | undefined;
+let mutationRescanTimer:
+  | ReturnType<typeof globalThis.setTimeout>
+  | undefined;
+let dirtyMutationRoots = new Set<Element>();
 
 export async function estimatePage(): Promise<PageTranslationEstimate> {
   if (!isPageUrlSupported(location.href)) {
@@ -84,6 +89,7 @@ export async function estimatePage(): Promise<PageTranslationEstimate> {
 }
 
 function stopLazySegmentReporting(): void {
+  stopMutationObserver();
   stopVisibilityObserver();
 
   if (lazyReportTimer !== undefined) {
@@ -129,6 +135,18 @@ function stopVisibilityObserver(): void {
   visibilityObserver?.disconnect();
   visibilityObserver = undefined;
   observedSegmentIdsByElement = new WeakMap();
+}
+
+function stopMutationObserver(): void {
+  mutationObserver?.disconnect();
+  mutationObserver = undefined;
+
+  if (mutationRescanTimer !== undefined) {
+    globalThis.clearTimeout(mutationRescanTimer);
+    mutationRescanTimer = undefined;
+  }
+
+  dirtyMutationRoots = new Set();
 }
 
 function observeCurrentSegments(taskId: string): void {
@@ -261,12 +279,109 @@ async function flushTranslationQueue(): Promise<void> {
       return;
     }
 
+    stopMutationObserver();
     resetTranslationQueue();
     return;
   }
 
   translationQueue.markTranslated(segmentIds);
   scheduleTranslationQueueFlush();
+}
+
+function scheduleMutationRescan(root: Element): void {
+  if (!translationQueueContext) {
+    return;
+  }
+
+  dirtyMutationRoots.add(root);
+  if (mutationRescanTimer !== undefined) {
+    return;
+  }
+
+  mutationRescanTimer = globalThis.setTimeout(() => {
+    mutationRescanTimer = undefined;
+    void rescanDirtyMutationRoots();
+  }, 200);
+}
+
+async function rescanDirtyMutationRoots(): Promise<void> {
+  const context = translationQueueContext;
+  if (!context) {
+    dirtyMutationRoots.clear();
+    return;
+  }
+
+  const roots = [...dirtyMutationRoots];
+  dirtyMutationRoots.clear();
+
+  for (const root of roots) {
+    if (!root.isConnected) {
+      continue;
+    }
+
+    const collection = await collectPageSegments(context.taskId, {
+      visibleRangeOnly: context.translationMode === "lazyViewport",
+      root,
+    });
+    if (translationQueueContext !== context) {
+      return;
+    }
+
+    const newSegments = mergeLazySegmentCollection(context.taskId, collection);
+    if (newSegments.length === 0) {
+      continue;
+    }
+
+    const newSegmentIds = new Set(newSegments.map((segment) => segment.id));
+    insertPendingTranslations(currentAnchors, context.taskId, newSegmentIds);
+    translationQueue.enqueue(newSegments);
+    if (context.translationMode === "lazyViewport") {
+      for (const segment of newSegments) {
+        reportedLazySegmentIds.add(segment.id);
+      }
+    }
+  }
+
+  scheduleTranslationQueueFlush();
+}
+
+function startMutationObserver(): void {
+  stopMutationObserver();
+
+  if (typeof MutationObserver === "undefined") {
+    return;
+  }
+
+  mutationObserver = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      if (mutation.type === "characterData") {
+        if (mutation.target.parentElement) {
+          scheduleMutationRescan(mutation.target.parentElement);
+        }
+        continue;
+      }
+
+      if (mutation.type !== "childList") {
+        continue;
+      }
+
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          scheduleMutationRescan(node as Element);
+        } else if (
+          node.nodeType === Node.TEXT_NODE &&
+          mutation.target instanceof Element
+        ) {
+          scheduleMutationRescan(mutation.target);
+        }
+      }
+    }
+  });
+  mutationObserver.observe(document.body, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
 }
 
 function scheduleLazySegmentReport(): void {
@@ -438,13 +553,15 @@ async function collectDeferredLazySegments(taskId: string): Promise<void> {
 function mergeLazySegmentCollection(
   taskId: string,
   collection: SegmentCollection,
-): void {
+): PageSegment[] {
   const existingAnchorsByNode = new Map(
     currentAnchors
       .listByTask(taskId)
       .map((anchor) => [anchor.sourceNode, anchor]),
   );
   const nextSegmentsById = new Map(currentSegmentsById);
+  const existingSegmentIds = new Set(nextSegmentsById.keys());
+  const newSegmentIds: string[] = [];
   const usedSegmentIds = new Set(nextSegmentsById.keys());
   let nextSegmentOrdinal = nextAvailableSegmentOrdinal(usedSegmentIds);
 
@@ -489,10 +606,16 @@ function mergeLazySegmentCollection(
       ...segment,
       id: segmentId,
     });
+    if (!existingSegmentIds.has(segmentId)) {
+      newSegmentIds.push(segmentId);
+    }
   }
 
   currentSegmentsById = nextSegmentsById;
   observeCurrentSegments(taskId);
+  return newSegmentIds
+    .map((segmentId) => currentSegmentsById.get(segmentId))
+    .filter((segment): segment is PageSegment => Boolean(segment));
 }
 
 function nextAvailableSegmentOrdinal(segmentIds: ReadonlySet<string>): number {
@@ -568,6 +691,7 @@ export async function collectSegments(
   } else {
     stopVisibilityObserver();
   }
+  startMutationObserver();
 
   return segments;
 }
@@ -590,6 +714,7 @@ export function handleTaskProgress(progress: TranslationProgress): void {
   }
 
   if (progress.taskId === translationQueueContext?.taskId) {
+    stopMutationObserver();
     resetTranslationQueue();
   }
 }
@@ -608,6 +733,7 @@ export function removePageTranslations(taskId?: string): void {
 
   if (targetTaskId === undefined || targetTaskId === activeTaskId) {
     stopLazySegmentReporting();
+    stopMutationObserver();
     currentAnchors.clear();
     currentSegmentsById.clear();
     activeTaskId = undefined;
