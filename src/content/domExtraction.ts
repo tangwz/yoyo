@@ -24,7 +24,10 @@ const structuralRootSelector = [
   "main",
   '[role="main"]',
   '[role="article"]',
+  '[role="feed"]',
+  '[role="listitem"]',
   '[data-testid="tweet"]',
+  '[data-testid="cellInnerDiv"]',
 ].join(",");
 
 const textRootSelector = [
@@ -83,16 +86,35 @@ function isGenericLowValueElement(element: Element): boolean {
 
 function isFeedHeuristicContext(element: Element): boolean {
   return element.closest(
-    '[data-testid="tweet"], [data-testid="tweetText"], article, [role="article"]',
+    [
+      '[data-testid="tweet"]',
+      '[data-testid="tweetText"]',
+      '[data-testid="cellInnerDiv"]',
+      '[role="feed"]',
+      '[role="listitem"]',
+      '[role="article"]',
+      "article",
+    ].join(","),
   ) !== null;
 }
 
 function isFeedPostContext(element: Element): boolean {
-  const post = element.closest('[data-testid="tweet"], [data-testid="tweetText"]');
+  const post = element.closest(
+    [
+      '[data-testid="tweet"]',
+      '[data-testid="tweetText"]',
+      '[data-testid="cellInnerDiv"]',
+      '[role="listitem"]',
+    ].join(","),
+  );
   if (post) return true;
 
   const article = element.closest("article, [role='article']");
-  return article?.querySelector('[data-testid="tweetText"]') !== null;
+  if (!article) return false;
+  if (article.closest('[role="feed"]')) return true;
+  return article.querySelector(
+    '[data-testid="tweetText"], [data-testid="cellInnerDiv"]',
+  ) !== null;
 }
 
 function isFeedLowValueElement(element: Element): boolean {
@@ -114,8 +136,12 @@ function isLowValueElement(element: Element): boolean {
 
 function isHighConfidenceShortTextElement(element: Element): boolean {
   if (element === document.documentElement || element === document.body) return false;
+  if (element.matches('[data-testid="cellInnerDiv"], [role="listitem"]')) return true;
   if (element.matches('[data-testid="tweetText"]')) return true;
-  if (element.closest('[data-testid="tweetText"]')) return true;
+  if (element.closest('[data-testid="tweetText"], [data-testid="cellInnerDiv"]')) return true;
+  if (element.matches('[role="article"]') && element.closest('[role="feed"]')) {
+    return true;
+  }
   if (element.closest("article, [role='article'], [data-testid='tweet']")) {
     return element.hasAttribute("lang") || element.getAttribute("dir") === "auto";
   }
@@ -145,6 +171,7 @@ function segmentKindFor(element: Element): PageSegmentKind {
 function hasReadableChildCandidate(element: Element): boolean {
   for (const child of [...element.children]) {
     if (isElementSkippable(child)) continue;
+    if (isLowValueElement(child)) continue;
     if (isDirectReadableCandidate(child)) return true;
     if (hasReadableChildCandidate(child)) return true;
   }

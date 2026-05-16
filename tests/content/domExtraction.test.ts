@@ -449,6 +449,45 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("extracts short cellInnerDiv post text without tweetText markup", async () => {
+    document.body.innerHTML = `
+      <main>
+        <div data-testid="cellInnerDiv">
+          <div>Short cell post text.</div>
+        </div>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Short cell post text.",
+    ]);
+  });
+
+  it("skips role-based feed header chrome while keeping body text", async () => {
+    document.body.innerHTML = `
+      <section role="feed">
+        <div role="listitem">
+          <div role="article">
+            <header>
+              <h1>Display Name</h1>
+              <span>@display</span>
+              <time>2h</time>
+            </header>
+            <div>Role feed body text.</div>
+          </div>
+        </div>
+      </section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Role feed body text.",
+    ]);
+  });
+
   it("deduplicates nested multi-root discoveries", async () => {
     document.body.innerHTML = `
       <main>
