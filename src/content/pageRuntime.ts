@@ -168,6 +168,11 @@ async function flushTranslationQueue(): Promise<void> {
   }
 
   if (isTerminalTaskState(response.progress.state)) {
+    if (context.translationMode === "lazyViewport") {
+      stopLazySegmentReporting();
+      return;
+    }
+
     resetTranslationQueue();
     return;
   }
