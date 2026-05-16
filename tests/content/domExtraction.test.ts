@@ -537,6 +537,24 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("skips dir-auto header chrome when tweet text exists", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <div>
+          <span dir="auto">Terence</span>
+          <span dir="auto">@handle</span>
+        </div>
+        <div data-testid="tweetText">Actual tweet body.</div>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual tweet body.",
+    ]);
+  });
+
   it("keeps numeric spans inside fallback dir-auto tweet body", async () => {
     document.body.innerHTML = `
       <article data-testid="tweet">

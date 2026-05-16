@@ -239,9 +239,26 @@ function isFeedLowValueElement(
 
 function isInsideBodySafeTextContainer(element: Element): boolean {
   return (
-    element.closest('[data-testid="tweetText"], [lang], [dir="auto"]') !== null ||
+    element.closest('[data-testid="tweetText"]') !== null ||
+    isInsideFallbackBodyTextContainer(element) ||
     closestDirectReadableFeedElement(element) !== null
   );
+}
+
+function isInsideFallbackBodyTextContainer(element: Element): boolean {
+  const textContainer = element.closest("[lang], [dir='auto']");
+  if (!textContainer) return false;
+
+  const post = textContainer.closest(
+    [
+      '[data-testid="tweet"]',
+      '[data-testid="cellInnerDiv"]',
+      '[role="feed"]',
+      '[role="listitem"]',
+      '[role="article"]',
+    ].join(","),
+  );
+  return post?.querySelector('[data-testid="tweetText"]') === null;
 }
 
 function closestDirectReadableFeedElement(element: Element): Element | null {
@@ -274,6 +291,7 @@ function hasNestedPostTextCandidate(element: Element): boolean {
 function isHighConfidenceShortTextElement(element: Element): boolean {
   if (element === document.documentElement || element === document.body) return false;
   if (isInsideGenericChrome(element)) return false;
+  if (isNonBodyTextHintInPostWithExplicitBody(element)) return false;
   if (element.matches('[data-testid="cellInnerDiv"]')) {
     return !hasNestedPostTextCandidate(element);
   }
@@ -287,6 +305,22 @@ function isHighConfidenceShortTextElement(element: Element): boolean {
     return element.hasAttribute("lang") || element.getAttribute("dir") === "auto";
   }
   return element.hasAttribute("lang") || element.getAttribute("dir") === "auto";
+}
+
+function isNonBodyTextHintInPostWithExplicitBody(element: Element): boolean {
+  if (!element.matches("[lang], [dir='auto']")) return false;
+  if (element.closest('[data-testid="tweetText"]')) return false;
+
+  const post = element.closest(
+    [
+      '[data-testid="tweet"]',
+      '[data-testid="cellInnerDiv"]',
+      '[role="feed"]',
+      '[role="listitem"]',
+      '[role="article"]',
+    ].join(","),
+  );
+  return post !== null && post.querySelector('[data-testid="tweetText"]') !== null;
 }
 
 function hasHighConfidenceReadableChild(
