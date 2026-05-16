@@ -2178,6 +2178,68 @@ describe("TranslationTaskOrchestrator", () => {
     await expect(running).resolves.toEqual(runtimeProgress);
   });
 
+  it("keeps completed progress when collection rejects after runtime completion", async () => {
+    let rejectCollect:
+      | ((error: Error) => void)
+      | undefined;
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return new Promise<ContentResponse>((_resolve, reject) => {
+          rejectCollect = reject;
+        });
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ id: "runtime-1", text: "Translated runtime." }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+
+    const running = orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    await vi.waitFor(() => {
+      expect(rejectCollect).toBeDefined();
+    });
+
+    const runtimeProgress = await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: true,
+      segments: [
+        segment({
+          id: "runtime-1",
+          sourceText: "Runtime text.",
+          textHash: "hash-runtime",
+          priority: "viewport",
+        }),
+      ],
+    });
+    expect(runtimeProgress).toEqual({
+      taskId: "task-1",
+      state: "completed",
+      total: 1,
+      translated: 1,
+      failed: 0,
+    });
+
+    rejectCollect?.(new Error("Collect failed late."));
+
+    await expect(running).resolves.toEqual(runtimeProgress);
+    expect(orchestrator.getTask("task-1")).toEqual(runtimeProgress);
+  });
+
   it("keeps failed progress consistent when collection fails after runtime translation", async () => {
     let resolveCollect:
       | ((response: ContentResponse) => void)

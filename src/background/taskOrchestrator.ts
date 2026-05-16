@@ -516,6 +516,10 @@ export class TranslationTaskOrchestrator {
       this.finishOrWaitForLazySegments(task);
       return this.cloneProgress(task.progress);
     } catch (error) {
+      if (isTerminalTaskState(task.progress.state)) {
+        return this.cloneProgress(task.progress);
+      }
+
       if (task.controller.signal.aborted || task.progress.state === "cancelled") {
         return this.cancelTask(task.progress.taskId, "userCancelled");
       }
