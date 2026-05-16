@@ -227,6 +227,7 @@ function isFeedLowValueElement(
   if (!isFeedHeuristicContext(element)) return false;
   if (element.tagName === "HEADER" && isFeedPostContext(element)) return true;
   if (element.matches(feedLowValueSelector)) return true;
+  if (isNonBodyTextHintInPostWithExplicitBody(element)) return true;
   if (isInsideBodySafeTextContainer(element)) return false;
 
   const text = normalizedElementText(element, textCache);

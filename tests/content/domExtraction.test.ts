@@ -555,6 +555,25 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("skips long dir-auto header chrome when tweet text exists", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <div>
+          <span dir="auto">
+            This display name is intentionally long enough to pass the generic text threshold and should still be treated as feed chrome.
+          </span>
+        </div>
+        <div data-testid="tweetText">Actual tweet body.</div>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual tweet body.",
+    ]);
+  });
+
   it("keeps numeric spans inside fallback dir-auto tweet body", async () => {
     document.body.innerHTML = `
       <article data-testid="tweet">
