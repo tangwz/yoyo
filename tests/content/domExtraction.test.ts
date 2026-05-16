@@ -402,7 +402,7 @@ describe("collectPageSegments", () => {
     ]);
   });
 
-  it("preserves sibling feed roots without falling back to body", async () => {
+  it("preserves sibling feed roots and independent text roots", async () => {
     document.body.innerHTML = `
       <article>
         <div data-testid="tweetText" lang="en" dir="auto">
@@ -414,7 +414,10 @@ describe("collectPageSegments", () => {
           <span>Second sibling article text.</span>
         </div>
       </article>
-      <div lang="en" dir="auto">Unrelated body-level short text.</div>
+      <main>
+        <p>Normal page section.</p>
+      </main>
+      <div lang="en" dir="auto">Standalone short feed text.</div>
     `;
 
     const result = await collectPageSegments("task-1");
@@ -422,6 +425,8 @@ describe("collectPageSegments", () => {
     expect(result.segments.map((segment) => segment.sourceText)).toEqual([
       "First sibling article text.",
       "Second sibling article text.",
+      "Normal page section.",
+      "Standalone short feed text.",
     ]);
   });
 });

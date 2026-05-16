@@ -33,6 +33,11 @@ const textRootSelector = [
   '[dir="auto"]',
 ].join(",");
 
+const rootSelector = [
+  structuralRootSelector,
+  textRootSelector,
+].join(",");
+
 const lowValueSelector = [
   "nav",
   "header",
@@ -50,21 +55,8 @@ const lowValueSelector = [
 ].join(",");
 
 function discoverRoots(): Element[] {
-  const structuralRoots = filterTopLevelRoots([
-    ...document.querySelectorAll(structuralRootSelector),
-  ]);
-  if (structuralRoots.length > 0) return structuralRoots;
-
-  const textRoots = filterTopLevelRoots([
-    ...document.querySelectorAll(textRootSelector),
-  ]);
-  if (textRoots.length > 0) return textRoots;
-
-  return [document.body];
-}
-
-function filterTopLevelRoots(roots: Element[]): Element[] {
-  return roots.filter((root, index, allRoots) => {
+  const roots = [...document.querySelectorAll(rootSelector)];
+  const discoveredRoots = roots.filter((root, index, allRoots) => {
     if (root === document.body) return false;
     if (isElementSkippable(root)) return false;
     return !allRoots.some(
@@ -72,6 +64,8 @@ function filterTopLevelRoots(roots: Element[]): Element[] {
         otherIndex !== index && other !== root && other.contains(root),
     );
   });
+
+  return discoveredRoots.length > 0 ? discoveredRoots : [document.body];
 }
 
 function isLowValueFeedElement(element: Element): boolean {
