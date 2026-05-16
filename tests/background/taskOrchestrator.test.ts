@@ -1036,6 +1036,174 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("rejects a missing runtime batch when the same tab already has a completed task", async () => {
+    const createTaskId = vi.fn(() => "new-task");
+    const { orchestrator, generateText, sendToContent } = createOrchestrator({
+      createTaskId,
+      now: vi.fn()
+        .mockReturnValueOnce(1000)
+        .mockReturnValueOnce(2000),
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({
+              id: "new-segment",
+              sourceText: "New page text.",
+              priority: "viewport",
+            }),
+          ],
+        };
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+
+      return {
+        text: JSON.stringify({
+          items: (input.items ?? []).map((item) => ({
+            id: item.id,
+            text: `Translated ${item.id}`,
+          })),
+        }),
+        model: "gpt-4.1-mini",
+      };
+    });
+
+    await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    expect(orchestrator.getTaskForTab(7)).toMatchObject({
+      taskId: "new-task",
+      state: "completed",
+    });
+
+    generateText.mockClear();
+    sendToContent.mockClear();
+
+    const staleProgress = await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "old-task",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "old-runtime",
+          sourceText: "Old runtime text.",
+          priority: "viewport",
+        }),
+      ],
+    });
+
+    expect(staleProgress).toEqual({
+      taskId: "old-task",
+      state: "cancelled",
+      total: 0,
+      translated: 0,
+      failed: 0,
+      errorMessage: "Translation task is no longer available. Start translation again.",
+    });
+    expect(generateText).not.toHaveBeenCalled();
+    expect(sendToContent).not.toHaveBeenCalled();
+    expect(orchestrator.getTaskForTab(7)).toMatchObject({
+      taskId: "new-task",
+      state: "completed",
+    });
+  });
+
+  it("rejects a runtime batch when its existing task belongs to another tab", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockResolvedValue({ type: "contentActionResult", success: true });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+
+      return {
+        text: JSON.stringify({
+          items: (input.items ?? []).map((item) => ({
+            id: item.id,
+            text: `Translated ${item.id}`,
+          })),
+        }),
+        model: "gpt-4.1-mini",
+      };
+    });
+
+    await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "tab-a-segment",
+          sourceText: "Tab A text.",
+          priority: "viewport",
+        }),
+      ],
+    });
+    expect(orchestrator.getTaskForTab(7)).toMatchObject({
+      taskId: "task-1",
+      state: "waitingForViewport",
+      total: 1,
+      translated: 1,
+    });
+
+    generateText.mockClear();
+    sendToContent.mockClear();
+
+    const rejectedProgress = await orchestrator.enqueueTranslationBatch({
+      tabId: 8,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "tab-b-segment",
+          sourceText: "Tab B text.",
+          priority: "viewport",
+        }),
+      ],
+    });
+
+    expect(rejectedProgress).toEqual({
+      taskId: "task-1",
+      state: "cancelled",
+      total: 0,
+      translated: 0,
+      failed: 0,
+      errorMessage: "Translation task is no longer available. Start translation again.",
+    });
+    expect(generateText).not.toHaveBeenCalled();
+    expect(sendToContent).not.toHaveBeenCalled();
+    expect(orchestrator.getTaskForTab(7)).toMatchObject({
+      taskId: "task-1",
+      state: "waitingForViewport",
+      total: 1,
+      translated: 1,
+    });
+    expect(orchestrator.getTaskForTab(8)).toBeUndefined();
+  });
+
   it("merges collected segments after a runtime batch initializes the task first", async () => {
     const { orchestrator, generateText, sendToContent } = createOrchestrator();
     let resolveCollect:

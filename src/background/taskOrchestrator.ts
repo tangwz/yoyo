@@ -166,11 +166,11 @@ export class TranslationTaskOrchestrator {
     input: EnqueueTranslationBatchInput,
   ): Promise<TranslationProgress> {
     const existingTask = this.tasks.get(input.taskId);
-    if (!existingTask) {
-      const activeTabTask = this.getActiveTaskForTab(input.tabId);
-      if (activeTabTask && activeTabTask.progress.taskId !== input.taskId) {
-        return this.missingTaskProgress(input.taskId);
-      }
+    if (existingTask && existingTask.tabId !== input.tabId) {
+      return this.missingTaskProgress(input.taskId);
+    }
+    if (!existingTask && this.hasTaskForTab(input.tabId)) {
+      return this.missingTaskProgress(input.taskId);
     }
 
     const task = existingTask ?? this.createTask(input.taskId, input.tabId);
@@ -538,16 +538,6 @@ export class TranslationTaskOrchestrator {
     return [...this.tasks.values()].some(
       (task) => task.tabId === tabId,
     );
-  }
-
-  private getActiveTaskForTab(tabId: number): RunningTask | undefined {
-    return [...this.tasks.values()]
-      .filter(
-        (task) =>
-          task.tabId === tabId &&
-          !isTerminalTaskState(task.progress.state),
-      )
-      .sort((left, right) => right.createdAt - left.createdAt || right.sequence - left.sequence)[0];
   }
 
   private async processSegmentsForTask(
