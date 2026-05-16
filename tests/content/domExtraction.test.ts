@@ -597,6 +597,25 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("does not treat ordinary aria listitems as feed roots", async () => {
+    const sectionText =
+      "This independent body section should still be discovered after a normal ARIA list item card.";
+    document.body.innerHTML = `
+      <div role="listitem">
+        <header><h2>Ordinary result title</h2></header>
+        <div>Ordinary result summary.</div>
+      </div>
+      <section>${sectionText}</section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Ordinary result title",
+      sectionText,
+    ]);
+  });
+
   it("deduplicates nested multi-root discoveries", async () => {
     document.body.innerHTML = `
       <main>

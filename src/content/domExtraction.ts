@@ -78,7 +78,7 @@ function discoverRoots(): Element[] {
     if (isInsideGenericChrome(root)) continue;
 
     discoveredRoots.push(root);
-    hasStrongRoot ||= !isWeakRoot(root);
+    hasStrongRoot ||= isStrongRoot(root);
     currentRoot = root;
   }
 
@@ -88,6 +88,31 @@ function discoverRoots(): Element[] {
 
 function isWeakRoot(element: Element): boolean {
   return element.matches(weakRootSelector) && !element.matches('[data-testid="tweetText"]');
+}
+
+function isFeedListItemContext(element: Element): boolean {
+  const listItem = element.matches('[role="listitem"]')
+    ? element
+    : element.closest('[role="listitem"]');
+  if (!listItem) return false;
+  if (listItem.closest('[role="feed"], [data-testid="tweet"], [data-testid="cellInnerDiv"]')) {
+    return true;
+  }
+
+  return listItem.querySelector(
+    [
+      '[data-testid="tweet"]',
+      '[data-testid="tweetText"]',
+      '[data-testid="cellInnerDiv"]',
+      '[role="article"]',
+    ].join(","),
+  ) !== null;
+}
+
+function isStrongRoot(element: Element): boolean {
+  if (isWeakRoot(element)) return false;
+  if (element.matches('[role="listitem"]')) return isFeedListItemContext(element);
+  return true;
 }
 
 function isInsideGenericChrome(element: Element): boolean {
@@ -129,16 +154,17 @@ function isFeedHeuristicContext(element: Element): boolean {
         '[data-testid="tweetText"]',
         '[data-testid="cellInnerDiv"]',
         '[role="feed"]',
-        '[role="listitem"]',
       ].join(","),
     )
   ) {
     return true;
   }
 
+  if (isFeedListItemContext(element)) return true;
+
   const roleArticle = element.closest('[role="article"]');
   if (!roleArticle) return false;
-  if (roleArticle.closest('[role="feed"], [role="listitem"]')) return true;
+  if (roleArticle.closest('[role="feed"]') || isFeedListItemContext(roleArticle)) return true;
   return roleArticle.querySelector(
     [
       '[data-testid="tweet"]',
@@ -156,10 +182,9 @@ function isFeedPostContext(element: Element): boolean {
       '[data-testid="tweet"]',
       '[data-testid="tweetText"]',
       '[data-testid="cellInnerDiv"]',
-      '[role="listitem"]',
     ].join(","),
   );
-  if (post) return true;
+  if (post || isFeedListItemContext(element)) return true;
 
   const article = element.closest("article, [role='article']");
   if (!article) return false;
@@ -213,7 +238,7 @@ function isHighConfidenceShortTextElement(element: Element): boolean {
   if (element.matches('[data-testid="cellInnerDiv"]')) {
     return !hasNestedPostTextCandidate(element);
   }
-  if (element.matches('[role="listitem"]')) return true;
+  if (element.matches('[role="listitem"]')) return isFeedListItemContext(element);
   if (element.matches('[data-testid="tweetText"]')) return true;
   if (element.closest('[data-testid="tweetText"]')) return true;
   if (element.matches('[role="article"]') && element.closest('[role="feed"]')) {
