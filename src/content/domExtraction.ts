@@ -12,6 +12,8 @@ export type SegmentCollectionOptions = {
   visibleRangeOnly?: boolean;
 };
 
+type TextNormalizationCache = WeakMap<Element, string>;
+
 const leafReadableTags = new Set(["P", "LI", "BLOCKQUOTE"]);
 const headingTags = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
 const listTags = new Set(["UL", "OL"]);
@@ -41,6 +43,11 @@ const rootSelector = [
   textRootSelector,
 ].join(",");
 
+const weakRootSelector = [
+  "[lang]",
+  '[dir="auto"]',
+].join(",");
+
 const genericLowValueSelector = [
   "nav",
   "footer",
@@ -62,29 +69,59 @@ const feedLowValueSelector = [
 function discoverRoots(): Element[] {
   const discoveredRoots: Element[] = [];
   let currentRoot: Element | null = null;
+  let hasStrongRoot = false;
 
   for (const root of document.querySelectorAll(rootSelector)) {
     if (root === document.documentElement || root === document.body) continue;
     if (currentRoot?.contains(root)) continue;
     if (isElementSkippable(root)) continue;
+    if (isInsideGenericChrome(root)) continue;
 
     discoveredRoots.push(root);
+    hasStrongRoot ||= !isWeakRoot(root);
     currentRoot = root;
   }
 
-  return discoveredRoots.length > 0 ? discoveredRoots : [document.body];
+  if (discoveredRoots.length === 0) return [document.body];
+  return hasStrongRoot ? discoveredRoots : [...discoveredRoots, document.body];
 }
 
-function isGenericLowValueElement(element: Element): boolean {
-  if (element.matches(genericLowValueSelector)) return true;
+function isWeakRoot(element: Element): boolean {
+  return element.matches(weakRootSelector) && !element.matches('[data-testid="tweetText"]');
+}
+
+function isInsideGenericChrome(element: Element): boolean {
+  const chrome = element.closest(genericLowValueSelector);
+  return chrome !== null && chrome !== element;
+}
+
+function normalizedElementText(
+  element: Element,
+  textCache?: TextNormalizationCache,
+): string {
+  const cachedText = textCache?.get(element);
+  if (cachedText !== undefined) return cachedText;
 
   const text = normalizeSourceText(element.textContent ?? "");
+  textCache?.set(element, text);
+  return text;
+}
+
+function isGenericLowValueElement(
+  element: Element,
+  textCache?: TextNormalizationCache,
+): boolean {
+  if (element.matches(genericLowValueSelector)) return true;
+
+  const text = normalizedElementText(element, textCache);
   if (!text) return true;
 
   return false;
 }
 
 function isFeedHeuristicContext(element: Element): boolean {
+  if (isInsideGenericChrome(element)) return false;
+
   if (
     element.closest(
       [
@@ -112,6 +149,8 @@ function isFeedHeuristicContext(element: Element): boolean {
 }
 
 function isFeedPostContext(element: Element): boolean {
+  if (isInsideGenericChrome(element)) return false;
+
   const post = element.closest(
     [
       '[data-testid="tweet"]',
@@ -130,13 +169,16 @@ function isFeedPostContext(element: Element): boolean {
   ) !== null;
 }
 
-function isFeedLowValueElement(element: Element): boolean {
+function isFeedLowValueElement(
+  element: Element,
+  textCache?: TextNormalizationCache,
+): boolean {
   if (!isFeedHeuristicContext(element)) return false;
   if (element.closest('[data-testid="tweetText"]')) return false;
   if (element.tagName === "HEADER" && isFeedPostContext(element)) return true;
   if (element.matches(feedLowValueSelector)) return true;
 
-  const text = normalizeSourceText(element.textContent ?? "");
+  const text = normalizedElementText(element, textCache);
   if (/^@\w{1,30}$/.test(text)) return true;
   if (/^\d+([.,]\d+)?[KMB]?$/.test(text)) return true;
   if (/^\d+[smhdw]$/.test(text)) return true;
@@ -144,8 +186,14 @@ function isFeedLowValueElement(element: Element): boolean {
   return false;
 }
 
-function isLowValueElement(element: Element): boolean {
-  return isGenericLowValueElement(element) || isFeedLowValueElement(element);
+function isLowValueElement(
+  element: Element,
+  textCache?: TextNormalizationCache,
+): boolean {
+  return (
+    isGenericLowValueElement(element, textCache) ||
+    isFeedLowValueElement(element, textCache)
+  );
 }
 
 function hasNestedPostTextCandidate(element: Element): boolean {
@@ -161,6 +209,7 @@ function hasNestedPostTextCandidate(element: Element): boolean {
 
 function isHighConfidenceShortTextElement(element: Element): boolean {
   if (element === document.documentElement || element === document.body) return false;
+  if (isInsideGenericChrome(element)) return false;
   if (element.matches('[data-testid="cellInnerDiv"]')) {
     return !hasNestedPostTextCandidate(element);
   }
@@ -176,12 +225,18 @@ function isHighConfidenceShortTextElement(element: Element): boolean {
   return element.hasAttribute("lang") || element.getAttribute("dir") === "auto";
 }
 
-function hasHighConfidenceReadableChild(element: Element): boolean {
+function hasHighConfidenceReadableChild(
+  element: Element,
+  textCache?: TextNormalizationCache,
+): boolean {
   return [...element.children].some((child) => {
-    if (isElementSkippable(child) || isLowValueElement(child)) {
+    if (isElementSkippable(child) || isLowValueElement(child, textCache)) {
       return false;
     }
-    return isHighConfidenceShortTextElement(child) || hasHighConfidenceReadableChild(child);
+    return (
+      isHighConfidenceShortTextElement(child) ||
+      hasHighConfidenceReadableChild(child, textCache)
+    );
   });
 }
 
@@ -196,12 +251,15 @@ function segmentKindFor(element: Element): PageSegmentKind {
   return "paragraph";
 }
 
-function hasReadableChildCandidate(element: Element): boolean {
+function hasReadableChildCandidate(
+  element: Element,
+  textCache?: TextNormalizationCache,
+): boolean {
   for (const child of [...element.children]) {
     if (isElementSkippable(child)) continue;
-    if (isLowValueElement(child)) continue;
+    if (isLowValueElement(child, textCache)) continue;
     if (isDirectReadableCandidate(child)) return true;
-    if (hasReadableChildCandidate(child)) return true;
+    if (hasReadableChildCandidate(child, textCache)) return true;
   }
 
   return false;
@@ -211,18 +269,35 @@ function hasNestedList(element: Element): boolean {
   return element.querySelector(":scope > ul, :scope > ol") !== null;
 }
 
-function collectExtractableText(element: Element): string {
-  return collectTextStream(element, new Set(), !isDirectReadableCandidate(element));
+function collectExtractableText(
+  element: Element,
+  textCache?: TextNormalizationCache,
+): string {
+  return collectTextStream(
+    element,
+    new Set(),
+    !isDirectReadableCandidate(element),
+    textCache,
+  );
 }
 
-function collectNestedListItemOwnText(element: Element): string {
-  return collectTextStream(element, listTags, !isDirectReadableCandidate(element));
+function collectNestedListItemOwnText(
+  element: Element,
+  textCache?: TextNormalizationCache,
+): string {
+  return collectTextStream(
+    element,
+    listTags,
+    !isDirectReadableCandidate(element),
+    textCache,
+  );
 }
 
 function collectTextStream(
   element: Element,
   excludedTags: ReadonlySet<string> = new Set(),
   skipFeedLowValue = true,
+  textCache?: TextNormalizationCache,
 ): string {
   const parts: string[] = [];
 
@@ -236,26 +311,34 @@ function collectTextStream(
 
     const childElement = child as Element;
     if (isElementSkippable(childElement)) continue;
-    if (isGenericLowValueElement(childElement)) continue;
-    if (skipFeedLowValue && isFeedLowValueElement(childElement)) continue;
+    if (isGenericLowValueElement(childElement, textCache)) continue;
+    if (skipFeedLowValue && isFeedLowValueElement(childElement, textCache)) continue;
     if (excludedTags.has(childElement.tagName)) continue;
 
-    parts.push(collectTextStream(childElement, excludedTags, skipFeedLowValue));
+    parts.push(
+      collectTextStream(childElement, excludedTags, skipFeedLowValue, textCache),
+    );
   }
 
   return normalizeSourceText(parts.join(""));
 }
 
-function shouldExtractElement(element: Element): boolean {
+function shouldExtractElement(
+  element: Element,
+  textCache?: TextNormalizationCache,
+): boolean {
   if (isElementSkippable(element)) return false;
-  if (isLowValueElement(element)) return false;
+  if (isLowValueElement(element, textCache)) return false;
   if (isDirectReadableCandidate(element)) return true;
-  if (!isHighConfidenceShortTextElement(element) && hasHighConfidenceReadableChild(element)) {
+  if (
+    !isHighConfidenceShortTextElement(element) &&
+    hasHighConfidenceReadableChild(element, textCache)
+  ) {
     return false;
   }
-  if (hasReadableChildCandidate(element)) return false;
+  if (hasReadableChildCandidate(element, textCache)) return false;
 
-  const text = collectExtractableText(element);
+  const text = collectExtractableText(element, textCache);
   if (text.length === 0) return false;
   if (isHighConfidenceShortTextElement(element)) return true;
 
@@ -306,6 +389,7 @@ export async function collectPageSegments(
   const anchors = new AnchorRegistry();
   const segments: PageSegment[] = [];
   const seenNodes = new WeakSet<Element>();
+  const textCache: TextNormalizationCache = new WeakMap();
   let order = 1;
 
   async function addSegment(
@@ -340,13 +424,13 @@ export async function collectPageSegments(
     if (seenNodes.has(element)) return;
     seenNodes.add(element);
     if (isElementSkippable(element)) return;
-    if (isLowValueElement(element)) return;
+    if (isLowValueElement(element, textCache)) return;
     if (options.visibleRangeOnly && element !== document.body && isOutsideVisibleCollectionRange(element)) {
       return;
     }
 
     if (element.tagName === "LI" && hasNestedList(element)) {
-      const sourceText = collectNestedListItemOwnText(element);
+      const sourceText = collectNestedListItemOwnText(element, textCache);
       if (sourceText.length > 0) {
         await addSegment(element, sourceText);
       }
@@ -359,8 +443,8 @@ export async function collectPageSegments(
       return;
     }
 
-    if (shouldExtractElement(element)) {
-      const sourceText = collectExtractableText(element);
+    if (shouldExtractElement(element, textCache)) {
+      const sourceText = collectExtractableText(element, textCache);
       if (sourceText.length === 0) return;
 
       await addSegment(element, sourceText);

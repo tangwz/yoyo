@@ -333,6 +333,21 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("falls back to body when only weak language roots are discovered", async () => {
+    const bodyText =
+      "This normal body section should still be discovered even when a small language marked sidebar appears first.";
+    document.body.innerHTML = `
+      <aside lang="en">Tiny label</aside>
+      <section>${bodyText}</section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toContain(
+      bodyText,
+    );
+  });
+
   it("does not extract a generic parent from skipped subtree text", async () => {
     const skippedLongText =
       "This skipped subtree contains enough text to pass the generic block extraction threshold, but it must not create a parent segment.";
@@ -560,6 +575,25 @@ describe("collectPageSegments", () => {
 
     expect(result.segments.map((segment) => segment.sourceText)).toEqual([
       "Role feed body text.",
+    ]);
+  });
+
+  it("skips navigation listitem chrome while keeping feed listitem posts", async () => {
+    document.body.innerHTML = `
+      <nav>
+        <div role="listitem">Navigation item</div>
+      </nav>
+      <section role="feed">
+        <div role="listitem">
+          <div>Role listitem post text.</div>
+        </div>
+      </section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Role listitem post text.",
     ]);
   });
 
