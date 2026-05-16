@@ -91,24 +91,40 @@ const feedLowValueSelector = [
 
 function discoverRoots(): Element[] {
   const discoveredRoots: DiscoveredRootCandidate[] = [];
-  let currentRoot: Element | null = null;
-  let hasStrongRoot = false;
 
   for (const candidateRoot of document.querySelectorAll(rootSelector)) {
     const candidate = rootForCandidate(candidateRoot);
     if (!candidate) continue;
     const root = candidate.element;
     if (root === document.documentElement || root === document.body) continue;
-    if (currentRoot?.contains(root)) continue;
     if (isElementSkippable(root)) continue;
     if (isInsideGenericChrome(root)) continue;
 
+    const existingIndex = discoveredRoots.findIndex((existing) =>
+      existing.element === root || existing.element.contains(root),
+    );
+    if (existingIndex >= 0) {
+      const existing = discoveredRoots[existingIndex];
+      if (
+        existing.element === root ||
+        !shouldPreferNestedRoot(root, existing.element)
+      ) {
+        continue;
+      }
+      discoveredRoots.splice(existingIndex, 1);
+    }
+
+    if (discoveredRoots.some((existing) => root.contains(existing.element))) {
+      continue;
+    }
+
     discoveredRoots.push(candidate);
-    hasStrongRoot ||= !candidate.isWeak && isStrongRoot(root);
-    currentRoot = root;
   }
 
   if (discoveredRoots.length === 0) return [document.body];
+  const hasStrongRoot = discoveredRoots.some(
+    (candidate) => !candidate.isWeak && isStrongRoot(candidate.element),
+  );
   if (!hasStrongRoot) {
     return [document.body, ...discoveredRoots.map((candidate) => candidate.element)];
   }
@@ -116,6 +132,25 @@ function discoverRoots(): Element[] {
   return discoveredRoots
     .filter((candidate) => !isWeakPageChromeRoot(candidate))
     .map((candidate) => candidate.element);
+}
+
+function shouldPreferNestedRoot(root: Element, existingRoot: Element): boolean {
+  if (!existingRoot.matches("main, [role='main']")) return false;
+  if (root.matches("[lang], [dir='auto'], [data-path], [data-pathname]")) {
+    return false;
+  }
+  if (root.matches('[role="listitem"]')) return isFeedListItemContext(root);
+
+  return root.matches(
+    [
+      "article",
+      '[role="article"]',
+      '[role="feed"]',
+      '[data-testid="tweet"]',
+      '[data-testid="tweetText"]',
+      '[data-testid="cellInnerDiv"]',
+    ].join(","),
+  );
 }
 
 function isWeakRoot(element: Element): boolean {

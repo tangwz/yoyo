@@ -430,6 +430,21 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("prefers article roots over enclosing main on ordinary article pages", async () => {
+    document.body.innerHTML = `
+      <main>
+        <article><p>Primary article body.</p></article>
+        <aside><p>Related card should not be extracted.</p></aside>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Primary article body.",
+    ]);
+  });
+
   it("falls back to body when only weak language roots are discovered", async () => {
     const bodyText =
       "This normal body section should still be discovered even when a small language marked sidebar appears first.";
