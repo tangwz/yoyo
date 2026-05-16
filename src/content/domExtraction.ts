@@ -87,8 +87,17 @@ function isFeedHeuristicContext(element: Element): boolean {
   ) !== null;
 }
 
+function isFeedPostContext(element: Element): boolean {
+  const post = element.closest('[data-testid="tweet"], [data-testid="tweetText"]');
+  if (post) return true;
+
+  const article = element.closest("article, [role='article']");
+  return article?.querySelector('[data-testid="tweetText"]') !== null;
+}
+
 function isFeedLowValueElement(element: Element): boolean {
   if (!isFeedHeuristicContext(element)) return false;
+  if (element.tagName === "HEADER" && isFeedPostContext(element)) return true;
   if (element.matches(feedLowValueSelector)) return true;
 
   const text = normalizeSourceText(element.textContent ?? "");

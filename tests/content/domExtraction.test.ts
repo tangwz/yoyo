@@ -428,6 +428,27 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("skips feed header chrome while keeping post body text", async () => {
+    document.body.innerHTML = `
+      <main>
+        <article data-testid="tweet">
+          <header>
+            <h1>Terence</h1>
+            <span>@terence</span>
+            <time>1h</time>
+          </header>
+          <p>Feed body text remains extractable.</p>
+        </article>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Feed body text remains extractable.",
+    ]);
+  });
+
   it("deduplicates nested multi-root discoveries", async () => {
     document.body.innerHTML = `
       <main>
