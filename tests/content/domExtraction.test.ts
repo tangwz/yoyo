@@ -4,6 +4,8 @@ import { isPageUrlSupported } from "@/content/domEligibility";
 
 describe("collectPageSegments", () => {
   const originalInnerHeight = window.innerHeight;
+  const originalDocumentLanguage = document.documentElement.getAttribute("lang");
+  const originalBodyLanguage = document.body.getAttribute("lang");
 
   beforeEach(() => {
     document.body.innerHTML = "";
@@ -18,6 +20,16 @@ describe("collectPageSegments", () => {
       configurable: true,
       value: originalInnerHeight,
     });
+    if (originalDocumentLanguage === null) {
+      document.documentElement.removeAttribute("lang");
+    } else {
+      document.documentElement.setAttribute("lang", originalDocumentLanguage);
+    }
+    if (originalBodyLanguage === null) {
+      document.body.removeAttribute("lang");
+    } else {
+      document.body.setAttribute("lang", originalBodyLanguage);
+    }
   });
 
   it("extracts leaf readable blocks without parent duplicates", async () => {
@@ -428,6 +440,40 @@ describe("collectPageSegments", () => {
       "Normal page section.",
       "Standalone short feed text.",
     ]);
+  });
+
+  it("ignores html language when discovering specific roots", async () => {
+    document.documentElement.setAttribute("lang", "en");
+    document.body.innerHTML = `
+      <article>
+        <div data-testid="tweetText" lang="en" dir="auto">
+          <span>First html language article text.</span>
+        </div>
+      </article>
+      <main>
+        <p>Normal html language page section.</p>
+      </main>
+      <div lang="en" dir="auto">Standalone html language feed text.</div>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "First html language article text.",
+      "Normal html language page section.",
+      "Standalone html language feed text.",
+    ]);
+  });
+
+  it("does not treat body language as high-confidence fallback text", async () => {
+    document.body.setAttribute("lang", "en");
+    document.body.innerHTML = `
+      <div>Short body fallback text.</div>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments).toEqual([]);
   });
 });
 

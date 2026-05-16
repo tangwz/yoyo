@@ -57,6 +57,7 @@ const lowValueSelector = [
 function discoverRoots(): Element[] {
   const roots = [...document.querySelectorAll(rootSelector)];
   const discoveredRoots = roots.filter((root, index, allRoots) => {
+    if (root === document.documentElement) return false;
     if (root === document.body) return false;
     if (isElementSkippable(root)) return false;
     return !allRoots.some(
@@ -81,6 +82,7 @@ function isLowValueFeedElement(element: Element): boolean {
 }
 
 function isHighConfidenceShortTextElement(element: Element): boolean {
+  if (element === document.documentElement || element === document.body) return false;
   if (element.matches('[data-testid="tweetText"]')) return true;
   if (element.closest('[data-testid="tweetText"]')) return true;
   if (element.closest("article, [role='article'], [data-testid='tweet']")) {
