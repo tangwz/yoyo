@@ -68,6 +68,7 @@ const feedLowValueSelector = [
   "[role='navigation']",
   "[aria-label*='action' i]",
   "[aria-label*='control' i]",
+  "[aria-label*='meta' i]",
   "[data-testid='reply']",
   "[data-testid='retweet']",
   "[data-testid='like']",
@@ -218,9 +219,9 @@ function isFeedLowValueElement(
   textCache?: TextNormalizationCache,
 ): boolean {
   if (!isFeedHeuristicContext(element)) return false;
-  if (element.closest('[data-testid="tweetText"]')) return false;
   if (element.tagName === "HEADER" && isFeedPostContext(element)) return true;
   if (element.matches(feedLowValueSelector)) return true;
+  if (isInsideBodySafeTextContainer(element)) return false;
 
   const text = normalizedElementText(element, textCache);
   if (/^@\w{1,30}$/.test(text)) return true;
@@ -228,6 +229,19 @@ function isFeedLowValueElement(
   if (/^\d+[smhdw]$/.test(text)) return true;
 
   return false;
+}
+
+function isInsideBodySafeTextContainer(element: Element): boolean {
+  return (
+    element.closest('[data-testid="tweetText"], [lang], [dir="auto"]') !== null ||
+    closestDirectReadableFeedElement(element) !== null
+  );
+}
+
+function closestDirectReadableFeedElement(element: Element): Element | null {
+  const readable = element.closest("p, li, blockquote, h1, h2, h3, h4, h5, h6");
+  if (!readable || !isDirectReadableCandidate(readable)) return null;
+  return isFeedHeuristicContext(readable) ? readable : null;
 }
 
 function isLowValueElement(

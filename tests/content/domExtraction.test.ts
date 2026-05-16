@@ -520,6 +520,38 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("keeps numeric spans inside fallback dir-auto tweet body", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <div dir="auto">
+          Revenue in <span>2024</span> grew.
+        </div>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Revenue in 2024 grew.",
+    ]);
+  });
+
+  it("keeps body mentions inside fallback tweet body", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <div dir="auto">
+          Thanks <a href="/alice">@alice</a> for the review.
+        </div>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Thanks @alice for the review.",
+    ]);
+  });
+
   it("skips feed timestamps outside body text", async () => {
     const bodyText =
       "Feed body text should not include the absolute timestamp while still being long enough for generic feed extraction.";
@@ -544,9 +576,11 @@ describe("collectPageSegments", () => {
       <article data-testid="tweet">
         <p>
           Body text
-          <time>May 16, 2026</time>
-          <span>@handle</span>
-          <span>42</span>
+          <span aria-label="Post metadata">
+            <time>May 16, 2026</time>
+            <span>@handle</span>
+            <span>42</span>
+          </span>
         </p>
       </article>
     `;
