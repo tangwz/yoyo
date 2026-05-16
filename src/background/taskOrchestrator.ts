@@ -182,18 +182,26 @@ export class TranslationTaskOrchestrator {
       if (!profile) {
         return this.noActiveProfileProgress(input.taskId);
       }
-      if (this.hasTaskForTab(input.tabId)) {
-        return this.missingTaskProgress(input.taskId);
-      }
 
-      task = this.createTask(input.taskId, input.tabId);
-      task.collectionComplete = collectionComplete;
-      task.context = {
-        profile,
-        sourceLanguage: input.sourceLanguage,
-        targetLanguage: input.targetLanguage,
-        translationMode: input.translationMode,
-      };
+      const taskCreatedWhileLoadingProfile = this.tasks.get(input.taskId);
+      if (taskCreatedWhileLoadingProfile) {
+        if (taskCreatedWhileLoadingProfile.tabId !== input.tabId) {
+          return this.missingTaskProgress(input.taskId);
+        }
+
+        task = taskCreatedWhileLoadingProfile;
+      } else if (this.hasTaskForTab(input.tabId)) {
+        return this.missingTaskProgress(input.taskId);
+      } else {
+        task = this.createTask(input.taskId, input.tabId);
+        task.collectionComplete = collectionComplete;
+        task.context = {
+          profile,
+          sourceLanguage: input.sourceLanguage,
+          targetLanguage: input.targetLanguage,
+          translationMode: input.translationMode,
+        };
+      }
     }
 
     if (this.isTaskStopped(task)) {
@@ -428,6 +436,14 @@ export class TranslationTaskOrchestrator {
       }
 
       const translationMode = input.translationMode ?? "lazyViewport";
+      task.collectionComplete = false;
+      task.context = {
+        profile,
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        translationMode,
+      };
+
       const collectResponse = await this.dependencies.sendToContent(input.tabId, {
         type: "collectSegments",
         taskId: task.progress.taskId,
@@ -450,19 +466,10 @@ export class TranslationTaskOrchestrator {
       }
 
       const collectedSegments = collectResponse.segments;
-      const hadContext = task.context !== undefined;
       const segmentsToProcess = this.mergeTranslationBatchSegments(task, collectedSegments);
       const collectionComplete = collectResponse.collectionComplete ?? true;
 
-      if (!hadContext) {
-        task.collectionComplete = collectionComplete;
-        task.context = {
-          profile,
-          sourceLanguage: input.sourceLanguage,
-          targetLanguage: input.targetLanguage,
-          translationMode,
-        };
-      } else if (collectionComplete) {
+      if (collectionComplete) {
         task.collectionComplete = true;
       }
 
