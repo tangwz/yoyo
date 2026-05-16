@@ -143,6 +143,8 @@ async function flushTranslationQueue(): Promise<void> {
   }
 
   const segmentIds = segments.map((segment) => segment.id);
+  const collectionComplete =
+    context.translationMode !== "lazyViewport" && !translationQueue.hasPending();
   const response = await Promise.resolve(
     sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
       type: "enqueueTranslationBatch",
@@ -151,7 +153,7 @@ async function flushTranslationQueue(): Promise<void> {
       targetLanguage: context.targetLanguage,
       translationMode: context.translationMode,
       segments,
-      collectionComplete: context.translationMode !== "lazyViewport",
+      collectionComplete,
     }),
   ).catch(() => undefined);
 
@@ -161,6 +163,7 @@ async function flushTranslationQueue(): Promise<void> {
 
   if (!response || response.type !== "taskProgress") {
     translationQueue.markFailed(segmentIds);
+    scheduleTranslationQueueFlush();
     return;
   }
 

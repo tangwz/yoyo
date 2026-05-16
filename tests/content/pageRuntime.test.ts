@@ -261,6 +261,103 @@ describe("page runtime", () => {
     expect(runtimeMock.sendRuntimeMessage).not.toHaveBeenCalled();
   });
 
+  it("marks only the final full-page local queue batch as collection complete", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <article>
+        <p>First readable paragraph.</p>
+        <p>Second readable paragraph.</p>
+        <p>Third readable paragraph.</p>
+        <p>Fourth readable paragraph.</p>
+        <p>Fifth readable paragraph.</p>
+      </article>
+    `;
+
+    await collectSegments("task-1", "fullPage", "en", "fr");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(1);
+    });
+
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(2);
+    });
+
+    const batches = runtimeMessages<{
+      type: "enqueueTranslationBatch";
+      collectionComplete?: boolean;
+      segments: Array<{ id: string }>;
+    }>("enqueueTranslationBatch");
+    expect(batches[0]).toEqual(
+      expect.objectContaining({
+        collectionComplete: false,
+        segments: [
+          expect.objectContaining({ id: "seg_1" }),
+          expect.objectContaining({ id: "seg_2" }),
+          expect.objectContaining({ id: "seg_3" }),
+          expect.objectContaining({ id: "seg_4" }),
+        ],
+      }),
+    );
+    expect(batches[1]).toEqual(
+      expect.objectContaining({
+        collectionComplete: true,
+        segments: [expect.objectContaining({ id: "seg_5" })],
+      }),
+    );
+  });
+
+  it("continues flushing later pending batches after a runtime enqueue failure", async () => {
+    vi.useFakeTimers();
+    runtimeMock.sendRuntimeMessage
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce({
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "waitingForViewport",
+          total: 5,
+          translated: 1,
+          failed: 4,
+        },
+      });
+    document.body.innerHTML = `
+      <article>
+        <p>First readable paragraph.</p>
+        <p>Second readable paragraph.</p>
+        <p>Third readable paragraph.</p>
+        <p>Fourth readable paragraph.</p>
+        <p>Fifth readable paragraph.</p>
+      </article>
+    `;
+
+    await collectSegments("task-1", "fullPage", "en", "fr");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(1);
+    });
+
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(2);
+    });
+
+    const batches = runtimeMessages<{
+      type: "enqueueTranslationBatch";
+      segments: Array<{ id: string }>;
+    }>("enqueueTranslationBatch");
+    expect(batches[0]?.segments.map((segment) => segment.id)).toEqual([
+      "seg_1",
+      "seg_2",
+      "seg_3",
+      "seg_4",
+    ]);
+    expect(batches[1]?.segments.map((segment) => segment.id)).toEqual([
+      "seg_5",
+    ]);
+  });
+
   it("reports newly visible lazy segments after scrolling", async () => {
     vi.useFakeTimers();
     const originalInnerHeight = window.innerHeight;
