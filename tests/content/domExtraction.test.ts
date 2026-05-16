@@ -234,6 +234,28 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("keeps meaningful article footer and nav text", async () => {
+    document.body.innerHTML = `
+      <article>
+        <p>Article body.</p>
+        <footer>
+          <p>Article footer note.</p>
+        </footer>
+        <nav>
+          <p>Article source index.</p>
+        </nav>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Article body.",
+      "Article footer note.",
+      "Article source index.",
+    ]);
+  });
+
   it("does not merge nested list items into a parent list item segment", async () => {
     document.body.innerHTML = `
       <article>
@@ -348,6 +370,22 @@ describe("collectPageSegments", () => {
     );
   });
 
+  it("falls back to body when only weak path and editable hints are discovered", async () => {
+    const bodyText =
+      "This normal body section should still be discovered even when path and editable hints appear first.";
+    document.body.innerHTML = `
+      <div data-path="/compose/thread">Thread label</div>
+      <div contenteditable="true">Draft composer text.</div>
+      <section>${bodyText}</section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
+    ]);
+  });
+
   it("does not extract a generic parent from skipped subtree text", async () => {
     const skippedLongText =
       "This skipped subtree contains enough text to pass the generic block extraction threshold, but it must not create a parent segment.";
@@ -458,6 +496,25 @@ describe("collectPageSegments", () => {
 
     expect(result.segments.map((segment) => segment.sourceText)).toEqual([
       "Revenue in 2024 grew.",
+    ]);
+  });
+
+  it("skips feed timestamps outside body text", async () => {
+    const bodyText =
+      "Feed body text should not include the absolute timestamp while still being long enough for generic feed extraction.";
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <time>May 16, 2026</time>
+        <section>
+          ${bodyText}
+        </section>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
     ]);
   });
 

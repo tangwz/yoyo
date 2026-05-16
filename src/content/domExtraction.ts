@@ -36,6 +36,9 @@ const textRootSelector = [
   '[data-testid="tweetText"]',
   "[lang]",
   '[dir="auto"]',
+  "[data-path]",
+  "[data-pathname]",
+  "[contenteditable]",
 ].join(",");
 
 const rootSelector = [
@@ -46,12 +49,12 @@ const rootSelector = [
 const weakRootSelector = [
   "[lang]",
   '[dir="auto"]',
+  "[data-path]",
+  "[data-pathname]",
+  "[contenteditable]",
 ].join(",");
 
 const genericLowValueSelector = [
-  "nav",
-  "footer",
-  "[role='navigation']",
   "[role='button']",
   "[role='menu']",
   "[role='menubar']",
@@ -59,6 +62,10 @@ const genericLowValueSelector = [
 ].join(",");
 
 const feedLowValueSelector = [
+  "nav",
+  "footer",
+  "time",
+  "[role='navigation']",
   "[aria-label*='action' i]",
   "[aria-label*='control' i]",
   "[data-testid='reply']",
@@ -87,7 +94,10 @@ function discoverRoots(): Element[] {
 }
 
 function isWeakRoot(element: Element): boolean {
-  return element.matches(weakRootSelector) && !element.matches('[data-testid="tweetText"]');
+  return (
+    element.matches(weakRootSelector) &&
+    !element.matches('[data-testid="tweetText"]')
+  );
 }
 
 function isFeedListItemContext(element: Element): boolean {
@@ -451,6 +461,13 @@ export async function collectPageSegments(
     if (isElementSkippable(element)) return;
     if (isLowValueElement(element, textCache)) return;
     if (options.visibleRangeOnly && element !== document.body && isOutsideVisibleCollectionRange(element)) {
+      return;
+    }
+
+    if (element === document.body) {
+      for (const child of [...element.children]) {
+        await walk(child);
+      }
       return;
     }
 
