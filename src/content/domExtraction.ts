@@ -119,7 +119,24 @@ function rootForCandidate(element: Element): DiscoveredRootCandidate | null {
 
 function isEditableOnlyRoot(element: Element): boolean {
   if (element.querySelector("[contenteditable]") === null) return false;
-  return [...element.children].every((child) => isElementSkippable(child));
+  return !hasMeaningfulNonEditableContent(element);
+}
+
+function hasMeaningfulNonEditableContent(element: Element): boolean {
+  for (const child of element.childNodes) {
+    if (child.nodeType === textNodeType) {
+      if (normalizeSourceText(child.textContent ?? "")) return true;
+      continue;
+    }
+
+    if (child.nodeType !== elementNodeType) continue;
+
+    const childElement = child as Element;
+    if (isElementSkippable(childElement)) continue;
+    if (hasMeaningfulNonEditableContent(childElement)) return true;
+  }
+
+  return false;
 }
 
 function isFeedListItemContext(element: Element): boolean {
