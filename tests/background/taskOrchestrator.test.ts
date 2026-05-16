@@ -2104,6 +2104,161 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("honors runtime collection completion after translatePage binds context", async () => {
+    let resolveCollect:
+      | ((response: ContentResponse) => void)
+      | undefined;
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return new Promise<ContentResponse>((resolve) => {
+          resolveCollect = resolve;
+        });
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+      return {
+        text: JSON.stringify({
+          items: (input.items ?? []).map((item) => ({
+            id: item.id,
+            text: `Translated ${item.id}`,
+          })),
+        }),
+        model: "gpt-4.1-mini",
+      };
+    });
+
+    const running = orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    await vi.waitFor(() => {
+      expect(resolveCollect).toBeDefined();
+    });
+
+    const runtimeProgress = await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: true,
+      segments: [
+        segment({
+          id: "runtime-1",
+          sourceText: "Runtime text.",
+          textHash: "hash-runtime",
+          priority: "viewport",
+        }),
+      ],
+    });
+
+    expect(runtimeProgress).toEqual({
+      taskId: "task-1",
+      state: "completed",
+      total: 1,
+      translated: 1,
+      failed: 0,
+    });
+
+    resolveCollect?.({
+      type: "collectSegmentsResult",
+      taskId: "task-1",
+      collectionComplete: true,
+      segments: [],
+    });
+    await expect(running).resolves.toEqual(runtimeProgress);
+  });
+
+  it("keeps failed progress consistent when collection fails after runtime translation", async () => {
+    let resolveCollect:
+      | ((response: ContentResponse) => void)
+      | undefined;
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return new Promise<ContentResponse>((resolve) => {
+          resolveCollect = resolve;
+        });
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ id: "runtime-1", text: "Translated runtime." }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+
+    const running = orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    await vi.waitFor(() => {
+      expect(resolveCollect).toBeDefined();
+    });
+
+    const runtimeProgress = await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "runtime-1",
+          sourceText: "Runtime text.",
+          textHash: "hash-runtime",
+          priority: "viewport",
+        }),
+      ],
+    });
+    expect(runtimeProgress).toMatchObject({
+      taskId: "task-1",
+      state: "waitingForViewport",
+      total: 1,
+      translated: 1,
+      failed: 0,
+    });
+
+    resolveCollect?.({
+      type: "contentActionResult",
+      success: true,
+    });
+
+    await expect(running).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "failed",
+      total: 1,
+      translated: 1,
+      failed: 0,
+      errorMessage: "Content script did not return page segments.",
+    });
+    expect(orchestrator.getTask("task-1")).toMatchObject({
+      state: "failed",
+      total: 1,
+      translated: 1,
+      failed: 0,
+    });
+    const finalProgress = orchestrator.getTask("task-1");
+    expect((finalProgress?.translated ?? 0) + (finalProgress?.failed ?? 0)).toBeLessThanOrEqual(
+      finalProgress?.total ?? 0,
+    );
+  });
+
   it("returns cancelled progress when lazy enqueue references a missing task", async () => {
     const { orchestrator } = createOrchestrator();
 

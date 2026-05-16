@@ -228,6 +228,7 @@ export class TranslationTaskOrchestrator {
             profile,
             ...context,
           };
+          task.pendingContext = undefined;
         }
       }
 
@@ -465,6 +466,7 @@ export class TranslationTaskOrchestrator {
         profile,
         ...context,
       };
+      task.pendingContext = undefined;
 
       const collectResponse = await this.dependencies.sendToContent(input.tabId, {
         type: "collectSegments",
@@ -1235,9 +1237,11 @@ export class TranslationTaskOrchestrator {
     errorMessage: string,
     failed = task.progress.total,
   ): TranslationProgress {
+    const remaining = Math.max(0, task.progress.total - task.progress.translated);
+
     this.updateProgress(task, {
       state: "failed",
-      failed,
+      failed: Math.min(failed, remaining),
       errorMessage,
     });
     return this.cloneProgress(task.progress);
