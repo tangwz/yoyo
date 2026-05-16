@@ -98,7 +98,7 @@ function discoverRoots(): Element[] {
   }
 
   if (discoveredRoots.length === 0) return [document.body];
-  return hasStrongRoot ? discoveredRoots : [...discoveredRoots, document.body];
+  return hasStrongRoot ? discoveredRoots : [document.body, ...discoveredRoots];
 }
 
 function isWeakRoot(element: Element): boolean {

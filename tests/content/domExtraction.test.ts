@@ -370,6 +370,22 @@ describe("collectPageSegments", () => {
     );
   });
 
+  it("preserves body reading order when weak roots need fallback", async () => {
+    const bodyText =
+      "This normal body section is long enough to pass generic extraction and appears first in DOM.";
+    document.body.innerHTML = `
+      <section>${bodyText}</section>
+      <aside lang="en">Tiny label</aside>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
+      "Tiny label",
+    ]);
+  });
+
   it("falls back to body when only weak path and editable hints are discovered", async () => {
     const bodyText =
       "This normal body section should still be discovered even when path and editable hints appear first.";
