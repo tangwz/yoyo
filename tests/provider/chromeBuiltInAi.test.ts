@@ -382,6 +382,30 @@ describe("ChromeBuiltInTranslatorProvider", () => {
     } satisfies Partial<LocalAiError>);
   });
 
+  it("maps activation-gated create errors to model download required", async () => {
+    const cause = namedError("NotAllowedError");
+    const provider = new ChromeBuiltInTranslatorProvider({
+      getTranslatorApi: () => ({
+        availability: vi.fn(async () => "available" as const),
+        create: vi.fn(async () => {
+          throw cause;
+        }),
+      }),
+    });
+
+    await expect(
+      provider.translateText({
+        profile: profile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        text: "Hello",
+      }),
+    ).rejects.toMatchObject({
+      code: "modelDownloadRequired",
+      cause,
+    } satisfies Partial<LocalAiError>);
+  });
+
   it("maps create errors to local aborted errors when aborted", async () => {
     const abortController = new AbortController();
     const cause = new Error("create failed");
@@ -414,6 +438,7 @@ describe("ChromeBuiltInTranslatorProvider", () => {
     ["NotSupportedError", "languagePairUnavailable"],
     ["QuotaExceededError", "textTooLong"],
     ["NetworkError", "modelDownloadFailed"],
+    ["NotAllowedError", "modelDownloadRequired"],
   ] as const)("maps %s DOMException names to %s", async (name, code) => {
     const cause = namedError(name);
     const provider = new ChromeBuiltInTranslatorProvider({

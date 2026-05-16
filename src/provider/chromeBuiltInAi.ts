@@ -129,6 +129,12 @@ function mapTranslatorError(error: unknown, aborted: boolean): LocalAiError {
         "Chrome could not download the local translation model.",
         error,
       );
+    case "NotAllowedError":
+      return new LocalAiError(
+        "modelDownloadRequired",
+        "Chrome needs user activation to download or initialize the local translation model.",
+        error,
+      );
     case "ApiUnavailableError":
       return new LocalAiError(
         "apiUnavailable",
