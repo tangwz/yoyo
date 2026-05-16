@@ -78,7 +78,9 @@ function discoverRoots(): Element[] {
   let currentRoot: Element | null = null;
   let hasStrongRoot = false;
 
-  for (const root of document.querySelectorAll(rootSelector)) {
+  for (const candidateRoot of document.querySelectorAll(rootSelector)) {
+    const root = rootForCandidate(candidateRoot);
+    if (!root) continue;
     if (root === document.documentElement || root === document.body) continue;
     if (currentRoot?.contains(root)) continue;
     if (isElementSkippable(root)) continue;
@@ -98,6 +100,14 @@ function isWeakRoot(element: Element): boolean {
     element.matches(weakRootSelector) &&
     !element.matches('[data-testid="tweetText"]')
   );
+}
+
+function rootForCandidate(element: Element): Element | null {
+  if (element.hasAttribute("contenteditable")) {
+    return element.parentElement;
+  }
+
+  return element;
 }
 
 function isFeedListItemContext(element: Element): boolean {
