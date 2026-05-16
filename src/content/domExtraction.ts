@@ -399,6 +399,7 @@ function hasNestedPostTextCandidate(element: Element): boolean {
 function isHighConfidenceShortTextElement(element: Element): boolean {
   if (element === document.documentElement || element === document.body) return false;
   if (isInsideGenericChrome(element)) return false;
+  if (isWeakTextHintInPageChrome(element)) return false;
   if (isNonBodyTextHintInPostWithExplicitBody(element)) return false;
   if (element.matches('[data-testid="cellInnerDiv"]')) {
     return !hasNestedPostTextCandidate(element);
@@ -413,6 +414,22 @@ function isHighConfidenceShortTextElement(element: Element): boolean {
     return element.hasAttribute("lang") || element.getAttribute("dir") === "auto";
   }
   return element.hasAttribute("lang") || element.getAttribute("dir") === "auto";
+}
+
+function isWeakTextHintInPageChrome(element: Element): boolean {
+  if (!element.matches("[lang], [dir='auto']")) return false;
+  if (isFeedHeuristicContext(element)) return false;
+  if (element.closest('[data-testid="tweetText"]')) return false;
+
+  if (!element.closest("article, main, [role='main'], [role='article']")) {
+    return false;
+  }
+
+  const chrome = element.closest(pageChromeSelector);
+  if (!chrome) return false;
+
+  const text = normalizeSourceText(element.textContent ?? "");
+  return text.length > 0 && text.length < genericMinimumTextLength;
 }
 
 function isNonBodyTextHintInPostWithExplicitBody(element: Element): boolean {

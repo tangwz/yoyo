@@ -282,6 +282,36 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("does not extract nested weak language roots from article navigation", async () => {
+    document.body.innerHTML = `
+      <article>
+        <nav><span lang="en">Home</span></nav>
+        <p>Article body.</p>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Article body.",
+    ]);
+  });
+
+  it("does not extract nested weak direction roots from article footer chrome", async () => {
+    document.body.innerHTML = `
+      <article>
+        <p>Article body.</p>
+        <footer><span dir="auto">Related</span></footer>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Article body.",
+    ]);
+  });
+
   it("does not merge nested list items into a parent list item segment", async () => {
     document.body.innerHTML = `
       <article>
