@@ -194,6 +194,15 @@ export class TranslationTaskOrchestrator {
     this.enterRuntimeBatch(task);
 
     try {
+      if (!task.context && task.pendingContext) {
+        this.mergeTranslationBatchSegments(task, input.segments);
+        this.updateProgress(task, {
+          total: task.segmentsById.size,
+        });
+        this.markSegmentsFailed(task, input.failedSegmentIds ?? []);
+        return this.cloneProgress(task.progress);
+      }
+
       if (!task.context) {
         const profile = await this.dependencies.getActiveProfile();
 
@@ -479,7 +488,7 @@ export class TranslationTaskOrchestrator {
       }
 
       const collectedSegments = collectResponse.segments;
-      const segmentsToProcess = this.mergeTranslationBatchSegments(task, collectedSegments);
+      this.mergeTranslationBatchSegments(task, collectedSegments);
       const collectionComplete = collectResponse.collectionComplete ?? true;
 
       if (collectionComplete) {
@@ -494,8 +503,8 @@ export class TranslationTaskOrchestrator {
       await this.processSegmentsForTask(
         task,
         context.translationMode === "lazyViewport"
-          ? segmentsToProcess.filter((segment) => segment.priority !== "normal")
-          : segmentsToProcess,
+          ? [...task.segmentsById.values()].filter((segment) => segment.priority !== "normal")
+          : [...task.segmentsById.values()],
       );
 
       if (task.progress.state === "cancelled") {
@@ -1164,6 +1173,10 @@ export class TranslationTaskOrchestrator {
 
   private finishOrWaitForLazySegments(task: RunningTask): void {
     if (this.isTaskStopped(task)) {
+      return;
+    }
+
+    if (!task.context) {
       return;
     }
 

@@ -937,27 +937,12 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
-  it("keeps an existing task without context waiting when runtime lazy collection is incomplete", async () => {
-    const getActiveProfile = vi.fn()
-      .mockReturnValueOnce(new Promise<ProviderProfile | undefined>(() => {}))
-      .mockResolvedValueOnce(providerProfile());
+  it("queues a runtime lazy batch without loading profile while translatePage context is pending", async () => {
+    const getActiveProfile = vi.fn(
+      () => new Promise<ProviderProfile | undefined>(() => {}),
+    );
     const { orchestrator, generateText, sendToContent } = createOrchestrator({
       getActiveProfile,
-    });
-
-    sendToContent.mockImplementation(async (_tabId, message) => {
-      expect(message).toEqual({
-        type: "applyTranslations",
-        taskId: "task-1",
-        items: [{ segmentId: "dynamic-1", translatedText: "动态文本。" }],
-      });
-      return { type: "contentActionResult", success: true };
-    });
-    generateText.mockResolvedValue({
-      text: JSON.stringify({
-        items: [{ id: "dynamic-1", text: "动态文本。" }],
-      }),
-      model: "gpt-4.1-mini",
     });
 
     orchestrator.startTranslatePage({
@@ -983,13 +968,14 @@ describe("TranslationTaskOrchestrator", () => {
       ],
     });
 
-    expect(getActiveProfile).toHaveBeenCalledTimes(2);
-    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(getActiveProfile).toHaveBeenCalledTimes(1);
+    expect(sendToContent).not.toHaveBeenCalled();
+    expect(generateText).not.toHaveBeenCalled();
     expect(progress).toEqual({
       taskId: "task-1",
-      state: "waitingForViewport",
+      state: "collecting",
       total: 1,
-      translated: 1,
+      translated: 0,
       failed: 0,
     });
   });
@@ -1699,7 +1685,7 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
-  it("keeps pending translatePage context when a mismatched runtime batch arrives before profile resolves", async () => {
+  it("defers a mismatched runtime batch while translatePage profile lookup is pending", async () => {
     let resolveProfile:
       | ((profile: ProviderProfile | undefined) => void)
       | undefined;
@@ -1709,7 +1695,9 @@ describe("TranslationTaskOrchestrator", () => {
     const profilePromise = new Promise<ProviderProfile | undefined>((resolve) => {
       resolveProfile = resolve;
     });
-    const getActiveProfile = vi.fn(() => profilePromise);
+    const getActiveProfile = vi.fn()
+      .mockReturnValueOnce(profilePromise)
+      .mockResolvedValueOnce(undefined);
     const { orchestrator, generateText, sendToContent } = createOrchestrator({
       getActiveProfile,
     });
@@ -1770,6 +1758,15 @@ describe("TranslationTaskOrchestrator", () => {
         }),
       ],
     });
+    await expect(runtimeBatch).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "collecting",
+      total: 1,
+      translated: 0,
+      failed: 0,
+    });
+
+    expect(getActiveProfile).toHaveBeenCalledTimes(1);
     await Promise.resolve();
     expect(generateText).not.toHaveBeenCalled();
 
@@ -1777,19 +1774,6 @@ describe("TranslationTaskOrchestrator", () => {
     await vi.waitFor(() => {
       expect(resolveCollect).toBeDefined();
     });
-    await expect(runtimeBatch).resolves.toMatchObject({
-      taskId: "task-1",
-      state: "waitingForViewport",
-      total: 1,
-      translated: 1,
-      failed: 0,
-    });
-
-    expect(getActiveProfile).toHaveBeenCalledTimes(2);
-    expect(generateText).toHaveBeenCalledTimes(1);
-    expect(generateText.mock.calls[0]?.[0].prompt).toContain("Target language: zh-CN");
-    expect(generateText.mock.calls[0]?.[0].prompt).not.toContain("Target language: fr");
-
     resolveCollect?.({
       type: "collectSegmentsResult",
       taskId: "task-1",
@@ -1803,6 +1787,10 @@ describe("TranslationTaskOrchestrator", () => {
       translated: 1,
       failed: 0,
     });
+    expect(getActiveProfile).toHaveBeenCalledTimes(1);
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generateText.mock.calls[0]?.[0].prompt).toContain("Target language: zh-CN");
+    expect(generateText.mock.calls[0]?.[0].prompt).not.toContain("Target language: fr");
   });
 
   it("does not apply runtime provider results after pending collection fails the task", async () => {
