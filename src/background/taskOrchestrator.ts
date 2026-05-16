@@ -335,6 +335,7 @@ export class TranslationTaskOrchestrator {
         input.sourceLanguage,
         segments,
         task.controller.signal,
+        translationMode === "lazyViewport",
       );
       task.segmentsById = new Map(segments.map((segment) => [segment.id, segment]));
       task.collectionComplete = collectResponse.collectionComplete ?? true;
@@ -353,8 +354,7 @@ export class TranslationTaskOrchestrator {
       if (
         translationMode === "lazyViewport" &&
         profile.type === "chrome-built-in-ai" &&
-        input.sourceLanguage === "auto" &&
-        segments.length > 0
+        input.sourceLanguage === "auto"
       ) {
         const finalizeResponse = await this.dependencies.sendToContent(input.tabId, {
           type: "finalizeLazyRecoverySourceLanguage",
@@ -467,12 +467,16 @@ export class TranslationTaskOrchestrator {
     sourceLanguage: string,
     segments: readonly PageSegment[],
     signal: AbortSignal,
+    allowPendingAuto = false,
   ): Promise<string> {
     if (profile.type !== "chrome-built-in-ai" || sourceLanguage !== "auto") {
       return sourceLanguage;
     }
 
     const sample = this.createLanguageDetectionSample(segments);
+    if (!sample && allowPendingAuto) {
+      return "auto";
+    }
     if (!sample || !this.dependencies.detectSourceLanguage) {
       throw new Error(
         "Chrome Built-in AI could not detect the page language. No remote provider was used.",
@@ -528,6 +532,10 @@ export class TranslationTaskOrchestrator {
       return;
     }
 
+    if (!(await this.resolveTaskSourceLanguageForSegments(task, candidates))) {
+      return;
+    }
+
     for (const segment of candidates) {
       task.inFlightSegmentIds.add(segment.id);
     }
@@ -547,6 +555,36 @@ export class TranslationTaskOrchestrator {
           task.processedSegmentIds.add(segment.id);
         }
       }
+    }
+  }
+
+  private async resolveTaskSourceLanguageForSegments(
+    task: RunningTask,
+    segments: readonly PageSegment[],
+  ): Promise<boolean> {
+    if (!task.context || task.context.sourceLanguage !== "auto") {
+      return true;
+    }
+
+    try {
+      const sourceLanguage = await this.resolveSourceLanguageForProfile(
+        task.context.profile,
+        task.context.sourceLanguage,
+        segments,
+        task.controller.signal,
+      );
+      task.context = {
+        ...task.context,
+        sourceLanguage,
+      };
+      return true;
+    } catch (error) {
+      this.failTask(
+        task,
+        error instanceof Error ? error.message : "Translation task failed.",
+        task.progress.total,
+      );
+      return false;
     }
   }
 

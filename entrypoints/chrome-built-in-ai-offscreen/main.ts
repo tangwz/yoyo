@@ -156,7 +156,7 @@ export function createChromeBuiltInAiOffscreenSession(
 
   function destroyOwnedTranslators(): void {
     for (const translator of translators.values()) {
-      void translator.destroy?.()?.catch(() => undefined);
+      void Promise.resolve(translator.destroy?.()).catch(() => undefined);
     }
     translators.clear();
   }

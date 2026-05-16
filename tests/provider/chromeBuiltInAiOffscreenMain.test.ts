@@ -223,6 +223,36 @@ describe("chrome-built-in-ai offscreen handler", () => {
     expect(session.hasTranslator("translator-1")).toBe(false);
   });
 
+  it("handles synchronous translator destroy during disconnect cleanup", async () => {
+    const destroy = vi.fn(() => undefined);
+    const session = createChromeBuiltInAiOffscreenSession({
+      createTranslatorId: () => "translator-1",
+      getTranslatorApi: () => ({
+        availability: vi.fn(async () => "available" as const),
+        create: vi.fn(async () => ({
+          translate: vi.fn(async () => "translated"),
+          destroy,
+        })),
+      }),
+    });
+
+    await expect(
+      session.handleRequest({
+        requestId: "create-1",
+        type: "chromeBuiltInAi.create",
+        options: { sourceLanguage: "en", targetLanguage: "zh-CN" },
+      }),
+    ).resolves.toEqual({
+      requestId: "create-1",
+      ok: true,
+      translatorId: "translator-1",
+    });
+
+    expect(() => session.disconnect()).not.toThrow();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(session.hasTranslator("translator-1")).toBe(false);
+  });
+
   it("detects the language of text and destroys the detector", async () => {
     const destroy = vi.fn(async () => undefined);
     const detect = vi.fn(async () => [

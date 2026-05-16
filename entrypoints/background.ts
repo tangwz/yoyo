@@ -219,6 +219,8 @@ export default defineBackground(() => {
             getActiveProfile,
             getTranslationProvider: (profile) =>
               translationProviderResolver.getTranslationProvider(profile),
+            detectSourceLanguage: (sourceText) =>
+              getChromeBuiltInAiOffscreenClient().detectLanguage(sourceText),
             sendToContent: (targetTabId, message) =>
               sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
           });

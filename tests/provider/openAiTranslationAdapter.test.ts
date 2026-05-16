@@ -104,6 +104,25 @@ describe("OpenAiTranslationAdapter", () => {
     expect(generateText.mock.calls[0]?.[0].prompt).toContain("Hello.");
   });
 
+  it("rejects text selections when the provider omits the translated item", async () => {
+    const generateText = vi.fn().mockResolvedValue({
+      model: "gpt-4.1-mini",
+      text: JSON.stringify({ items: [] }),
+    });
+    const adapter = new OpenAiTranslationAdapter({ generateText });
+
+    await expect(
+      adapter.translateText({
+        profile: profile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        text: "Hello.",
+      }),
+    ).rejects.toThrow(
+      "OpenAI-compatible provider did not return a selection translation.",
+    );
+  });
+
   it("streams page segment translations through the OpenAI-compatible provider", async () => {
     const abortController = new AbortController();
     const generateText = vi.fn();

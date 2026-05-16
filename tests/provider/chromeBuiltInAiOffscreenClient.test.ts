@@ -54,8 +54,14 @@ type ResponseMessage =
     };
 
 type MockPort = {
-  onMessage: { addListener(listener: (message: ResponseMessage) => void): void };
-  onDisconnect: { addListener(listener: () => void): void };
+  onMessage: {
+    addListener(listener: (message: ResponseMessage) => void): void;
+    removeListener?(listener: (message: ResponseMessage) => void): void;
+  };
+  onDisconnect: {
+    addListener(listener: () => void): void;
+    removeListener?(listener: () => void): void;
+  };
   postMessage: ReturnType<typeof vi.fn<(message: RequestMessage) => void>>;
   disconnect: ReturnType<typeof vi.fn<() => void>>;
 };
@@ -354,5 +360,55 @@ describe("ChromeBuiltInAiOffscreenClient", () => {
         type: "chromeBuiltInAi.cancel",
       }),
     );
+  });
+
+  it("removes per-request port listeners after responses settle", async () => {
+    const messageListeners = new Set<(message: ResponseMessage) => void>();
+    const disconnectListeners = new Set<() => void>();
+    const port: MockPort = {
+      onMessage: {
+        addListener(listener) {
+          messageListeners.add(listener);
+        },
+        removeListener(listener) {
+          messageListeners.delete(listener);
+        },
+      },
+      onDisconnect: {
+        addListener(listener) {
+          disconnectListeners.add(listener);
+        },
+        removeListener(listener) {
+          disconnectListeners.delete(listener);
+        },
+      },
+      postMessage: vi.fn((message) => {
+        for (const listener of [...messageListeners]) {
+          listener({
+            requestId: message.requestId,
+            ok: true,
+            availability: "available",
+          });
+        }
+      }),
+      disconnect: vi.fn(),
+    };
+    const client = new ChromeBuiltInAiOffscreenClient({
+      runtime: {
+        getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
+        getContexts: vi.fn(async () => [{ contextId: "existing" }]),
+        connect: vi.fn(() => port),
+      },
+      offscreen: {
+        createDocument: vi.fn(async () => undefined),
+      },
+    });
+
+    await expect(
+      client.availability({ sourceLanguage: "en", targetLanguage: "zh-CN" }),
+    ).resolves.toBe("available");
+
+    expect(messageListeners.size).toBe(0);
+    expect(disconnectListeners.size).toBe(0);
   });
 });

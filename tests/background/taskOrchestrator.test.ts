@@ -330,6 +330,96 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("defers Chrome Built-in AI auto language detection until lazy segments are available", async () => {
+    const detectSourceLanguage = vi.fn(async () => "en");
+    const { orchestrator, sendToContent, translateBatch } = createOrchestrator({
+      getActiveProfile: vi.fn(async () => chromeBuiltInProfile()),
+      detectSourceLanguage,
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: "task-1",
+          segments: [],
+          collectionComplete: false,
+        };
+      }
+
+      if (message.type === "finalizeLazyRecoverySourceLanguage") {
+        expect(message.sourceLanguage).toBe("auto");
+        return {
+          type: "contentActionResult",
+          success: true,
+        };
+      }
+
+      if (message.type === "applyTranslations") {
+        return {
+          type: "contentActionResult",
+          success: true,
+          appliedSegmentIds: message.items.map((item) => item.segmentId),
+        };
+      }
+
+      throw new Error(`Unexpected content message: ${message.type}`);
+    });
+    translateBatch.mockResolvedValue({
+      items: [{ segmentId: "segment-2", translatedText: "后续段落。" }],
+    });
+
+    const initialProgress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+
+    expect(detectSourceLanguage).not.toHaveBeenCalled();
+    expect(translateBatch).not.toHaveBeenCalled();
+    expect(initialProgress).toMatchObject({
+      taskId: "task-1",
+      state: "waitingForViewport",
+      total: 0,
+    });
+
+    const progress = await orchestrator.enqueueLazySegments("task-1", ["segment-2"], [], {
+      tabId: 7,
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: true,
+      segments: [
+        segment({
+          id: "segment-2",
+          order: 2,
+          sourceText: "Later paragraph.",
+          textHash: "hash-2",
+          priority: "viewport",
+        }),
+      ],
+      processedSegmentIds: [],
+    });
+
+    expect(detectSourceLanguage).toHaveBeenCalledWith(
+      "Later paragraph.",
+      expect.any(AbortSignal),
+    );
+    expect(translateBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceLanguage: "en",
+      }),
+    );
+    expect(progress).toMatchObject({
+      taskId: "task-1",
+      state: "completed",
+      total: 1,
+      translated: 1,
+      failed: 0,
+    });
+  });
+
   it("uses the resolved translation provider for Chrome Built-in AI profiles", async () => {
     const translateBatch = vi.fn<
       (request: TranslateBatchRequest) => Promise<{

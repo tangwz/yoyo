@@ -12,8 +12,14 @@ export const CHROME_BUILT_IN_AI_OFFSCREEN_PORT = "yoyo.chrome-built-in-ai-offscr
 export const CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT = "chrome-built-in-ai-offscreen.html";
 
 type ChromeRuntimePort = {
-  onMessage: { addListener(listener: (message: OffscreenResponse) => void): void };
-  onDisconnect: { addListener(listener: () => void): void };
+  onMessage: {
+    addListener(listener: (message: OffscreenResponse) => void): void;
+    removeListener?(listener: (message: OffscreenResponse) => void): void;
+  };
+  onDisconnect: {
+    addListener(listener: () => void): void;
+    removeListener?(listener: () => void): void;
+  };
   postMessage(message: OffscreenRequest): void;
   disconnect(): void;
 };
@@ -147,6 +153,8 @@ class OffscreenPortSession {
 
         settled = true;
         signal?.removeEventListener("abort", abortListener);
+        this.port.onMessage.removeListener?.(messageListener);
+        this.port.onDisconnect.removeListener?.(disconnectListener);
         callback();
         if (options.disconnectOnSettle) {
           this.disconnect();
@@ -172,7 +180,7 @@ class OffscreenPortSession {
       };
       signal?.addEventListener("abort", abortListener, { once: true });
 
-      this.port.onMessage.addListener((response) => {
+      const messageListener = (response: OffscreenResponse) => {
         if (response.requestId !== request.requestId || settled) {
           return;
         }
@@ -185,9 +193,9 @@ class OffscreenPortSession {
 
           reject(createRemoteError(response.error));
         });
-      });
+      };
 
-      this.port.onDisconnect.addListener(() => {
+      const disconnectListener = () => {
         this.disconnected = true;
         settle(() =>
           reject(
@@ -197,8 +205,10 @@ class OffscreenPortSession {
             ),
           ),
         );
-      });
+      };
 
+      this.port.onMessage.addListener(messageListener);
+      this.port.onDisconnect.addListener(disconnectListener);
       this.port.postMessage(request);
     });
   }

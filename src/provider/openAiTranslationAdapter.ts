@@ -42,8 +42,13 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
       ],
     });
 
+    const translatedText = response.items[0]?.translatedText;
+    if (translatedText === undefined) {
+      throw new Error("OpenAI-compatible provider did not return a selection translation.");
+    }
+
     return {
-      translatedText: response.items[0]?.translatedText ?? "",
+      translatedText,
     };
   }
 
