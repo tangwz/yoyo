@@ -19,12 +19,15 @@ const genericMinimumTextLength = 80;
 const textNodeType = 3;
 const elementNodeType = 1;
 
-const rootSelector = [
+const structuralRootSelector = [
   "article",
   "main",
   '[role="main"]',
   '[role="article"]',
   '[data-testid="tweet"]',
+].join(",");
+
+const textRootSelector = [
   '[data-testid="tweetText"]',
   "[lang]",
   '[dir="auto"]',
@@ -47,10 +50,22 @@ const lowValueSelector = [
 ].join(",");
 
 function discoverRoots(): Element[] {
-  const roots = [...document.querySelectorAll(rootSelector)];
-  roots.push(document.body);
+  const structuralRoots = filterTopLevelRoots([
+    ...document.querySelectorAll(structuralRootSelector),
+  ]);
+  if (structuralRoots.length > 0) return structuralRoots;
 
+  const textRoots = filterTopLevelRoots([
+    ...document.querySelectorAll(textRootSelector),
+  ]);
+  if (textRoots.length > 0) return textRoots;
+
+  return [document.body];
+}
+
+function filterTopLevelRoots(roots: Element[]): Element[] {
   return roots.filter((root, index, allRoots) => {
+    if (root === document.body) return false;
     if (isElementSkippable(root)) return false;
     return !allRoots.some(
       (other, otherIndex) =>

@@ -401,6 +401,29 @@ describe("collectPageSegments", () => {
       "Nested root text should appear once.",
     ]);
   });
+
+  it("preserves sibling feed roots without falling back to body", async () => {
+    document.body.innerHTML = `
+      <article>
+        <div data-testid="tweetText" lang="en" dir="auto">
+          <span>First sibling article text.</span>
+        </div>
+      </article>
+      <article>
+        <div data-testid="tweetText" lang="en" dir="auto">
+          <span>Second sibling article text.</span>
+        </div>
+      </article>
+      <div lang="en" dir="auto">Unrelated body-level short text.</div>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "First sibling article text.",
+      "Second sibling article text.",
+    ]);
+  });
 });
 
 describe("isPageUrlSupported", () => {
