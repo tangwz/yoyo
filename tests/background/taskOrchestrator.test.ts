@@ -1299,6 +1299,219 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("keeps original context when a runtime batch resumes after collection initializes it", async () => {
+    const originalProfile = providerProfile({
+      id: "original-provider",
+      textModel: "original-model",
+    });
+    const runtimeProfile = providerProfile({
+      id: "runtime-provider",
+      textModel: "runtime-model",
+    });
+    let resolveRuntimeProfile:
+      | ((profile: ProviderProfile | undefined) => void)
+      | undefined;
+    let resolveCollect:
+      | ((response: ContentResponse) => void)
+      | undefined;
+    const getActiveProfile = vi.fn()
+      .mockResolvedValueOnce(originalProfile)
+      .mockImplementationOnce(
+        () =>
+          new Promise<ProviderProfile | undefined>((resolve) => {
+            resolveRuntimeProfile = resolve;
+          }),
+      );
+    const { orchestrator, generateText, sendToContent } = createOrchestrator({
+      getActiveProfile,
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return new Promise<ContentResponse>((resolve) => {
+          resolveCollect = resolve;
+        });
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+      return {
+        text: JSON.stringify({
+          items: (input.items ?? []).map((item) => ({
+            id: item.id,
+            text: `Translated ${item.id}`,
+          })),
+        }),
+        model: request.profile.textModel,
+      };
+    });
+
+    const running = orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    await vi.waitFor(() => {
+      expect(resolveCollect).toBeDefined();
+    });
+
+    const runtimeBatch = orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "ja",
+      targetLanguage: "fr",
+      translationMode: "fullPage",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "runtime-1",
+          sourceText: "Runtime text.",
+          textHash: "hash-runtime",
+          priority: "viewport",
+        }),
+      ],
+    });
+    await vi.waitFor(() => {
+      expect(getActiveProfile).toHaveBeenCalledTimes(2);
+    });
+
+    resolveCollect?.({
+      type: "collectSegmentsResult",
+      taskId: "task-1",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "initial-1",
+          sourceText: "Initial visible text.",
+          textHash: "hash-initial",
+          priority: "viewport",
+        }),
+      ],
+    });
+    await vi.waitFor(() => {
+      expect(generateText).toHaveBeenCalledTimes(1);
+    });
+
+    resolveRuntimeProfile?.(runtimeProfile);
+    await expect(runtimeBatch).resolves.toMatchObject({
+      state: "waitingForViewport",
+      total: 2,
+      translated: 2,
+      failed: 0,
+    });
+    await expect(running).resolves.toMatchObject({
+      state: "waitingForViewport",
+      failed: 0,
+    });
+
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(generateText.mock.calls[1]?.[0]).toMatchObject({
+      profile: expect.objectContaining({
+        id: "original-provider",
+        textModel: "original-model",
+      }),
+      prompt: expect.stringContaining("Target language: zh-CN"),
+    });
+    expect(generateText.mock.calls[1]?.[0].prompt).toContain("runtime-1");
+    expect(generateText.mock.calls[1]?.[0].prompt).not.toContain("Target language: fr");
+    expect(orchestrator.getTask("task-1")).toMatchObject({
+      state: "waitingForViewport",
+      total: 2,
+      translated: 2,
+      failed: 0,
+    });
+  });
+
+  it("does not revive a task failed by runtime profile loading while collection is pending", async () => {
+    let resolveCollect:
+      | ((response: ContentResponse) => void)
+      | undefined;
+    const getActiveProfile = vi.fn()
+      .mockResolvedValueOnce(providerProfile())
+      .mockResolvedValueOnce(undefined);
+    const { orchestrator, generateText, sendToContent } = createOrchestrator({
+      getActiveProfile,
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return new Promise<ContentResponse>((resolve) => {
+          resolveCollect = resolve;
+        });
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ id: "initial-1", text: "Translated initial." }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+
+    const running = orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    await vi.waitFor(() => {
+      expect(resolveCollect).toBeDefined();
+    });
+
+    const failedProgress = await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "runtime-1",
+          sourceText: "Runtime text.",
+          textHash: "hash-runtime",
+          priority: "viewport",
+        }),
+      ],
+    });
+    expect(failedProgress).toMatchObject({
+      taskId: "task-1",
+      state: "failed",
+      errorMessage: "No active provider profile.",
+    });
+
+    resolveCollect?.({
+      type: "collectSegmentsResult",
+      taskId: "task-1",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "initial-1",
+          sourceText: "Initial visible text.",
+          textHash: "hash-initial",
+          priority: "viewport",
+        }),
+      ],
+    });
+
+    await expect(running).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "failed",
+      errorMessage: "No active provider profile.",
+    });
+    expect(generateText).not.toHaveBeenCalled();
+    expect(orchestrator.getTask("task-1")).toMatchObject({
+      state: "failed",
+      translated: 0,
+    });
+  });
+
   it("returns cancelled progress when lazy enqueue references a missing task", async () => {
     const { orchestrator } = createOrchestrator();
 

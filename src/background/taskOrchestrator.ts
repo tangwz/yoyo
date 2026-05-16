@@ -134,7 +134,7 @@ export class TranslationTaskOrchestrator {
       this.mergeLazyRecoverySnapshot(task, recovery);
     }
 
-    if (!task || !task.context || this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state)) {
+    if (!task || !task.context || this.isTaskStopped(task)) {
       return task ? this.cloneProgress(task.progress) : this.missingTaskProgress(taskId);
     }
 
@@ -175,24 +175,32 @@ export class TranslationTaskOrchestrator {
 
     const task = existingTask ?? this.createTask(input.taskId, input.tabId);
 
-    if (this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state)) {
+    if (this.isTaskStopped(task)) {
       return this.cloneProgress(task.progress);
     }
 
     if (!task.context) {
-      task.collectionComplete =
+      const collectionComplete =
         input.collectionComplete ?? input.translationMode !== "lazyViewport";
       const profile = await this.dependencies.getActiveProfile();
-      if (!profile) {
-        return this.failTask(task, "No active provider profile.");
+
+      if (this.isTaskStopped(task)) {
+        return this.cloneProgress(task.progress);
       }
 
-      task.context = {
-        profile,
-        sourceLanguage: input.sourceLanguage,
-        targetLanguage: input.targetLanguage,
-        translationMode: input.translationMode,
-      };
+      if (!task.context) {
+        task.collectionComplete = collectionComplete;
+        if (!profile) {
+          return this.failTask(task, "No active provider profile.");
+        }
+
+        task.context = {
+          profile,
+          sourceLanguage: input.sourceLanguage,
+          targetLanguage: input.targetLanguage,
+          translationMode: input.translationMode,
+        };
+      }
     }
 
     const segmentsToProcess = this.mergeTranslationBatchSegments(task, input.segments);
@@ -393,6 +401,9 @@ export class TranslationTaskOrchestrator {
   ): Promise<TranslationProgress> {
     try {
       const profile = await this.dependencies.getActiveProfile();
+      if (this.isTaskStopped(task)) {
+        return this.cloneProgress(task.progress);
+      }
       if (!profile) {
         return this.failTask(task, "No active provider profile.");
       }
@@ -407,6 +418,10 @@ export class TranslationTaskOrchestrator {
         providerId: profile.id,
         textModel: profile.textModel,
       });
+
+      if (this.isTaskStopped(task)) {
+        return this.cloneProgress(task.progress);
+      }
 
       if (
         collectResponse.type !== "collectSegmentsResult" ||
@@ -544,7 +559,7 @@ export class TranslationTaskOrchestrator {
     task: RunningTask,
     segments: readonly PageSegment[],
   ): Promise<void> {
-    if (!task.context || this.isTaskCancelled(task)) {
+    if (!task.context || this.isTaskStopped(task)) {
       return;
     }
 
@@ -572,7 +587,7 @@ export class TranslationTaskOrchestrator {
     } finally {
       for (const segment of candidates) {
         task.inFlightSegmentIds.delete(segment.id);
-        if (!this.isTaskCancelled(task)) {
+        if (!this.isTaskStopped(task)) {
           task.processedSegmentIds.add(segment.id);
         }
       }
@@ -1056,7 +1071,7 @@ export class TranslationTaskOrchestrator {
   }
 
   private finishOrWaitForLazySegments(task: RunningTask): void {
-    if (this.isTaskCancelled(task)) {
+    if (this.isTaskStopped(task)) {
       return;
     }
 
@@ -1147,6 +1162,10 @@ export class TranslationTaskOrchestrator {
     }
 
     return false;
+  }
+
+  private isTaskStopped(task: RunningTask): boolean {
+    return this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state);
   }
 
   private emptyProgress(
