@@ -425,6 +425,27 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("keeps numeric spans inside tweet text", async () => {
+    document.body.innerHTML = `
+      <main>
+        <article data-testid="tweet">
+          <div data-testid="tweetText">
+            <span>Revenue in </span>
+            <span>2024</span>
+            <span> grew.</span>
+          </div>
+          <span>42</span>
+        </article>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Revenue in 2024 grew.",
+    ]);
+  });
+
   it("skips common feed chrome while keeping body text", async () => {
     document.body.innerHTML = `
       <main>

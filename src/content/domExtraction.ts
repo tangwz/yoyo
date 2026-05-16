@@ -132,6 +132,7 @@ function isFeedPostContext(element: Element): boolean {
 
 function isFeedLowValueElement(element: Element): boolean {
   if (!isFeedHeuristicContext(element)) return false;
+  if (element.closest('[data-testid="tweetText"]')) return false;
   if (element.tagName === "HEADER" && isFeedPostContext(element)) return true;
   if (element.matches(feedLowValueSelector)) return true;
 
