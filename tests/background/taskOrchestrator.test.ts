@@ -964,6 +964,8 @@ describe("TranslationTaskOrchestrator", () => {
       failed: 0,
       errorMessage: "No active provider profile.",
     });
+    expect(orchestrator.getTask("missing-task")).toBeUndefined();
+    expect(orchestrator.getTaskForTab(7)).toBeUndefined();
   });
 
   it("rejects a missing runtime batch when another task is active for the same tab", async () => {

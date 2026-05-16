@@ -173,15 +173,34 @@ export class TranslationTaskOrchestrator {
       return this.missingTaskProgress(input.taskId);
     }
 
-    const task = existingTask ?? this.createTask(input.taskId, input.tabId);
+    const collectionComplete =
+      input.collectionComplete ?? input.translationMode !== "lazyViewport";
+    let task = existingTask;
+
+    if (!task) {
+      const profile = await this.dependencies.getActiveProfile();
+      if (!profile) {
+        return this.noActiveProfileProgress(input.taskId);
+      }
+      if (this.hasTaskForTab(input.tabId)) {
+        return this.missingTaskProgress(input.taskId);
+      }
+
+      task = this.createTask(input.taskId, input.tabId);
+      task.collectionComplete = collectionComplete;
+      task.context = {
+        profile,
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        translationMode: input.translationMode,
+      };
+    }
 
     if (this.isTaskStopped(task)) {
       return this.cloneProgress(task.progress);
     }
 
     if (!task.context) {
-      const collectionComplete =
-        input.collectionComplete ?? input.translationMode !== "lazyViewport";
       const profile = await this.dependencies.getActiveProfile();
 
       if (this.isTaskStopped(task)) {
@@ -1185,6 +1204,13 @@ export class TranslationTaskOrchestrator {
     return {
       ...this.emptyProgress(taskId, "cancelled"),
       errorMessage: "Translation task is no longer available. Start translation again.",
+    };
+  }
+
+  private noActiveProfileProgress(taskId: string): TranslationProgress {
+    return {
+      ...this.emptyProgress(taskId, "failed"),
+      errorMessage: "No active provider profile.",
     };
   }
 
