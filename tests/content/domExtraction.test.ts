@@ -256,6 +256,32 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("does not extract weak language roots from navigation outside an article", async () => {
+    document.body.innerHTML = `
+      <nav><span lang="en">Home</span></nav>
+      <article><p>Article body.</p></article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Article body.",
+    ]);
+  });
+
+  it("does not extract weak direction roots from sidebars outside an article", async () => {
+    document.body.innerHTML = `
+      <article><p>Article body.</p></article>
+      <aside><span dir="auto">Related</span></aside>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Article body.",
+    ]);
+  });
+
   it("does not merge nested list items into a parent list item segment", async () => {
     document.body.innerHTML = `
       <article>

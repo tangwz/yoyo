@@ -65,6 +65,17 @@ const genericLowValueSelector = [
   "[role='toolbar']",
 ].join(",");
 
+const pageChromeSelector = [
+  "nav",
+  "aside",
+  "header",
+  "footer",
+  "[role='navigation']",
+  "[role='menu']",
+  "[role='menubar']",
+  "[role='toolbar']",
+].join(",");
+
 const feedLowValueSelector = [
   "nav",
   "footer",
@@ -79,7 +90,7 @@ const feedLowValueSelector = [
 ].join(",");
 
 function discoverRoots(): Element[] {
-  const discoveredRoots: Element[] = [];
+  const discoveredRoots: DiscoveredRootCandidate[] = [];
   let currentRoot: Element | null = null;
   let hasStrongRoot = false;
 
@@ -92,13 +103,19 @@ function discoverRoots(): Element[] {
     if (isElementSkippable(root)) continue;
     if (isInsideGenericChrome(root)) continue;
 
-    discoveredRoots.push(root);
+    discoveredRoots.push(candidate);
     hasStrongRoot ||= !candidate.isWeak && isStrongRoot(root);
     currentRoot = root;
   }
 
   if (discoveredRoots.length === 0) return [document.body];
-  return hasStrongRoot ? discoveredRoots : [document.body, ...discoveredRoots];
+  if (!hasStrongRoot) {
+    return [document.body, ...discoveredRoots.map((candidate) => candidate.element)];
+  }
+
+  return discoveredRoots
+    .filter((candidate) => !isWeakPageChromeRoot(candidate))
+    .map((candidate) => candidate.element);
 }
 
 function isWeakRoot(element: Element): boolean {
@@ -166,6 +183,14 @@ function isStrongRoot(element: Element): boolean {
 function isInsideGenericChrome(element: Element): boolean {
   const chrome = element.closest(genericLowValueSelector);
   return chrome !== null && chrome !== element;
+}
+
+function isWeakPageChromeRoot(candidate: DiscoveredRootCandidate): boolean {
+  if (!candidate.isWeak) return false;
+  if (isFeedHeuristicContext(candidate.element)) return false;
+
+  const chrome = candidate.element.closest(pageChromeSelector);
+  return chrome !== null;
 }
 
 function normalizedElementText(
