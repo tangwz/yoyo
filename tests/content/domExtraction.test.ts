@@ -184,6 +184,38 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("keeps normal article inline numeric spans", async () => {
+    document.body.innerHTML = `
+      <article>
+        <p>Revenue in <span>2024</span> grew.</p>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Revenue in 2024 grew.",
+    ]);
+  });
+
+  it("keeps article header headings and body text", async () => {
+    document.body.innerHTML = `
+      <article>
+        <header><h1>Article title</h1></header>
+        <p>Article body.</p>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(
+      result.segments.map(({ sourceText, kind }) => ({ sourceText, kind })),
+    ).toEqual([
+      { sourceText: "Article title", kind: "heading" },
+      { sourceText: "Article body.", kind: "paragraph" },
+    ]);
+  });
+
   it("does not merge nested list items into a parent list item segment", async () => {
     document.body.innerHTML = `
       <article>

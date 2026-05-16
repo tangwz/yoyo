@@ -38,15 +38,17 @@ const rootSelector = [
   textRootSelector,
 ].join(",");
 
-const lowValueSelector = [
+const genericLowValueSelector = [
   "nav",
-  "header",
   "footer",
   "[role='navigation']",
   "[role='button']",
   "[role='menu']",
   "[role='menubar']",
   "[role='toolbar']",
+].join(",");
+
+const feedLowValueSelector = [
   "[aria-label*='action' i]",
   "[aria-label*='control' i]",
   "[data-testid='reply']",
@@ -70,16 +72,35 @@ function discoverRoots(): Element[] {
   return discoveredRoots.length > 0 ? discoveredRoots : [document.body];
 }
 
-function isLowValueFeedElement(element: Element): boolean {
-  if (element.matches(lowValueSelector)) return true;
+function isGenericLowValueElement(element: Element): boolean {
+  if (element.matches(genericLowValueSelector)) return true;
 
   const text = normalizeSourceText(element.textContent ?? "");
   if (!text) return true;
+
+  return false;
+}
+
+function isFeedHeuristicContext(element: Element): boolean {
+  return element.closest(
+    '[data-testid="tweet"], [data-testid="tweetText"], article, [role="article"]',
+  ) !== null;
+}
+
+function isFeedLowValueElement(element: Element): boolean {
+  if (!isFeedHeuristicContext(element)) return false;
+  if (element.matches(feedLowValueSelector)) return true;
+
+  const text = normalizeSourceText(element.textContent ?? "");
   if (/^@\w{1,30}$/.test(text)) return true;
   if (/^\d+([.,]\d+)?[KMB]?$/.test(text)) return true;
   if (/^\d+[smhdw]$/.test(text)) return true;
 
   return false;
+}
+
+function isLowValueElement(element: Element): boolean {
+  return isGenericLowValueElement(element) || isFeedLowValueElement(element);
 }
 
 function isHighConfidenceShortTextElement(element: Element): boolean {
@@ -94,7 +115,7 @@ function isHighConfidenceShortTextElement(element: Element): boolean {
 
 function hasHighConfidenceReadableChild(element: Element): boolean {
   return [...element.children].some((child) => {
-    if (isElementSkippable(child) || isLowValueFeedElement(child)) {
+    if (isElementSkippable(child) || isLowValueElement(child)) {
       return false;
     }
     return isHighConfidenceShortTextElement(child) || hasHighConfidenceReadableChild(child);
@@ -127,16 +148,17 @@ function hasNestedList(element: Element): boolean {
 }
 
 function collectExtractableText(element: Element): string {
-  return collectTextStream(element);
+  return collectTextStream(element, new Set(), !isDirectReadableCandidate(element));
 }
 
 function collectNestedListItemOwnText(element: Element): string {
-  return collectTextStream(element, listTags);
+  return collectTextStream(element, listTags, !isDirectReadableCandidate(element));
 }
 
 function collectTextStream(
   element: Element,
   excludedTags: ReadonlySet<string> = new Set(),
+  skipFeedLowValue = true,
 ): string {
   const parts: string[] = [];
 
@@ -150,10 +172,11 @@ function collectTextStream(
 
     const childElement = child as Element;
     if (isElementSkippable(childElement)) continue;
-    if (isLowValueFeedElement(childElement)) continue;
+    if (isGenericLowValueElement(childElement)) continue;
+    if (skipFeedLowValue && isFeedLowValueElement(childElement)) continue;
     if (excludedTags.has(childElement.tagName)) continue;
 
-    parts.push(collectTextStream(childElement, excludedTags));
+    parts.push(collectTextStream(childElement, excludedTags, skipFeedLowValue));
   }
 
   return normalizeSourceText(parts.join(""));
@@ -161,7 +184,7 @@ function collectTextStream(
 
 function shouldExtractElement(element: Element): boolean {
   if (isElementSkippable(element)) return false;
-  if (isLowValueFeedElement(element)) return false;
+  if (isLowValueElement(element)) return false;
   if (isDirectReadableCandidate(element)) return true;
   if (!isHighConfidenceShortTextElement(element) && hasHighConfidenceReadableChild(element)) {
     return false;
@@ -253,7 +276,7 @@ export async function collectPageSegments(
     if (seenNodes.has(element)) return;
     seenNodes.add(element);
     if (isElementSkippable(element)) return;
-    if (isLowValueFeedElement(element)) return;
+    if (isLowValueElement(element)) return;
     if (options.visibleRangeOnly && element !== document.body && isOutsideVisibleCollectionRange(element)) {
       return;
     }
