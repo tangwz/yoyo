@@ -246,6 +246,7 @@ function isDirectReadableChromeInPostWithExplicitBody(
   if (!isDirectReadableCandidate(element)) return false;
   if (!isInsidePostWithExplicitBody(element)) return false;
   if (element.closest('[data-testid="tweetText"]')) return false;
+  if (isShortDirectReadableBeforeExplicitBody(element, textCache)) return true;
 
   return [...element.children].some((child) => {
     if (child.matches(feedLowValueSelector)) return true;
@@ -256,6 +257,29 @@ function isDirectReadableChromeInPostWithExplicitBody(
       /^\d+[smhdw]$/.test(text)
     );
   });
+}
+
+function isShortDirectReadableBeforeExplicitBody(
+  element: Element,
+  textCache?: TextNormalizationCache,
+): boolean {
+  const post = element.closest(
+    [
+      '[data-testid="tweet"]',
+      '[data-testid="cellInnerDiv"]',
+      '[role="feed"]',
+      '[role="listitem"]',
+      '[role="article"]',
+    ].join(","),
+  );
+  const explicitBody = post?.querySelector('[data-testid="tweetText"]');
+  if (!post || !explicitBody) return false;
+  if ((element.compareDocumentPosition(explicitBody) & Node.DOCUMENT_POSITION_FOLLOWING) === 0) {
+    return false;
+  }
+
+  const text = normalizedElementText(element, textCache);
+  return text.length > 0 && text.length < genericMinimumTextLength;
 }
 
 function isInsideBodySafeTextContainer(element: Element): boolean {

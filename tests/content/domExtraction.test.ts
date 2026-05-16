@@ -605,6 +605,21 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("skips bare direct readable display name when tweet text exists", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <p>Terence</p>
+        <div data-testid="tweetText">Actual tweet body.</div>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual tweet body.",
+    ]);
+  });
+
   it("keeps numeric spans inside fallback dir-auto tweet body", async () => {
     document.body.innerHTML = `
       <article data-testid="tweet">
