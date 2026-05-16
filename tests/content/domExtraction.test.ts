@@ -539,6 +539,25 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("skips feed chrome inside direct readable body text", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <p>
+          Body text
+          <time>May 16, 2026</time>
+          <span>@handle</span>
+          <span>42</span>
+        </p>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Body text",
+    ]);
+  });
+
   it("skips common feed chrome while keeping body text", async () => {
     document.body.innerHTML = `
       <main>

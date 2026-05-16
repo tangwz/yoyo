@@ -320,7 +320,7 @@ function collectExtractableText(
   return collectTextStream(
     element,
     new Set(),
-    !isDirectReadableCandidate(element),
+    shouldSkipFeedLowValueInTextStream(element),
     textCache,
   );
 }
@@ -332,9 +332,13 @@ function collectNestedListItemOwnText(
   return collectTextStream(
     element,
     listTags,
-    !isDirectReadableCandidate(element),
+    shouldSkipFeedLowValueInTextStream(element),
     textCache,
   );
+}
+
+function shouldSkipFeedLowValueInTextStream(element: Element): boolean {
+  return !isDirectReadableCandidate(element) || isFeedHeuristicContext(element);
 }
 
 function collectTextStream(
