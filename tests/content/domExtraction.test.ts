@@ -440,6 +440,23 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("keeps editable-only article roots weak for body fallback", async () => {
+    const bodyText =
+      "Sibling body content should still be discovered when an editable composer is inside an article wrapper.";
+    document.body.innerHTML = `
+      <article>
+        <div contenteditable="true">Draft composer text.</div>
+      </article>
+      <section>${bodyText}</section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
+    ]);
+  });
+
   it("does not extract a generic parent from skipped subtree text", async () => {
     const skippedLongText =
       "This skipped subtree contains enough text to pass the generic block extraction threshold, but it must not create a parent segment.";

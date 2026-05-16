@@ -114,7 +114,12 @@ function rootForCandidate(element: Element): DiscoveredRootCandidate | null {
     return parent ? { element: parent, isWeak: true } : null;
   }
 
-  return { element, isWeak: isWeakRoot(element) };
+  return { element, isWeak: isWeakRoot(element) || isEditableOnlyRoot(element) };
+}
+
+function isEditableOnlyRoot(element: Element): boolean {
+  if (element.querySelector("[contenteditable]") === null) return false;
+  return [...element.children].every((child) => isElementSkippable(child));
 }
 
 function isFeedListItemContext(element: Element): boolean {
