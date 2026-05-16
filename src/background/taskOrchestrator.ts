@@ -203,15 +203,16 @@ export class TranslationTaskOrchestrator {
     this.enterRuntimeBatch(task);
 
     try {
+      const segmentsToProcess = this.mergeTranslationBatchSegments(task, input.segments);
+      if (collectionComplete) {
+        task.collectionComplete = true;
+      }
+      this.updateProgress(task, {
+        total: task.segmentsById.size,
+      });
+      this.markSegmentsFailed(task, input.failedSegmentIds ?? []);
+
       if (!task.context && task.pendingContext && !isNewRuntimeTask) {
-        const segmentsToProcess = this.mergeTranslationBatchSegments(task, input.segments);
-        if (collectionComplete) {
-          task.collectionComplete = true;
-        }
-        this.updateProgress(task, {
-          total: task.segmentsById.size,
-        });
-        this.markSegmentsFailed(task, input.failedSegmentIds ?? []);
         if (task.pendingContextSource === "runtime") {
           await this.waitForContext(task);
           if (this.isTaskStopped(task) || !task.context) {
@@ -233,7 +234,7 @@ export class TranslationTaskOrchestrator {
 
         if (!profile) {
           shouldRemoveTaskAfterDrain = !existingTask;
-          this.failTask(task, "No active provider profile.", 0);
+          this.failTask(task, "No active provider profile.");
         } else if (!task.context) {
           const context = task.pendingContext ?? {
             sourceLanguage: input.sourceLanguage,
@@ -258,16 +259,6 @@ export class TranslationTaskOrchestrator {
       if (this.isTaskStopped(task)) {
         return this.cloneProgress(task.progress);
       }
-
-      const segmentsToProcess = this.mergeTranslationBatchSegments(task, input.segments);
-      if (input.collectionComplete === true && !task.pendingContext) {
-        task.collectionComplete = true;
-      }
-
-      this.updateProgress(task, {
-        total: task.segmentsById.size,
-      });
-      this.markSegmentsFailed(task, input.failedSegmentIds ?? []);
 
       await this.processSegmentsForTask(task, segmentsToProcess);
     } finally {

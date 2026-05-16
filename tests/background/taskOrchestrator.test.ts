@@ -1008,12 +1008,86 @@ describe("TranslationTaskOrchestrator", () => {
     expect(progress).toEqual({
       taskId: "missing-task",
       state: "failed",
-      total: 0,
+      total: 1,
       translated: 0,
-      failed: 0,
+      failed: 1,
       errorMessage: "No active provider profile.",
     });
     expect(orchestrator.getTask("missing-task")).toBeUndefined();
+    expect(orchestrator.getTaskForTab(7)).toBeUndefined();
+  });
+
+  it("keeps concurrent first runtime batches consistent when no active profile exists", async () => {
+    let resolveProfile:
+      | ((profile: ProviderProfile | undefined) => void)
+      | undefined;
+    const profilePromise = new Promise<ProviderProfile | undefined>((resolve) => {
+      resolveProfile = resolve;
+    });
+    const getActiveProfile = vi.fn(() => profilePromise);
+    const { orchestrator, generateText, sendToContent } = createOrchestrator({
+      getActiveProfile,
+    });
+
+    const firstBatch = orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "runtime-task",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "runtime-1",
+          sourceText: "First runtime text.",
+          textHash: "hash-runtime-1",
+          priority: "viewport",
+        }),
+      ],
+    });
+    const secondBatch = orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "runtime-task",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "runtime-2",
+          sourceText: "Second runtime text.",
+          textHash: "hash-runtime-2",
+          priority: "viewport",
+        }),
+      ],
+    });
+
+    await vi.waitFor(() => {
+      expect(getActiveProfile).toHaveBeenCalledTimes(1);
+    });
+    resolveProfile?.(undefined);
+
+    await expect(Promise.all([firstBatch, secondBatch])).resolves.toEqual([
+      {
+        taskId: "runtime-task",
+        state: "failed",
+        total: 2,
+        translated: 0,
+        failed: 2,
+        errorMessage: "No active provider profile.",
+      },
+      {
+        taskId: "runtime-task",
+        state: "failed",
+        total: 2,
+        translated: 0,
+        failed: 2,
+        errorMessage: "No active provider profile.",
+      },
+    ]);
+    expect(generateText).not.toHaveBeenCalled();
+    expect(sendToContent).not.toHaveBeenCalled();
+    expect(orchestrator.getTask("runtime-task")).toBeUndefined();
     expect(orchestrator.getTaskForTab(7)).toBeUndefined();
   });
 
