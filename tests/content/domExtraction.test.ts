@@ -673,6 +673,24 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("does not treat ordinary listitem articles as feed context", async () => {
+    document.body.innerHTML = `
+      <div role="listitem">
+        <div role="article">
+          <header><h2>Ordinary result title</h2></header>
+          <p>Ordinary result body.</p>
+        </div>
+      </div>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Ordinary result title",
+      "Ordinary result body.",
+    ]);
+  });
+
   it("deduplicates nested multi-root discoveries", async () => {
     document.body.innerHTML = `
       <main>

@@ -114,7 +114,6 @@ function isFeedListItemContext(element: Element): boolean {
       '[data-testid="tweet"]',
       '[data-testid="tweetText"]',
       '[data-testid="cellInnerDiv"]',
-      '[role="article"]',
     ].join(","),
   ) !== null;
 }
