@@ -312,6 +312,25 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("does not extract long nested weak language roots from article header chrome", async () => {
+    const headerChrome =
+      "This language-marked header chrome is intentionally long enough to pass the generic threshold, but it should not be extracted as article content.";
+    document.body.innerHTML = `
+      <article>
+        <header>
+          <div lang="en">${headerChrome}</div>
+        </header>
+        <p>Article body.</p>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Article body.",
+    ]);
+  });
+
   it("does not merge nested list items into a parent list item segment", async () => {
     document.body.innerHTML = `
       <article>

@@ -380,6 +380,7 @@ function isLowValueElement(
   textCache?: TextNormalizationCache,
 ): boolean {
   return (
+    isWeakTextHintInPageChrome(element) ||
     isGenericLowValueElement(element, textCache) ||
     isFeedLowValueElement(element, textCache)
   );
@@ -426,10 +427,7 @@ function isWeakTextHintInPageChrome(element: Element): boolean {
   }
 
   const chrome = element.closest(pageChromeSelector);
-  if (!chrome) return false;
-
-  const text = normalizeSourceText(element.textContent ?? "");
-  return text.length > 0 && text.length < genericMinimumTextLength;
+  return chrome !== null;
 }
 
 function isNonBodyTextHintInPostWithExplicitBody(element: Element): boolean {
@@ -538,6 +536,7 @@ function collectTextStream(
 
     const childElement = child as Element;
     if (isElementSkippable(childElement)) continue;
+    if (isWeakTextHintInPageChrome(childElement)) continue;
     if (isGenericLowValueElement(childElement, textCache)) continue;
     if (skipFeedLowValue && isFeedLowValueElement(childElement, textCache)) continue;
     if (excludedTags.has(childElement.tagName)) continue;
