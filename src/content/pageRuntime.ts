@@ -175,6 +175,9 @@ function startVisibilityObserver(taskId: string): void {
       }
 
       translationQueue.enqueue(newlyVisible);
+      for (const segment of newlyVisible) {
+        reportedLazySegmentIds.add(segment.id);
+      }
       scheduleTranslationQueueFlush();
     },
     { threshold: 0.01, rootMargin: "500px 0px 500px 0px" },

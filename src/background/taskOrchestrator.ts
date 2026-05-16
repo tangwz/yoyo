@@ -1230,7 +1230,7 @@ export class TranslationTaskOrchestrator {
       return;
     }
 
-    if (task.context?.translationMode === "lazyViewport" && !task.collectionComplete) {
+    if (!task.collectionComplete) {
       this.updateProgress(task, { state: "waitingForViewport" });
       return;
     }

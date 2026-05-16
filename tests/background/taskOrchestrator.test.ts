@@ -937,6 +937,79 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("waits for the final runtime full-page batch before completing", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockResolvedValue({ type: "contentActionResult", success: true });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+
+      return {
+        text: JSON.stringify({
+          items: (input.items ?? []).map((item) => ({
+            id: item.id,
+            text: `Translated ${item.id}`,
+          })),
+        }),
+        model: "gpt-4.1-mini",
+      };
+    });
+
+    const firstProgress = await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "runtime-task",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "fullPage",
+      collectionComplete: false,
+      segments: [
+        segment({
+          id: "runtime-1",
+          sourceText: "First runtime text.",
+          textHash: "hash-runtime-1",
+          priority: "viewport",
+        }),
+      ],
+    });
+
+    expect(firstProgress).toEqual({
+      taskId: "runtime-task",
+      state: "waitingForViewport",
+      total: 1,
+      translated: 1,
+      failed: 0,
+    });
+
+    const finalProgress = await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "runtime-task",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "fullPage",
+      collectionComplete: true,
+      segments: [
+        segment({
+          id: "runtime-2",
+          order: 2,
+          sourceText: "Second runtime text.",
+          textHash: "hash-runtime-2",
+          priority: "normal",
+        }),
+      ],
+    });
+
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(finalProgress).toEqual({
+      taskId: "runtime-task",
+      state: "completed",
+      total: 2,
+      translated: 2,
+      failed: 0,
+    });
+  });
+
   it("queues a runtime lazy batch without loading profile while translatePage context is pending", async () => {
     const getActiveProfile = vi.fn(
       () => new Promise<ProviderProfile | undefined>(() => {}),

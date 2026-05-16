@@ -485,6 +485,7 @@ describe("page runtime", () => {
         toJSON: () => ({}),
       }) as DOMRect;
     MockIntersectionObserver.instances[0]?.emitIntersecting(later);
+    window.dispatchEvent(new Event("scroll"));
     await vi.advanceTimersByTimeAsync(150);
 
     expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
@@ -498,6 +499,7 @@ describe("page runtime", () => {
         ],
       }),
     );
+    expect(runtimeMessages("enqueueLazySegments")).toEqual([]);
 
     Object.defineProperty(window, "innerHeight", {
       configurable: true,
