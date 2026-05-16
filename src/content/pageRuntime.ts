@@ -57,6 +57,7 @@ let translationQueueContext:
       translationMode: TranslationMode;
     }
   | undefined;
+let pendingFailedRuntimeBatchSegmentIds = new Set<string>();
 
 export async function estimatePage(): Promise<PageTranslationEstimate> {
   if (!isPageUrlSupported(location.href)) {
@@ -117,10 +118,15 @@ function resetTranslationQueue(): void {
   stopTranslationQueueFlushTimer();
   translationQueue.clear();
   translationQueueContext = undefined;
+  pendingFailedRuntimeBatchSegmentIds = new Set();
 }
 
 function scheduleTranslationQueueFlush(): void {
-  if (!translationQueueContext || !translationQueue.hasPending()) {
+  if (
+    !translationQueueContext ||
+    (!translationQueue.hasPending() &&
+      pendingFailedRuntimeBatchSegmentIds.size === 0)
+  ) {
     return;
   }
 
@@ -138,23 +144,29 @@ async function flushTranslationQueue(): Promise<void> {
   }
 
   const segments = translationQueue.takeNextBatch();
-  if (segments.length === 0) {
+  const failedSegmentIds = [...pendingFailedRuntimeBatchSegmentIds];
+  if (segments.length === 0 && failedSegmentIds.length === 0) {
     return;
   }
 
   const segmentIds = segments.map((segment) => segment.id);
   const collectionComplete =
     context.translationMode !== "lazyViewport" && !translationQueue.hasPending();
+  const request: BackgroundRequest = {
+    type: "enqueueTranslationBatch",
+    taskId: context.taskId,
+    sourceLanguage: context.sourceLanguage,
+    targetLanguage: context.targetLanguage,
+    translationMode: context.translationMode,
+    segments,
+    collectionComplete,
+  };
+  if (failedSegmentIds.length > 0) {
+    request.failedSegmentIds = failedSegmentIds;
+  }
+
   const response = await Promise.resolve(
-    sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
-      type: "enqueueTranslationBatch",
-      taskId: context.taskId,
-      sourceLanguage: context.sourceLanguage,
-      targetLanguage: context.targetLanguage,
-      translationMode: context.translationMode,
-      segments,
-      collectionComplete,
-    }),
+    sendRuntimeMessage<BackgroundRequest, BackgroundResponse>(request),
   ).catch(() => undefined);
 
   if (translationQueueContext !== context) {
@@ -163,8 +175,15 @@ async function flushTranslationQueue(): Promise<void> {
 
   if (!response || response.type !== "taskProgress") {
     translationQueue.markFailed(segmentIds);
+    for (const segmentId of segmentIds) {
+      pendingFailedRuntimeBatchSegmentIds.add(segmentId);
+    }
     scheduleTranslationQueueFlush();
     return;
+  }
+
+  for (const segmentId of failedSegmentIds) {
+    pendingFailedRuntimeBatchSegmentIds.delete(segmentId);
   }
 
   if (isTerminalTaskState(response.progress.state)) {

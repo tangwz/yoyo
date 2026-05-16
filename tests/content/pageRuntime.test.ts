@@ -299,6 +299,85 @@ describe("page runtime", () => {
     });
   });
 
+  it("reconciles failed initial lazy batches without losing reported anchors", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+    runtimeMock.sendRuntimeMessage
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce({
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "waitingForViewport",
+          total: 2,
+          translated: 0,
+          failed: 2,
+        },
+      });
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+        <p id="third">Third readable paragraph.</p>
+      </article>
+    `;
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 180, bottom: 210 },
+      third: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport", "en", "fr");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(1);
+    });
+
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(2);
+    });
+
+    const batches = runtimeMessages<{
+      type: "enqueueTranslationBatch";
+      collectionComplete?: boolean;
+      failedSegmentIds?: string[];
+      segments: Array<{ id: string }>;
+    }>("enqueueTranslationBatch");
+    expect(batches[1]).toEqual(
+      expect.objectContaining({
+        collectionComplete: false,
+        failedSegmentIds: ["seg_1", "seg_2"],
+        segments: [],
+      }),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
   it("clears non-lazy translation batches after terminal broadcast progress", async () => {
     vi.useFakeTimers();
     document.body.innerHTML = `
@@ -412,6 +491,8 @@ describe("page runtime", () => {
 
     const batches = runtimeMessages<{
       type: "enqueueTranslationBatch";
+      collectionComplete?: boolean;
+      failedSegmentIds?: string[];
       segments: Array<{ id: string }>;
     }>("enqueueTranslationBatch");
     expect(batches[0]?.segments.map((segment) => segment.id)).toEqual([
@@ -423,6 +504,59 @@ describe("page runtime", () => {
     expect(batches[1]?.segments.map((segment) => segment.id)).toEqual([
       "seg_5",
     ]);
+    expect(batches[1]).toEqual(
+      expect.objectContaining({
+        collectionComplete: true,
+        failedSegmentIds: ["seg_1", "seg_2", "seg_3", "seg_4"],
+      }),
+    );
+  });
+
+  it("reconciles failed full-page batches when no normal pending segments remain", async () => {
+    vi.useFakeTimers();
+    runtimeMock.sendRuntimeMessage
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce({
+        type: "taskProgress",
+        progress: {
+          taskId: "task-1",
+          state: "waitingForViewport",
+          total: 2,
+          translated: 0,
+          failed: 2,
+        },
+      });
+    document.body.innerHTML = `
+      <article>
+        <p>First readable paragraph.</p>
+        <p>Second readable paragraph.</p>
+      </article>
+    `;
+
+    await collectSegments("task-1", "fullPage", "en", "fr");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(1);
+    });
+
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(2);
+    });
+
+    const batches = runtimeMessages<{
+      type: "enqueueTranslationBatch";
+      collectionComplete?: boolean;
+      failedSegmentIds?: string[];
+      segments: Array<{ id: string }>;
+    }>("enqueueTranslationBatch");
+    expect(batches[1]).toEqual(
+      expect.objectContaining({
+        collectionComplete: true,
+        failedSegmentIds: ["seg_1", "seg_2"],
+        segments: [],
+      }),
+    );
   });
 
   it("reports newly visible lazy segments after scrolling", async () => {
