@@ -368,7 +368,10 @@ describe("page runtime", () => {
       expect.objectContaining({
         collectionComplete: false,
         failedSegmentIds: ["seg_1", "seg_2"],
-        segments: [],
+        segments: [
+          expect.objectContaining({ id: "seg_1" }),
+          expect.objectContaining({ id: "seg_2" }),
+        ],
       }),
     );
 
@@ -503,6 +506,10 @@ describe("page runtime", () => {
     ]);
     expect(batches[1]?.segments.map((segment) => segment.id)).toEqual([
       "seg_5",
+      "seg_1",
+      "seg_2",
+      "seg_3",
+      "seg_4",
     ]);
     expect(batches[1]).toEqual(
       expect.objectContaining({
@@ -554,7 +561,10 @@ describe("page runtime", () => {
       expect.objectContaining({
         collectionComplete: true,
         failedSegmentIds: ["seg_1", "seg_2"],
-        segments: [],
+        segments: [
+          expect.objectContaining({ id: "seg_1" }),
+          expect.objectContaining({ id: "seg_2" }),
+        ],
       }),
     );
   });

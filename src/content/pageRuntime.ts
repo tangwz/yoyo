@@ -57,7 +57,7 @@ let translationQueueContext:
       translationMode: TranslationMode;
     }
   | undefined;
-let pendingFailedRuntimeBatchSegmentIds = new Set<string>();
+let pendingFailedRuntimeBatchSegments = new Map<string, PageSegment>();
 
 export async function estimatePage(): Promise<PageTranslationEstimate> {
   if (!isPageUrlSupported(location.href)) {
@@ -118,14 +118,14 @@ function resetTranslationQueue(): void {
   stopTranslationQueueFlushTimer();
   translationQueue.clear();
   translationQueueContext = undefined;
-  pendingFailedRuntimeBatchSegmentIds = new Set();
+  pendingFailedRuntimeBatchSegments = new Map();
 }
 
 function scheduleTranslationQueueFlush(): void {
   if (
     !translationQueueContext ||
     (!translationQueue.hasPending() &&
-      pendingFailedRuntimeBatchSegmentIds.size === 0)
+      pendingFailedRuntimeBatchSegments.size === 0)
   ) {
     return;
   }
@@ -144,7 +144,11 @@ async function flushTranslationQueue(): Promise<void> {
   }
 
   const segments = translationQueue.takeNextBatch();
-  const failedSegmentIds = [...pendingFailedRuntimeBatchSegmentIds];
+  const queuedSegmentIds = new Set(segments.map((segment) => segment.id));
+  const failedSegments = [...pendingFailedRuntimeBatchSegments.values()].filter(
+    (segment) => !queuedSegmentIds.has(segment.id),
+  );
+  const failedSegmentIds = failedSegments.map((segment) => segment.id);
   if (segments.length === 0 && failedSegmentIds.length === 0) {
     return;
   }
@@ -158,7 +162,7 @@ async function flushTranslationQueue(): Promise<void> {
     sourceLanguage: context.sourceLanguage,
     targetLanguage: context.targetLanguage,
     translationMode: context.translationMode,
-    segments,
+    segments: [...segments, ...failedSegments],
     collectionComplete,
   };
   if (failedSegmentIds.length > 0) {
@@ -175,15 +179,15 @@ async function flushTranslationQueue(): Promise<void> {
 
   if (!response || response.type !== "taskProgress") {
     translationQueue.markFailed(segmentIds);
-    for (const segmentId of segmentIds) {
-      pendingFailedRuntimeBatchSegmentIds.add(segmentId);
+    for (const segment of segments) {
+      pendingFailedRuntimeBatchSegments.set(segment.id, segment);
     }
     scheduleTranslationQueueFlush();
     return;
   }
 
   for (const segmentId of failedSegmentIds) {
-    pendingFailedRuntimeBatchSegmentIds.delete(segmentId);
+    pendingFailedRuntimeBatchSegments.delete(segmentId);
   }
 
   if (isTerminalTaskState(response.progress.state)) {
