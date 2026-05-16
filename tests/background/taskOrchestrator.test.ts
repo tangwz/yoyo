@@ -874,6 +874,69 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("marks runtime batch failed segment ids before translating the current batch", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type !== "applyTranslations") {
+        throw new Error(`Unexpected content message: ${message.type}`);
+      }
+
+      expect(message.items).toEqual([
+        { segmentId: "runtime-ok", translatedText: "Translated runtime-ok" },
+      ]);
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+      const ids = input.items?.map((item) => item.id) ?? [];
+      return {
+        text: JSON.stringify({
+          items: ids.map((id) => ({ id, text: `Translated ${id}` })),
+        }),
+        model: "gpt-4.1-mini",
+      };
+    });
+
+    const progress = await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "runtime-task",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "fullPage",
+      collectionComplete: true,
+      failedSegmentIds: ["runtime-failed"],
+      segments: [
+        segment({
+          id: "runtime-failed",
+          sourceText: "Failed runtime text.",
+          textHash: "hash-runtime-failed",
+          priority: "viewport",
+        }),
+        segment({
+          id: "runtime-ok",
+          order: 2,
+          sourceText: "Runtime text.",
+          textHash: "hash-runtime-ok",
+          priority: "viewport",
+        }),
+      ],
+    });
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generateText.mock.calls[0]?.[0].prompt).not.toContain("runtime-failed");
+    expect(generateText.mock.calls[0]?.[0].prompt).toContain("runtime-ok");
+    expect(progress).toEqual({
+      taskId: "runtime-task",
+      state: "completedWithErrors",
+      total: 2,
+      translated: 1,
+      failed: 1,
+    });
+  });
+
   it("keeps an existing task without context waiting when runtime lazy collection is incomplete", async () => {
     const getActiveProfile = vi.fn()
       .mockReturnValueOnce(new Promise<ProviderProfile | undefined>(() => {}))
@@ -1067,6 +1130,135 @@ describe("TranslationTaskOrchestrator", () => {
       total: 2,
       translated: 2,
       failed: 0,
+    });
+  });
+
+  it("keeps full-page concurrent first runtime batches open until both merge", async () => {
+    let resolveFirstProfile:
+      | ((profile: ProviderProfile | undefined) => void)
+      | undefined;
+    let resolveSecondProfile:
+      | ((profile: ProviderProfile | undefined) => void)
+      | undefined;
+    let resolveFirstProvider:
+      | ((response: { text: string; model: string }) => void)
+      | undefined;
+    const firstProfilePromise = new Promise<ProviderProfile | undefined>((resolve) => {
+      resolveFirstProfile = resolve;
+    });
+    const secondProfilePromise = new Promise<ProviderProfile | undefined>((resolve) => {
+      resolveSecondProfile = resolve;
+    });
+    const getActiveProfile = vi.fn()
+      .mockReturnValueOnce(firstProfilePromise)
+      .mockReturnValueOnce(secondProfilePromise);
+    const { orchestrator, generateText, sendToContent } = createOrchestrator({
+      getActiveProfile,
+    });
+
+    sendToContent.mockResolvedValue({ type: "contentActionResult", success: true });
+    generateText
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstProvider = resolve;
+          }),
+      )
+      .mockImplementationOnce(async (request) => {
+        const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+          items?: Array<{ id: string }>;
+        };
+        return {
+          text: JSON.stringify({
+            items: (input.items ?? []).map((item) => ({
+              id: item.id,
+              text: `Translated ${item.id}`,
+            })),
+          }),
+          model: "gpt-4.1-mini",
+        };
+      });
+
+    const firstBatch = orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "runtime-task",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "fullPage",
+      collectionComplete: true,
+      segments: [
+        segment({
+          id: "runtime-1",
+          sourceText: "First runtime text.",
+          textHash: "hash-runtime-1",
+          priority: "viewport",
+        }),
+      ],
+    });
+    const secondBatch = orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "runtime-task",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "fullPage",
+      collectionComplete: true,
+      segments: [
+        segment({
+          id: "runtime-2",
+          sourceText: "Second runtime text.",
+          textHash: "hash-runtime-2",
+          priority: "viewport",
+        }),
+      ],
+    });
+
+    await vi.waitFor(() => {
+      expect(getActiveProfile).toHaveBeenCalledTimes(2);
+    });
+    resolveFirstProfile?.(providerProfile());
+    await vi.waitFor(() => {
+      expect(generateText).toHaveBeenCalledTimes(1);
+    });
+    resolveFirstProvider?.({
+      text: JSON.stringify({
+        items: [{ id: "runtime-1", text: "Translated runtime-1" }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+    await vi.waitFor(() => {
+      expect(orchestrator.getTask("runtime-task")).toMatchObject({
+        state: "translating",
+        total: 1,
+        translated: 1,
+      });
+    });
+    resolveSecondProfile?.(providerProfile());
+
+    await expect(Promise.all([firstBatch, secondBatch])).resolves.toEqual([
+      {
+        taskId: "runtime-task",
+        state: "completed",
+        total: 2,
+        translated: 2,
+        failed: 0,
+      },
+      {
+        taskId: "runtime-task",
+        state: "completed",
+        total: 2,
+        translated: 2,
+        failed: 0,
+      },
+    ]);
+    expect(sendToContent).toHaveBeenCalledWith(7, {
+      type: "applyTranslations",
+      taskId: "runtime-task",
+      items: [{ segmentId: "runtime-1", translatedText: "Translated runtime-1" }],
+    });
+    expect(sendToContent).toHaveBeenCalledWith(7, {
+      type: "applyTranslations",
+      taskId: "runtime-task",
+      items: [{ segmentId: "runtime-2", translatedText: "Translated runtime-2" }],
     });
   });
 
@@ -1502,6 +1694,112 @@ describe("TranslationTaskOrchestrator", () => {
     expect(orchestrator.getTask("task-1")).toMatchObject({
       state: "waitingForViewport",
       total: 2,
+      translated: 1,
+      failed: 0,
+    });
+  });
+
+  it("keeps pending translatePage context when a mismatched runtime batch arrives before profile resolves", async () => {
+    let resolveProfile:
+      | ((profile: ProviderProfile | undefined) => void)
+      | undefined;
+    let resolveCollect:
+      | ((response: ContentResponse) => void)
+      | undefined;
+    const profilePromise = new Promise<ProviderProfile | undefined>((resolve) => {
+      resolveProfile = resolve;
+    });
+    const getActiveProfile = vi.fn(() => profilePromise);
+    const { orchestrator, generateText, sendToContent } = createOrchestrator({
+      getActiveProfile,
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        expect(message).toMatchObject({
+          taskId: "task-1",
+          translationMode: "lazyViewport",
+          sourceLanguage: "en",
+          targetLanguage: "zh-CN",
+        });
+        return new Promise<ContentResponse>((resolve) => {
+          resolveCollect = resolve;
+        });
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+      return {
+        text: JSON.stringify({
+          items: (input.items ?? []).map((item) => ({
+            id: item.id,
+            text: `Translated ${item.id}`,
+          })),
+        }),
+        model: "gpt-4.1-mini",
+      };
+    });
+
+    const running = orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+    });
+    await vi.waitFor(() => {
+      expect(getActiveProfile).toHaveBeenCalledTimes(1);
+    });
+
+    const runtimeBatch = orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "ja",
+      targetLanguage: "fr",
+      translationMode: "fullPage",
+      collectionComplete: true,
+      segments: [
+        segment({
+          id: "runtime-1",
+          sourceText: "Runtime text.",
+          textHash: "hash-runtime",
+          priority: "viewport",
+        }),
+      ],
+    });
+    await Promise.resolve();
+    expect(generateText).not.toHaveBeenCalled();
+
+    resolveProfile?.(providerProfile());
+    await vi.waitFor(() => {
+      expect(resolveCollect).toBeDefined();
+    });
+    await expect(runtimeBatch).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "waitingForViewport",
+      total: 1,
+      translated: 1,
+      failed: 0,
+    });
+
+    expect(getActiveProfile).toHaveBeenCalledTimes(2);
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(generateText.mock.calls[0]?.[0].prompt).toContain("Target language: zh-CN");
+    expect(generateText.mock.calls[0]?.[0].prompt).not.toContain("Target language: fr");
+
+    resolveCollect?.({
+      type: "collectSegmentsResult",
+      taskId: "task-1",
+      collectionComplete: false,
+      segments: [],
+    });
+    await expect(running).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "waitingForViewport",
+      total: 1,
       translated: 1,
       failed: 0,
     });
