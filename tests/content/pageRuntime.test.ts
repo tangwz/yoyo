@@ -44,6 +44,15 @@ describe("page runtime", () => {
     runtimeMock.sendRuntimeMessage.mockClear();
   }
 
+  async function drainPendingTimers(): Promise<void> {
+    if (!vi.isFakeTimers()) {
+      return;
+    }
+
+    await vi.runOnlyPendingTimersAsync();
+    await Promise.resolve();
+  }
+
   beforeEach(() => {
     removePageTranslations();
     document.body.innerHTML = "";
@@ -61,9 +70,11 @@ describe("page runtime", () => {
     });
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
+  afterEach(async () => {
+    await drainPendingTimers();
     removePageTranslations();
+    await drainPendingTimers();
+    vi.useRealTimers();
     document.body.innerHTML = "";
     setUrl("https://example.com/article");
   });
@@ -219,6 +230,35 @@ describe("page runtime", () => {
       configurable: true,
       value: originalInnerHeight,
     });
+  });
+
+  it("clears non-lazy translation batches after terminal broadcast progress", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <article>
+        <p>First readable paragraph.</p>
+        <p>Second readable paragraph.</p>
+        <p>Third readable paragraph.</p>
+        <p>Fourth readable paragraph.</p>
+        <p>Fifth readable paragraph.</p>
+      </article>
+    `;
+
+    await collectSegments("task-1", "fullPage", "en", "fr");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(1);
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    handleTaskProgress({
+      taskId: "task-1",
+      state: "cancelled",
+      total: 5,
+      translated: 4,
+      failed: 0,
+    });
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(runtimeMock.sendRuntimeMessage).not.toHaveBeenCalled();
   });
 
   it("reports newly visible lazy segments after scrolling", async () => {

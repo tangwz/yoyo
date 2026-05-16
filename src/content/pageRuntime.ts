@@ -480,12 +480,16 @@ export function applyTranslationResults(
 }
 
 export function handleTaskProgress(progress: TranslationProgress): void {
-  if (progress.taskId !== lazyReportTaskId) {
+  if (!isTerminalTaskState(progress.state)) {
     return;
   }
 
-  if (isTerminalTaskState(progress.state)) {
+  if (progress.taskId === lazyReportTaskId) {
     stopLazySegmentReporting();
+    return;
+  }
+
+  if (progress.taskId === translationQueueContext?.taskId) {
     resetTranslationQueue();
   }
 }
