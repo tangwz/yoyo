@@ -397,7 +397,6 @@ describe("TranslationTaskOrchestrator", () => {
       }
 
       if (message.type === "finalizeLazyRecoverySourceLanguage") {
-        expect(message.sourceLanguage).toBe("auto");
         return {
           type: "contentActionResult",
           success: true,
@@ -427,6 +426,15 @@ describe("TranslationTaskOrchestrator", () => {
 
     expect(detectSourceLanguage).not.toHaveBeenCalled();
     expect(translateBatch).not.toHaveBeenCalled();
+    expect(
+      sendToContent.mock.calls
+        .map(([, message]) => message)
+        .filter((message) => message.type === "finalizeLazyRecoverySourceLanguage"),
+    ).toEqual([
+      expect.objectContaining({
+        sourceLanguage: "auto",
+      }),
+    ]);
     expect(initialProgress).toMatchObject({
       taskId: "task-1",
       state: "waitingForViewport",
@@ -460,6 +468,18 @@ describe("TranslationTaskOrchestrator", () => {
         sourceLanguage: "en",
       }),
     );
+    expect(
+      sendToContent.mock.calls
+        .map(([, message]) => message)
+        .filter((message) => message.type === "finalizeLazyRecoverySourceLanguage"),
+    ).toEqual([
+      expect.objectContaining({
+        sourceLanguage: "auto",
+      }),
+      expect.objectContaining({
+        sourceLanguage: "en",
+      }),
+    ]);
     expect(progress).toMatchObject({
       taskId: "task-1",
       state: "completed",

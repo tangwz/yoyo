@@ -2229,6 +2229,7 @@ describe("page runtime", () => {
     await vi.advanceTimersByTimeAsync(150);
     expect(runtimeMock.sendRuntimeMessage).not.toHaveBeenCalled();
 
+    expect(finalizeLazyRecoverySourceLanguage("task-1", "auto")).toBe(true);
     expect(finalizeLazyRecoverySourceLanguage("task-1", "en")).toBe(true);
     await vi.advanceTimersByTimeAsync(1);
     await vi.waitFor(() => {

@@ -583,15 +583,7 @@ export class TranslationTaskOrchestrator {
         profile.type === "chrome-built-in-ai" &&
         context.sourceLanguage === "auto"
       ) {
-        const finalizeResponse = await this.dependencies.sendToContent(input.tabId, {
-          type: "finalizeLazyRecoverySourceLanguage",
-          taskId: task.progress.taskId,
-          sourceLanguage,
-        });
-        if (
-          finalizeResponse.type !== "contentActionResult" ||
-          !finalizeResponse.success
-        ) {
+        if (!(await this.finalizeLazyRecoverySourceLanguage(task, sourceLanguage))) {
           return this.failTask(
             task,
             "Content script could not finalize Chrome Built-in AI language detection.",
@@ -847,10 +839,26 @@ export class TranslationTaskOrchestrator {
         segments,
         task.controller.signal,
       );
+      const shouldSyncContentSourceLanguage =
+        task.context.profile.type === "chrome-built-in-ai" &&
+        task.context.translationMode === "lazyViewport" &&
+        task.context.sourceLanguage === "auto" &&
+        sourceLanguage !== "auto";
       task.context = {
         ...task.context,
         sourceLanguage,
       };
+      if (
+        shouldSyncContentSourceLanguage &&
+        !(await this.finalizeLazyRecoverySourceLanguage(task, sourceLanguage))
+      ) {
+        this.failTask(
+          task,
+          "Content script could not finalize Chrome Built-in AI language detection.",
+          task.progress.total,
+        );
+        return false;
+      }
       return true;
     } catch (error) {
       this.failTask(
@@ -860,6 +868,19 @@ export class TranslationTaskOrchestrator {
       );
       return false;
     }
+  }
+
+  private async finalizeLazyRecoverySourceLanguage(
+    task: RunningTask,
+    sourceLanguage: string,
+  ): Promise<boolean> {
+    const response = await this.dependencies.sendToContent(task.tabId, {
+      type: "finalizeLazyRecoverySourceLanguage",
+      taskId: task.progress.taskId,
+      sourceLanguage,
+    });
+
+    return response.type === "contentActionResult" && response.success;
   }
 
   private async translateSegments(
