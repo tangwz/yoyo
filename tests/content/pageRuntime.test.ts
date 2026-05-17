@@ -296,6 +296,62 @@ describe("page runtime", () => {
     });
   });
 
+  it("queues all discovered segments in full-page mode", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+    document.body.innerHTML = `
+      <article>
+        <p id="visible">Visible paragraph.</p>
+        <p id="far">Far paragraph.</p>
+      </article>
+    `;
+    const rects: Record<string, { top: number; bottom: number }> = {
+      visible: { top: 10, bottom: 30 },
+      far: { top: 1000, bottom: 1030 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "fullPage", "en", "zh-CN");
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueTranslationBatch",
+        taskId: "task-1",
+        translationMode: "fullPage",
+        collectionComplete: true,
+        segments: expect.arrayContaining([
+          expect.objectContaining({ sourceText: "Visible paragraph." }),
+          expect.objectContaining({ sourceText: "Far paragraph." }),
+        ]),
+      }),
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
   it("stops lazy reporting when the initial lazy queue flush returns terminal progress", async () => {
     vi.useFakeTimers();
     const originalInnerHeight = window.innerHeight;
