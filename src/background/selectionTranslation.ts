@@ -14,6 +14,10 @@ export type TranslateSelectionDependencies = {
   getActiveProfile: () => Promise<ProviderProfile | undefined>;
   getTranslationProvider: (profile: ProviderProfile) => TranslationProvider;
   detectSourceLanguage?: (text: string) => Promise<string | undefined>;
+  prepareChromeBuiltInAi?: (
+    sourceLanguage: string,
+    targetLanguage: string,
+  ) => Promise<void>;
   sendToContent: (
     tabId: number,
     message: ContentRequest,
@@ -46,6 +50,12 @@ export async function translateSelection(
       profile,
       dependencies,
     );
+    if (profile.type === "chrome-built-in-ai") {
+      await dependencies.prepareChromeBuiltInAi?.(
+        sourceLanguage,
+        input.targetLanguage,
+      );
+    }
 
     const response = await dependencies.getTranslationProvider(profile).translateText({
       profile,

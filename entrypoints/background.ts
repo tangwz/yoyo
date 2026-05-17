@@ -82,6 +82,17 @@ export default defineBackground(() => {
     return chromeBuiltInAiOffscreenClient;
   }
 
+  async function prepareChromeBuiltInAi(
+    sourceLanguage: string,
+    targetLanguage: string,
+  ): Promise<void> {
+    const translator = await getChromeBuiltInAiOffscreenClient().create({
+      sourceLanguage,
+      targetLanguage,
+    });
+    await translator.destroy?.();
+  }
+
   const orchestrator = new TranslationTaskOrchestrator({
     getActiveProfile,
     getProviderProfile,
@@ -155,6 +166,7 @@ export default defineBackground(() => {
             translationProviderResolver.getTranslationProvider(profile),
           detectSourceLanguage: (sourceText) =>
             getChromeBuiltInAiOffscreenClient().detectLanguage(sourceText),
+          prepareChromeBuiltInAi,
           sendToContent: (targetTabId, message) =>
             sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
         },
@@ -245,6 +257,7 @@ export default defineBackground(() => {
               translationProviderResolver.getTranslationProvider(profile),
             detectSourceLanguage: (sourceText) =>
               getChromeBuiltInAiOffscreenClient().detectLanguage(sourceText),
+            prepareChromeBuiltInAi,
             sendToContent: (targetTabId, message) =>
               sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
           });

@@ -4,7 +4,14 @@ export type ChromeBuiltInAiBrowserSupportReason =
   | "supported"
   | "browserUnsupported"
   | "chromeVersionTooOld"
-  | "unknownChromeVersion";
+  | "unknownChromeVersion"
+  | "apiUnavailable";
+
+export type ChromeBuiltInAiRuntimeFeatureScope = {
+  LanguageDetector?: unknown;
+  Translator?: unknown;
+  document?: unknown;
+};
 
 export type ChromeBuiltInAiBrowserSupport = {
   supported: boolean;
@@ -13,8 +20,40 @@ export type ChromeBuiltInAiBrowserSupport = {
   detectedChromeVersion?: number;
 };
 
+export type ChromeBuiltInAiBrowserSupportInput = {
+  userAgent?: string;
+  runtimeFeatureScope?: ChromeBuiltInAiRuntimeFeatureScope;
+  requireRuntimeFeatures?: boolean;
+};
+
 function isUnsupportedBrowserOrMobile(userAgent: string): boolean {
   return /\b(?:Edg|OPR|Firefox|Android|CriOS|FxiOS|Mobile)\b/i.test(userAgent);
+}
+
+function hasChromeBuiltInAiRuntimeFeatures(
+  scope: ChromeBuiltInAiRuntimeFeatureScope,
+): boolean {
+  return (
+    "Translator" in scope &&
+    scope.Translator !== undefined &&
+    "LanguageDetector" in scope &&
+    scope.LanguageDetector !== undefined
+  );
+}
+
+function shouldRequireRuntimeFeatures(
+  input: ChromeBuiltInAiBrowserSupportInput,
+  scope: ChromeBuiltInAiRuntimeFeatureScope,
+): boolean {
+  if (input.requireRuntimeFeatures !== undefined) {
+    return input.requireRuntimeFeatures;
+  }
+
+  if (input.runtimeFeatureScope) {
+    return true;
+  }
+
+  return scope.document !== undefined;
 }
 
 export function parseChromeMajorVersion(userAgent: string): number | undefined {
@@ -32,9 +71,10 @@ export function parseChromeMajorVersion(userAgent: string): number | undefined {
 }
 
 export function getChromeBuiltInAiBrowserSupport(
-  input: { userAgent?: string } = {},
+  input: ChromeBuiltInAiBrowserSupportInput = {},
 ): ChromeBuiltInAiBrowserSupport {
   const userAgent = input.userAgent ?? globalThis.navigator?.userAgent ?? "";
+  const runtimeFeatureScope = input.runtimeFeatureScope ?? globalThis;
   const detectedChromeVersion = parseChromeMajorVersion(userAgent);
 
   if (isUnsupportedBrowserOrMobile(userAgent) || !/\bChrome\//.test(userAgent)) {
@@ -58,6 +98,18 @@ export function getChromeBuiltInAiBrowserSupport(
     return {
       supported: false,
       reason: "chromeVersionTooOld",
+      minimumChromeVersion: minimumChromeBuiltInAiVersion,
+      detectedChromeVersion,
+    };
+  }
+
+  if (
+    shouldRequireRuntimeFeatures(input, runtimeFeatureScope) &&
+    !hasChromeBuiltInAiRuntimeFeatures(runtimeFeatureScope)
+  ) {
+    return {
+      supported: false,
+      reason: "apiUnavailable",
       minimumChromeVersion: minimumChromeBuiltInAiVersion,
       detectedChromeVersion,
     };

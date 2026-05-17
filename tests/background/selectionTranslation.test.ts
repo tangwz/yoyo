@@ -29,6 +29,9 @@ describe("translateSelection", () => {
   const detectSourceLanguage = vi.fn<
     NonNullable<TranslateSelectionDependencies["detectSourceLanguage"]>
   >();
+  const prepareChromeBuiltInAi = vi.fn<
+    NonNullable<TranslateSelectionDependencies["prepareChromeBuiltInAi"]>
+  >();
   const getTranslationProvider = vi.fn<
     TranslateSelectionDependencies["getTranslationProvider"]
   >();
@@ -38,10 +41,12 @@ describe("translateSelection", () => {
     sendToContent.mockReset();
     getActiveProfile.mockReset();
     detectSourceLanguage.mockReset();
+    prepareChromeBuiltInAi.mockReset();
     getTranslationProvider.mockReset();
 
     translateText.mockResolvedValue({ translatedText: "你好" });
     detectSourceLanguage.mockResolvedValue("en");
+    prepareChromeBuiltInAi.mockResolvedValue(undefined);
     sendToContent.mockResolvedValue(undefined);
     getActiveProfile.mockResolvedValue(openAiProfile);
     getTranslationProvider.mockReturnValue({
@@ -55,6 +60,7 @@ describe("translateSelection", () => {
       getActiveProfile,
       getTranslationProvider,
       detectSourceLanguage,
+      prepareChromeBuiltInAi,
       sendToContent,
     };
   }
@@ -76,6 +82,7 @@ describe("translateSelection", () => {
       targetLanguage: "zh-CN",
       text: "Hello",
     });
+    expect(prepareChromeBuiltInAi).not.toHaveBeenCalled();
     expect(sendToContent).toHaveBeenCalledWith(42, {
       type: "showSelectionTranslation",
       sourceText: "Hello",
@@ -180,6 +187,10 @@ describe("translateSelection", () => {
     );
 
     expect(detectSourceLanguage).toHaveBeenCalledWith("Hello");
+    expect(prepareChromeBuiltInAi).toHaveBeenCalledWith("en", "zh-CN");
+    expect(
+      prepareChromeBuiltInAi.mock.invocationCallOrder[0],
+    ).toBeLessThan(translateText.mock.invocationCallOrder[0]);
     expect(translateText).toHaveBeenCalledWith({
       profile: chromeBuiltInProfile,
       sourceLanguage: "en",
@@ -208,11 +219,37 @@ describe("translateSelection", () => {
     );
 
     expect(getTranslationProvider).not.toHaveBeenCalled();
+    expect(prepareChromeBuiltInAi).not.toHaveBeenCalled();
     expect(sendToContent).toHaveBeenCalledWith(42, {
       type: "showSelectionTranslation",
       sourceText: "Hello",
       errorMessage:
         "Chrome Built-in AI could not detect the selected text language. No remote provider was used.",
+    });
+  });
+
+  it("sends a local-only error when Chrome Built-in AI warm-up fails", async () => {
+    getActiveProfile.mockResolvedValue(chromeBuiltInProfile);
+    prepareChromeBuiltInAi.mockRejectedValue(
+      new LocalAiError("apiUnavailable", "Chrome Built-in AI is unavailable."),
+    );
+
+    await translateSelection(
+      {
+        tabId: 42,
+        text: "Hello",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+      },
+      dependencies(),
+    );
+
+    expect(translateText).not.toHaveBeenCalled();
+    expect(sendToContent).toHaveBeenCalledWith(42, {
+      type: "showSelectionTranslation",
+      sourceText: "Hello",
+      errorMessage:
+        "Chrome Built-in AI is not available in this browser. No remote provider was used.",
     });
   });
 });

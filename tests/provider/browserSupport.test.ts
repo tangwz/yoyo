@@ -15,11 +15,30 @@ describe("browser support", () => {
     expect(
       getChromeBuiltInAiBrowserSupport({
         userAgent: "Mozilla/5.0 (Macintosh) Chrome/138.0.7204.0 Safari/537.36",
+        runtimeFeatureScope: {
+          LanguageDetector: {},
+          Translator: {},
+        },
       }),
     ).toEqual({
       supported: true,
       reason: "supported",
       minimumChromeVersion: 138,
+      detectedChromeVersion: 138,
+    });
+  });
+
+  it("rejects Chrome when the Built-in AI runtime APIs are unavailable", () => {
+    expect(
+      getChromeBuiltInAiBrowserSupport({
+        userAgent: "Mozilla/5.0 (Macintosh) Chrome/138.0.7204.0 Safari/537.36",
+        runtimeFeatureScope: {
+          LanguageDetector: {},
+        },
+      }),
+    ).toMatchObject({
+      supported: false,
+      reason: "apiUnavailable",
       detectedChromeVersion: 138,
     });
   });
