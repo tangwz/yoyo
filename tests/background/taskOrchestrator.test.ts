@@ -3139,6 +3139,152 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("recovers a missing lazy task from a runtime batch recovery snapshot", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+    const segments = [
+      segment({ id: "segment-1", sourceText: "Visible.", priority: "viewport" }),
+      segment({
+        id: "segment-2",
+        order: 2,
+        sourceText: "Near.",
+        textHash: "hash-2",
+        priority: "nearViewport",
+      }),
+      segment({
+        id: "segment-3",
+        order: 3,
+        sourceText: "Later.",
+        textHash: "hash-3",
+        priority: "normal",
+      }),
+    ];
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type !== "applyTranslations") {
+        throw new Error(`Unexpected content message: ${message.type}`);
+      }
+
+      expect(message.items).toEqual([
+        { segmentId: "segment-3", translatedText: "Translated later." },
+      ]);
+      return { type: "contentActionResult", success: true };
+    });
+    generateText.mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ id: "segment-3", text: "Translated later." }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+
+    const progress = await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [segments[2]!],
+      recovery: {
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        collectionComplete: true,
+        segments,
+        processedSegmentIds: ["segment-1", "segment-2"],
+      },
+    });
+
+    expect(progress).toMatchObject({
+      taskId: "task-1",
+      state: "completed",
+      total: 3,
+      translated: 3,
+      failed: 0,
+    });
+  });
+
+  it("does not double count in-flight lazy segments from runtime recovery", async () => {
+    const { orchestrator, generateText, streamText, sendToContent } = createOrchestrator();
+    let releaseStream:
+      | (() => void)
+      | undefined;
+
+    sendToContent.mockResolvedValue({ type: "contentActionResult", success: true });
+    streamText.mockImplementation(async function* streamVisibleSegment() {
+      yield { text: '{"id":"segment-1","text":"Translated visible."}\n' };
+      await new Promise<void>((resolve) => {
+        releaseStream = resolve;
+      });
+    });
+
+    const firstBatch = orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [segment({ id: "segment-1", sourceText: "Visible.", priority: "viewport" })],
+    });
+    await vi.waitFor(() => {
+      expect(orchestrator.getTask("task-1")).toMatchObject({
+        state: "translating",
+        total: 1,
+        translated: 1,
+      });
+      expect(releaseStream).toBeDefined();
+    });
+
+    const recoveryBatch = orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      segments: [],
+      recovery: {
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        collectionComplete: true,
+        segments: [segment({ id: "segment-1", sourceText: "Visible.", priority: "viewport" })],
+        processedSegmentIds: ["segment-1"],
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(orchestrator.getTask("task-1")).toMatchObject({
+        total: 1,
+        translated: 1,
+        failed: 0,
+      });
+    });
+
+    releaseStream?.();
+    await expect(firstBatch).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "completed",
+      total: 1,
+      translated: 1,
+      failed: 0,
+    });
+    await expect(recoveryBatch).resolves.toMatchObject({
+      taskId: "task-1",
+      state: "completed",
+      total: 1,
+      translated: 1,
+      failed: 0,
+    });
+    expect(generateText).not.toHaveBeenCalled();
+    expect(orchestrator.getTask("task-1")).toMatchObject({
+      state: "completed",
+      total: 1,
+      translated: 1,
+      failed: 0,
+    });
+  });
+
   it("retries unprocessed visible segments when recovering from a lazy snapshot", async () => {
     const { orchestrator, generateText, sendToContent } = createOrchestrator();
 

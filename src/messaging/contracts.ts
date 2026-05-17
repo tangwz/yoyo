@@ -102,6 +102,7 @@ export type BackgroundRequest =
       segments: PageSegment[];
       collectionComplete?: boolean;
       failedSegmentIds?: string[];
+      recovery?: LazySegmentRecoverySnapshot;
     };
 
 export type BackgroundResponse =

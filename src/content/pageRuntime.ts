@@ -337,6 +337,12 @@ async function flushTranslationQueue(): Promise<void> {
   if (failedSegmentIds.length > 0) {
     request.failedSegmentIds = failedSegmentIds;
   }
+  if (context.translationMode === "lazyViewport") {
+    const recovery = buildLazyRecoverySnapshot(context.taskId);
+    if (recovery) {
+      request.recovery = recovery;
+    }
+  }
 
   const response = await Promise.resolve(
     sendRuntimeMessage<BackgroundRequest, BackgroundResponse>(request),

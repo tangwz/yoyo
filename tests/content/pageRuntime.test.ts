@@ -269,26 +269,33 @@ describe("page runtime", () => {
     await collectSegments("task-1", "lazyViewport", "en", "fr");
     await vi.advanceTimersByTimeAsync(1);
 
-    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith({
-      type: "enqueueTranslationBatch",
-      taskId: "task-1",
-      sourceLanguage: "en",
-      targetLanguage: "fr",
-      translationMode: "lazyViewport",
-      collectionComplete: false,
-      segments: [
-        expect.objectContaining({
-          id: "seg_1",
-          sourceText: "First readable paragraph.",
-          priority: "viewport",
+    expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueTranslationBatch",
+        taskId: "task-1",
+        sourceLanguage: "en",
+        targetLanguage: "fr",
+        translationMode: "lazyViewport",
+        collectionComplete: false,
+        recovery: expect.objectContaining({
+          sourceLanguage: "en",
+          targetLanguage: "fr",
+          translationMode: "lazyViewport",
         }),
-        expect.objectContaining({
-          id: "seg_2",
-          sourceText: "Second readable paragraph.",
-          priority: "nearViewport",
-        }),
-      ],
-    });
+        segments: [
+          expect.objectContaining({
+            id: "seg_1",
+            sourceText: "First readable paragraph.",
+            priority: "viewport",
+          }),
+          expect.objectContaining({
+            id: "seg_2",
+            sourceText: "Second readable paragraph.",
+            priority: "nearViewport",
+          }),
+        ],
+      }),
+    );
 
     Object.defineProperty(window, "innerHeight", {
       configurable: true,

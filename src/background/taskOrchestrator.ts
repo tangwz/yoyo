@@ -63,6 +63,7 @@ export type EnqueueTranslationBatchInput = {
   segments: PageSegment[];
   collectionComplete?: boolean;
   failedSegmentIds?: string[];
+  recovery?: LazySegmentRecoverySnapshot;
 };
 
 type TaskTranslationContext = {
@@ -176,8 +177,16 @@ export class TranslationTaskOrchestrator {
       input.collectionComplete ?? input.translationMode !== "lazyViewport";
     const existingTask = this.tasks.get(input.taskId);
     let task = existingTask;
-    const isNewRuntimeTask = !task;
     let shouldRemoveTaskAfterDrain = false;
+
+    if (!task && input.recovery && input.translationMode === "lazyViewport") {
+      task = await this.recoverLazyTask(input.taskId, {
+        ...input.recovery,
+        tabId: input.tabId,
+      });
+    }
+
+    const isNewRuntimeTask = !task;
 
     if (task && task.tabId !== input.tabId) {
       return this.missingTaskProgress(input.taskId);
@@ -203,6 +212,10 @@ export class TranslationTaskOrchestrator {
     this.enterRuntimeBatch(task);
 
     try {
+      if (input.recovery && input.translationMode === "lazyViewport") {
+        this.mergeLazyRecoverySnapshot(task, input.recovery);
+      }
+
       const segmentsToProcess = this.mergeTranslationBatchSegments(task, input.segments);
       if (collectionComplete) {
         task.collectionComplete = true;
@@ -405,9 +418,17 @@ export class TranslationTaskOrchestrator {
       task.segmentsById.set(segment.id, segment);
     }
 
+    const recoveryFailedIdSet = new Set(recovery.failedSegmentIds ?? []);
+    let translatedDelta = 0;
     for (const segmentId of recovery.processedSegmentIds) {
-      if (task.segmentsById.has(segmentId)) {
+      if (
+        task.segmentsById.has(segmentId) &&
+        !recoveryFailedIdSet.has(segmentId) &&
+        !task.inFlightSegmentIds.has(segmentId) &&
+        !task.processedSegmentIds.has(segmentId)
+      ) {
         task.processedSegmentIds.add(segmentId);
+        translatedDelta += 1;
       }
     }
 
@@ -427,6 +448,9 @@ export class TranslationTaskOrchestrator {
     const progress: Partial<TranslationProgress> = {};
     if (task.segmentsById.size !== previousTotal) {
       progress.total = task.segmentsById.size;
+    }
+    if (translatedDelta > 0) {
+      progress.translated = task.progress.translated + translatedDelta;
     }
     if (failedIds.length > 0) {
       progress.failed = task.progress.failed + failedIds.length;

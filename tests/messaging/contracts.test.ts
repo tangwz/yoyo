@@ -118,6 +118,13 @@ describe("messaging contracts", () => {
       translationMode: "lazyViewport",
       collectionComplete: false,
       failedSegmentIds: ["seg_2"],
+      recovery: {
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        segments: [],
+        processedSegmentIds: [],
+      },
       segments: [
         {
           id: "seg_1",
@@ -140,6 +147,13 @@ describe("messaging contracts", () => {
       translationMode: "lazyViewport",
       collectionComplete: false,
       failedSegmentIds: ["seg_2"],
+      recovery: {
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        segments: [],
+        processedSegmentIds: [],
+      },
       segments: [
         {
           id: "seg_1",

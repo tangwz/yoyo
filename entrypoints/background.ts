@@ -158,6 +158,7 @@ export default defineBackground(() => {
               segments: request.segments,
               collectionComplete: request.collectionComplete,
               failedSegmentIds: request.failedSegmentIds,
+              recovery: request.recovery,
             }),
           };
         }
