@@ -57,6 +57,7 @@ let translationQueueContext:
       translationMode: TranslationMode;
     }
   | undefined;
+let pendingRetryRuntimeBatchSegments = new Map<string, PageSegment>();
 let pendingFailedRuntimeBatchSegments = new Map<string, PageSegment>();
 let visibilityObserver: IntersectionObserver | undefined;
 let observedSegmentIdsByElement = new WeakMap<Element, string>();
@@ -129,6 +130,7 @@ function resetTranslationQueue(): void {
   stopTranslationQueueFlushTimer();
   translationQueue.clear();
   translationQueueContext = undefined;
+  pendingRetryRuntimeBatchSegments = new Map();
   pendingFailedRuntimeBatchSegments = new Map();
 }
 
@@ -159,6 +161,7 @@ function dropRuntimeSegment(
   currentAnchors.delete(segmentId);
   currentSegmentsById.delete(segmentId);
   translationQueue.remove([segmentId]);
+  pendingRetryRuntimeBatchSegments.delete(segmentId);
   if (options.reportFailed && segment) {
     pendingFailedRuntimeBatchSegments.set(segmentId, segment);
   } else {
@@ -294,6 +297,7 @@ function scheduleTranslationQueueFlush(): void {
   if (
     !translationQueueContext ||
     (!translationQueue.hasPending() &&
+      pendingRetryRuntimeBatchSegments.size === 0 &&
       pendingFailedRuntimeBatchSegments.size === 0)
   ) {
     return;
@@ -314,11 +318,23 @@ async function flushTranslationQueue(): Promise<void> {
 
   const segments = translationQueue.takeNextBatch();
   const queuedSegmentIds = new Set(segments.map((segment) => segment.id));
-  const failedSegments = [...pendingFailedRuntimeBatchSegments.values()].filter(
+  const retrySegments = [...pendingRetryRuntimeBatchSegments.values()].filter(
     (segment) => !queuedSegmentIds.has(segment.id),
   );
+  const retrySegmentIds = retrySegments.map((segment) => segment.id);
+  const retryOrQueuedSegmentIds = new Set([
+    ...queuedSegmentIds,
+    ...retrySegmentIds,
+  ]);
+  const failedSegments = [...pendingFailedRuntimeBatchSegments.values()].filter(
+    (segment) => !retryOrQueuedSegmentIds.has(segment.id),
+  );
   const failedSegmentIds = failedSegments.map((segment) => segment.id);
-  if (segments.length === 0 && failedSegmentIds.length === 0) {
+  if (
+    segments.length === 0 &&
+    retrySegmentIds.length === 0 &&
+    failedSegmentIds.length === 0
+  ) {
     return;
   }
 
@@ -331,7 +347,7 @@ async function flushTranslationQueue(): Promise<void> {
     sourceLanguage: context.sourceLanguage,
     targetLanguage: context.targetLanguage,
     translationMode: context.translationMode,
-    segments: [...segments, ...failedSegments],
+    segments: [...segments, ...retrySegments, ...failedSegments],
     collectionComplete,
   };
   if (failedSegmentIds.length > 0) {
@@ -355,12 +371,15 @@ async function flushTranslationQueue(): Promise<void> {
   if (!response || response.type !== "taskProgress") {
     translationQueue.markFailed(segmentIds);
     for (const segment of segments) {
-      pendingFailedRuntimeBatchSegments.set(segment.id, segment);
+      pendingRetryRuntimeBatchSegments.set(segment.id, segment);
     }
     scheduleTranslationQueueFlush();
     return;
   }
 
+  for (const segmentId of retrySegmentIds) {
+    pendingRetryRuntimeBatchSegments.delete(segmentId);
+  }
   for (const segmentId of failedSegmentIds) {
     pendingFailedRuntimeBatchSegments.delete(segmentId);
   }

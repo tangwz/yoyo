@@ -426,7 +426,7 @@ describe("page runtime", () => {
     });
   });
 
-  it("reconciles failed initial lazy batches without losing reported anchors", async () => {
+  it("retries failed initial lazy transport batches without losing reported anchors", async () => {
     vi.useFakeTimers();
     const originalInnerHeight = window.innerHeight;
     Object.defineProperty(window, "innerHeight", {
@@ -441,8 +441,8 @@ describe("page runtime", () => {
           taskId: "task-1",
           state: "waitingForViewport",
           total: 2,
-          translated: 0,
-          failed: 2,
+          translated: 2,
+          failed: 0,
         },
       });
     document.body.innerHTML = `
@@ -494,13 +494,13 @@ describe("page runtime", () => {
     expect(batches[1]).toEqual(
       expect.objectContaining({
         collectionComplete: false,
-        failedSegmentIds: ["seg_1", "seg_2"],
         segments: [
           expect.objectContaining({ id: "seg_1" }),
           expect.objectContaining({ id: "seg_2" }),
         ],
       }),
     );
+    expect(batches[1]?.failedSegmentIds).toBeUndefined();
 
     Object.defineProperty(window, "innerHeight", {
       configurable: true,
@@ -1062,8 +1062,8 @@ describe("page runtime", () => {
           taskId: "task-1",
           state: "waitingForViewport",
           total: 5,
-          translated: 1,
-          failed: 4,
+          translated: 5,
+          failed: 0,
         },
       });
     document.body.innerHTML = `
@@ -1109,12 +1109,12 @@ describe("page runtime", () => {
     expect(batches[1]).toEqual(
       expect.objectContaining({
         collectionComplete: true,
-        failedSegmentIds: ["seg_1", "seg_2", "seg_3", "seg_4"],
       }),
     );
+    expect(batches[1]?.failedSegmentIds).toBeUndefined();
   });
 
-  it("reconciles failed full-page batches when no normal pending segments remain", async () => {
+  it("retries failed full-page transport batches when no normal pending segments remain", async () => {
     vi.useFakeTimers();
     runtimeMock.sendRuntimeMessage
       .mockRejectedValueOnce(new Error("temporary failure"))
@@ -1124,8 +1124,8 @@ describe("page runtime", () => {
           taskId: "task-1",
           state: "waitingForViewport",
           total: 2,
-          translated: 0,
-          failed: 2,
+          translated: 2,
+          failed: 0,
         },
       });
     document.body.innerHTML = `
@@ -1155,13 +1155,13 @@ describe("page runtime", () => {
     expect(batches[1]).toEqual(
       expect.objectContaining({
         collectionComplete: true,
-        failedSegmentIds: ["seg_1", "seg_2"],
         segments: [
           expect.objectContaining({ id: "seg_1" }),
           expect.objectContaining({ id: "seg_2" }),
         ],
       }),
     );
+    expect(batches[1]?.failedSegmentIds).toBeUndefined();
   });
 
   it("reports newly visible lazy segments after scrolling", async () => {
