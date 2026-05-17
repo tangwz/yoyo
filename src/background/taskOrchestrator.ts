@@ -54,12 +54,26 @@ export type TranslatePageInput = {
   translationMode?: TranslationMode;
 };
 
+export type EnqueueTranslationBatchInput = {
+  tabId: number;
+  taskId: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  translationMode: TranslationMode;
+  segments: PageSegment[];
+  collectionComplete?: boolean;
+  failedSegmentIds?: string[];
+  recovery?: LazySegmentRecoverySnapshot;
+};
+
 type TaskTranslationContext = {
   profile: ProviderProfile;
   sourceLanguage: string;
   targetLanguage: string;
   translationMode: TranslationMode;
 };
+
+type PendingTranslationContext = Omit<TaskTranslationContext, "profile">;
 
 type RunningTask = {
   tabId: number;
@@ -72,10 +86,15 @@ type RunningTask = {
   processedSegmentIds: Set<string>;
   inFlightSegmentIds: Set<string>;
   context?: TaskTranslationContext;
+  pendingContext?: PendingTranslationContext;
+  pendingContextSource?: "translatePage" | "runtime";
+  contextWaiters: Array<() => void>;
   currentConcurrency: number;
   consecutiveSuccessfulBatches: number;
   activeProviderRequests: number;
   providerSlotWaiters: Array<() => void>;
+  pendingRuntimeBatchCount: number;
+  runtimeBatchWaiters: Array<() => void>;
   collectionComplete: boolean;
 };
 
@@ -123,7 +142,7 @@ export class TranslationTaskOrchestrator {
       this.mergeLazyRecoverySnapshot(task, recovery);
     }
 
-    if (!task || !task.context || this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state)) {
+    if (!task || !task.context || this.isTaskStopped(task)) {
       return task ? this.cloneProgress(task.progress) : this.missingTaskProgress(taskId);
     }
 
@@ -149,6 +168,166 @@ export class TranslationTaskOrchestrator {
     await this.processSegmentsForTask(task, segments);
     this.finishOrWaitForLazySegments(task);
     return this.cloneProgress(task.progress);
+  }
+
+  async enqueueTranslationBatch(
+    input: EnqueueTranslationBatchInput,
+  ): Promise<TranslationProgress> {
+    const collectionComplete =
+      input.collectionComplete ?? input.translationMode !== "lazyViewport";
+    const existingTask = this.tasks.get(input.taskId);
+    let task = existingTask;
+    let shouldRemoveTaskAfterDrain = false;
+
+    if (!task && input.recovery && input.translationMode === "lazyViewport") {
+      task = await this.recoverLazyTask(input.taskId, {
+        ...input.recovery,
+        tabId: input.tabId,
+      });
+    }
+
+    const isNewRuntimeTask = !task;
+
+    if (task && task.tabId !== input.tabId) {
+      return this.missingTaskProgress(input.taskId);
+    }
+    if (task && this.isTaskStopped(task)) {
+      return this.cloneProgress(task.progress);
+    }
+    if (!task && this.hasTaskForTab(input.tabId)) {
+      return this.missingTaskProgress(input.taskId);
+    }
+
+    if (!task) {
+      task = this.createTask(input.taskId, input.tabId);
+      task.collectionComplete = collectionComplete;
+      task.pendingContext = {
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        translationMode: input.translationMode,
+      };
+      task.pendingContextSource = "runtime";
+    }
+
+    this.enterRuntimeBatch(task);
+
+    try {
+      if (input.recovery && input.translationMode === "lazyViewport") {
+        this.mergeLazyRecoverySnapshot(task, input.recovery);
+      }
+
+      const segmentsToProcess = this.mergeTranslationBatchSegments(task, input.segments);
+      if (collectionComplete) {
+        task.collectionComplete = true;
+      }
+      this.updateProgress(task, {
+        total: task.segmentsById.size,
+      });
+      this.markSegmentsFailed(task, input.failedSegmentIds ?? []);
+
+      if (!task.context && task.pendingContext && !isNewRuntimeTask) {
+        if (task.pendingContextSource === "runtime") {
+          await this.waitForContext(task);
+          if (this.isTaskStopped(task) || !task.context) {
+            return this.cloneProgress(task.progress);
+          }
+
+          await this.processSegmentsForTask(
+            task,
+            this.processableSegmentsForTask(task, segmentsToProcess),
+          );
+        } else {
+          return this.cloneProgress(task.progress);
+        }
+      }
+
+      if (!task.context) {
+        const profile = await this.dependencies.getActiveProfile();
+
+        if (this.isTaskStopped(task)) {
+          return this.cloneProgress(task.progress);
+        }
+
+        if (!profile) {
+          shouldRemoveTaskAfterDrain = !existingTask;
+          this.failTask(task, "No active provider profile.");
+        } else if (!task.context) {
+          const context = task.pendingContext ?? {
+            sourceLanguage: input.sourceLanguage,
+            targetLanguage: input.targetLanguage,
+            translationMode: input.translationMode,
+          };
+
+          if (!task.pendingContext) {
+            task.collectionComplete = collectionComplete;
+          }
+
+          task.context = {
+            profile,
+            ...context,
+          };
+          task.pendingContext = undefined;
+          task.pendingContextSource = undefined;
+          this.wakeContextWaiters(task);
+        }
+      }
+
+      if (this.isTaskStopped(task)) {
+        return this.cloneProgress(task.progress);
+      }
+
+      await this.processSegmentsForTask(
+        task,
+        this.processableSegmentsForTask(task, segmentsToProcess),
+      );
+    } finally {
+      this.leaveRuntimeBatch(task);
+      if (task.pendingRuntimeBatchCount > 0) {
+        await this.waitForRuntimeBatchesToDrain(task);
+      }
+      if (!this.isTaskStopped(task)) {
+        this.finishOrWaitForLazySegments(task);
+      }
+      if (shouldRemoveTaskAfterDrain && task.pendingRuntimeBatchCount === 0) {
+        this.tasks.delete(task.progress.taskId);
+      }
+    }
+
+    return this.cloneProgress(task.progress);
+  }
+
+  private mergeTranslationBatchSegments(
+    task: RunningTask,
+    segments: readonly PageSegment[],
+  ): PageSegment[] {
+    const segmentsToProcess: PageSegment[] = [];
+    const queuedIds = new Set<string>();
+
+    for (const segment of segments) {
+      const existingSegment = task.segmentsById.get(segment.id);
+      const candidate = existingSegment ?? segment;
+      if (!existingSegment) {
+        task.segmentsById.set(segment.id, segment);
+      }
+
+      if (!queuedIds.has(candidate.id)) {
+        segmentsToProcess.push(candidate);
+        queuedIds.add(candidate.id);
+      }
+    }
+
+    return segmentsToProcess;
+  }
+
+  private processableSegmentsForTask(
+    task: RunningTask,
+    segments: readonly PageSegment[],
+  ): PageSegment[] {
+    return segments.filter(
+      (segment) =>
+        !task.processedSegmentIds.has(segment.id) &&
+        !task.inFlightSegmentIds.has(segment.id),
+    );
   }
 
   private async recoverLazyTask(
@@ -239,9 +418,17 @@ export class TranslationTaskOrchestrator {
       task.segmentsById.set(segment.id, segment);
     }
 
+    const recoveryFailedIdSet = new Set(recovery.failedSegmentIds ?? []);
+    let translatedDelta = 0;
     for (const segmentId of recovery.processedSegmentIds) {
-      if (task.segmentsById.has(segmentId)) {
+      if (
+        task.segmentsById.has(segmentId) &&
+        !recoveryFailedIdSet.has(segmentId) &&
+        !task.inFlightSegmentIds.has(segmentId) &&
+        !task.processedSegmentIds.has(segmentId)
+      ) {
         task.processedSegmentIds.add(segmentId);
+        translatedDelta += 1;
       }
     }
 
@@ -261,6 +448,9 @@ export class TranslationTaskOrchestrator {
     const progress: Partial<TranslationProgress> = {};
     if (task.segmentsById.size !== previousTotal) {
       progress.total = task.segmentsById.size;
+    }
+    if (translatedDelta > 0) {
+      progress.translated = task.progress.translated + translatedDelta;
     }
     if (failedIds.length > 0) {
       progress.failed = task.progress.failed + failedIds.length;
@@ -298,7 +488,15 @@ export class TranslationTaskOrchestrator {
     this.cancelTasksForTab(input.tabId, "superseded");
 
     const taskId = this.dependencies.createTaskId();
-    return this.createTask(taskId, input.tabId);
+    const task = this.createTask(taskId, input.tabId);
+    task.collectionComplete = false;
+    task.pendingContext = {
+      sourceLanguage: input.sourceLanguage,
+      targetLanguage: input.targetLanguage,
+      translationMode: input.translationMode ?? "lazyViewport",
+    };
+    task.pendingContextSource = "translatePage";
+    return task;
   }
 
   private async executeTranslatePage(
@@ -307,20 +505,39 @@ export class TranslationTaskOrchestrator {
   ): Promise<TranslationProgress> {
     try {
       const profile = await this.dependencies.getActiveProfile();
+      if (this.isTaskStopped(task)) {
+        return this.cloneProgress(task.progress);
+      }
       if (!profile) {
         return this.failTask(task, "No active provider profile.");
       }
 
-      const translationMode = input.translationMode ?? "lazyViewport";
+      const context = task.pendingContext ?? {
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        translationMode: input.translationMode ?? "lazyViewport",
+      };
+      task.context = task.context ?? {
+        profile,
+        ...context,
+      };
+      task.pendingContext = undefined;
+      task.pendingContextSource = undefined;
+      this.wakeContextWaiters(task);
+
       const collectResponse = await this.dependencies.sendToContent(input.tabId, {
         type: "collectSegments",
         taskId: task.progress.taskId,
-        translationMode,
-        sourceLanguage: input.sourceLanguage,
-        targetLanguage: input.targetLanguage,
+        translationMode: context.translationMode,
+        sourceLanguage: context.sourceLanguage,
+        targetLanguage: context.targetLanguage,
         providerId: profile.id,
         textModel: profile.textModel,
       });
+
+      if (this.isTaskStopped(task)) {
+        return this.cloneProgress(task.progress);
+      }
 
       if (
         collectResponse.type !== "collectSegmentsResult" ||
@@ -329,26 +546,24 @@ export class TranslationTaskOrchestrator {
         return this.failTask(task, "Content script did not return page segments.");
       }
 
-      const segments = collectResponse.segments;
-      task.segmentsById = new Map(segments.map((segment) => [segment.id, segment]));
-      task.collectionComplete = collectResponse.collectionComplete ?? true;
-      task.context = {
-        profile,
-        sourceLanguage: input.sourceLanguage,
-        targetLanguage: input.targetLanguage,
-        translationMode,
-      };
+      const collectedSegments = collectResponse.segments;
+      this.mergeTranslationBatchSegments(task, collectedSegments);
+      const collectionComplete = collectResponse.collectionComplete ?? true;
+
+      if (collectionComplete) {
+        task.collectionComplete = true;
+      }
 
       this.updateProgress(task, {
         state: "translating",
-        total: segments.length,
+        total: task.segmentsById.size,
       });
 
       await this.processSegmentsForTask(
         task,
-        translationMode === "lazyViewport"
-          ? segments.filter((segment) => segment.priority !== "normal")
-          : segments,
+        context.translationMode === "lazyViewport"
+          ? [...task.segmentsById.values()].filter((segment) => segment.priority !== "normal")
+          : [...task.segmentsById.values()],
       );
 
       if (task.progress.state === "cancelled") {
@@ -358,6 +573,10 @@ export class TranslationTaskOrchestrator {
       this.finishOrWaitForLazySegments(task);
       return this.cloneProgress(task.progress);
     } catch (error) {
+      if (isTerminalTaskState(task.progress.state)) {
+        return this.cloneProgress(task.progress);
+      }
+
       if (task.controller.signal.aborted || task.progress.state === "cancelled") {
         return this.cancelTask(task.progress.taskId, "userCancelled");
       }
@@ -379,6 +598,7 @@ export class TranslationTaskOrchestrator {
     }
 
     task.controller.abort();
+    this.wakeContextWaiters(task);
     this.updateProgress(task, { state: "cancelled" });
     return this.cloneProgress(task.progress);
   }
@@ -419,6 +639,9 @@ export class TranslationTaskOrchestrator {
       consecutiveSuccessfulBatches: 0,
       activeProviderRequests: 0,
       providerSlotWaiters: [],
+      contextWaiters: [],
+      pendingRuntimeBatchCount: 0,
+      runtimeBatchWaiters: [],
       collectionComplete: true,
       progress: {
         taskId,
@@ -447,11 +670,50 @@ export class TranslationTaskOrchestrator {
     );
   }
 
+  private enterRuntimeBatch(task: RunningTask): void {
+    task.pendingRuntimeBatchCount += 1;
+  }
+
+  private leaveRuntimeBatch(task: RunningTask): void {
+    task.pendingRuntimeBatchCount = Math.max(0, task.pendingRuntimeBatchCount - 1);
+    if (task.pendingRuntimeBatchCount === 0) {
+      for (const wake of task.runtimeBatchWaiters.splice(0)) {
+        wake();
+      }
+    }
+  }
+
+  private async waitForRuntimeBatchesToDrain(task: RunningTask): Promise<void> {
+    if (task.pendingRuntimeBatchCount === 0) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      task.runtimeBatchWaiters.push(resolve);
+    });
+  }
+
+  private async waitForContext(task: RunningTask): Promise<void> {
+    if (task.context || this.isTaskStopped(task)) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      task.contextWaiters.push(resolve);
+    });
+  }
+
+  private wakeContextWaiters(task: RunningTask): void {
+    for (const wake of task.contextWaiters.splice(0)) {
+      wake();
+    }
+  }
+
   private async processSegmentsForTask(
     task: RunningTask,
     segments: readonly PageSegment[],
   ): Promise<void> {
-    if (!task.context || this.isTaskCancelled(task)) {
+    if (!task.context || this.isTaskStopped(task)) {
       return;
     }
 
@@ -479,7 +741,7 @@ export class TranslationTaskOrchestrator {
     } finally {
       for (const segment of candidates) {
         task.inFlightSegmentIds.delete(segment.id);
-        if (!this.isTaskCancelled(task)) {
+        if (!this.isTaskStopped(task)) {
           task.processedSegmentIds.add(segment.id);
         }
       }
@@ -497,7 +759,7 @@ export class TranslationTaskOrchestrator {
     const representativeGroups = new Map<string, PageSegment[]>();
 
     for (const segment of input.segments) {
-      if (this.isTaskCancelled(input.task)) {
+      if (this.isTaskStopped(input.task)) {
         return;
       }
 
@@ -556,7 +818,7 @@ export class TranslationTaskOrchestrator {
     try {
       const result = await this.requestAndApplyBatch(input);
 
-      if (this.isTaskCancelled(input.task)) {
+      if (this.isTaskStopped(input.task)) {
         return;
       }
 
@@ -572,7 +834,7 @@ export class TranslationTaskOrchestrator {
 
       await this.retryOrDegradeBatch({ ...input, segments: result.missingSegments }, attempt);
     } catch (error) {
-      if (this.isTaskCancelled(input.task)) {
+      if (this.isTaskStopped(input.task)) {
         return;
       }
 
@@ -624,11 +886,15 @@ export class TranslationTaskOrchestrator {
         }),
         abortSignal: input.task.controller.signal,
       })) {
-        if (this.isTaskCancelled(input.task)) {
+        if (this.isTaskStopped(input.task)) {
           return { missingSegments: [] };
         }
 
         for (const item of parser.push(chunk.text)) {
+          if (this.isTaskStopped(input.task)) {
+            return { missingSegments: [] };
+          }
+
           sawValidItem = true;
           if (await this.applyAndCacheRepresentativeItem(input, item)) {
             appliedRepresentativeIds.add(item.segmentId);
@@ -636,7 +902,15 @@ export class TranslationTaskOrchestrator {
         }
       }
 
+      if (this.isTaskStopped(input.task)) {
+        return { missingSegments: [] };
+      }
+
       for (const item of parser.finish().items) {
+        if (this.isTaskStopped(input.task)) {
+          return { missingSegments: [] };
+        }
+
         sawValidItem = true;
         if (await this.applyAndCacheRepresentativeItem(input, item)) {
           appliedRepresentativeIds.add(item.segmentId);
@@ -653,7 +927,7 @@ export class TranslationTaskOrchestrator {
         ),
       };
     } catch (error) {
-      if (this.isTaskCancelled(input.task)) {
+      if (this.isTaskStopped(input.task)) {
         return { missingSegments: [] };
       }
 
@@ -697,14 +971,14 @@ export class TranslationTaskOrchestrator {
       this.releaseProviderRequestSlot(input.task);
     }
 
-    if (this.isTaskCancelled(input.task)) {
+    if (this.isTaskStopped(input.task)) {
       return { missingSegments: [] };
     }
 
     const expectedSegmentIds = input.segments.map((segment) => segment.id);
     const parsed = parseTranslationBatchResult(response.text, expectedSegmentIds);
 
-    if (this.isTaskCancelled(input.task)) {
+    if (this.isTaskStopped(input.task)) {
       return { missingSegments: [] };
     }
 
@@ -713,6 +987,10 @@ export class TranslationTaskOrchestrator {
         this.fanOutTranslationItem(item, input.fanOutGroups),
       );
       const appliedItems = await this.applyTranslations(input.task, fanOutItems);
+
+      if (this.isTaskStopped(input.task)) {
+        return { missingSegments: [] };
+      }
 
       if (appliedItems.length > 0) {
         await this.cacheAppliedGroups(input, parsed.items, appliedItems);
@@ -734,7 +1012,7 @@ export class TranslationTaskOrchestrator {
     const appliedItems = await this.applyTranslations(input.task, fanOutItems, {
       countFailures: false,
     });
-    if (appliedItems.length === 0) {
+    if (appliedItems.length === 0 || this.isTaskStopped(input.task)) {
       return false;
     }
 
@@ -780,7 +1058,7 @@ export class TranslationTaskOrchestrator {
     input: TranslationBatchInput,
     attempt: number,
   ): Promise<void> {
-    if (this.isTaskCancelled(input.task) || input.segments.length === 0) {
+    if (this.isTaskStopped(input.task) || input.segments.length === 0) {
       return;
     }
 
@@ -790,6 +1068,10 @@ export class TranslationTaskOrchestrator {
     }
 
     if (input.segments.length === 1) {
+      if (this.isTaskStopped(input.task)) {
+        return;
+      }
+
       const failedCount = input.fanOutGroups.get(input.segments[0].id)?.length ?? 1;
       this.incrementProgress(input.task, { failed: failedCount });
       return;
@@ -811,7 +1093,7 @@ export class TranslationTaskOrchestrator {
     items: TranslationResultItem[],
     options: ApplyTranslationsOptions = {},
   ): Promise<TranslationResultItem[]> {
-    if (items.length === 0 || this.isTaskCancelled(task)) {
+    if (items.length === 0 || this.isTaskStopped(task)) {
       return [];
     }
 
@@ -822,7 +1104,7 @@ export class TranslationTaskOrchestrator {
         items,
       });
 
-      if (this.isTaskCancelled(task)) {
+      if (this.isTaskStopped(task)) {
         return [];
       }
 
@@ -855,7 +1137,7 @@ export class TranslationTaskOrchestrator {
       }
       return [];
     } catch {
-      if (this.isTaskCancelled(task)) {
+      if (this.isTaskStopped(task)) {
         return [];
       }
 
@@ -890,7 +1172,7 @@ export class TranslationTaskOrchestrator {
           return;
         }
 
-        if (this.isTaskCancelled(task)) {
+        if (this.isTaskStopped(task)) {
           if (activeCount === 0) {
             finish();
           }
@@ -920,22 +1202,30 @@ export class TranslationTaskOrchestrator {
   }
 
   private async handleBatchError(task: RunningTask, error: unknown): Promise<void> {
+    if (this.isTaskStopped(task)) {
+      return;
+    }
+
     if (error instanceof ProviderError && error.code === "rateLimited") {
       task.currentConcurrency = minConcurrency;
       task.consecutiveSuccessfulBatches = 0;
       this.wakeProviderRequestWaiters(task);
       await new Promise((resolve) => globalThis.setTimeout(resolve, rateLimitBackoffMs));
+
+      if (this.isTaskStopped(task)) {
+        return;
+      }
     }
   }
 
   private async acquireProviderRequestSlot(task: RunningTask): Promise<boolean> {
-    while (!this.isTaskCancelled(task) && task.activeProviderRequests >= task.currentConcurrency) {
+    while (!this.isTaskStopped(task) && task.activeProviderRequests >= task.currentConcurrency) {
       await new Promise<void>((resolve) => {
         task.providerSlotWaiters.push(resolve);
       });
     }
 
-    if (this.isTaskCancelled(task)) {
+    if (this.isTaskStopped(task)) {
       return false;
     }
 
@@ -963,7 +1253,11 @@ export class TranslationTaskOrchestrator {
   }
 
   private finishOrWaitForLazySegments(task: RunningTask): void {
-    if (this.isTaskCancelled(task)) {
+    if (this.isTaskStopped(task)) {
+      return;
+    }
+
+    if (!task.context) {
       return;
     }
 
@@ -972,7 +1266,12 @@ export class TranslationTaskOrchestrator {
       return;
     }
 
-    if (task.context?.translationMode === "lazyViewport" && !task.collectionComplete) {
+    if (task.pendingRuntimeBatchCount > 0) {
+      this.updateProgress(task, { state: "translating" });
+      return;
+    }
+
+    if (!task.collectionComplete) {
       this.updateProgress(task, { state: "waitingForViewport" });
       return;
     }
@@ -1017,11 +1316,14 @@ export class TranslationTaskOrchestrator {
     errorMessage: string,
     failed = task.progress.total,
   ): TranslationProgress {
+    const remaining = Math.max(0, task.progress.total - task.progress.translated);
+
     this.updateProgress(task, {
       state: "failed",
-      failed,
+      failed: Math.min(failed, remaining),
       errorMessage,
     });
+    this.wakeContextWaiters(task);
     return this.cloneProgress(task.progress);
   }
 
@@ -1054,6 +1356,10 @@ export class TranslationTaskOrchestrator {
     }
 
     return false;
+  }
+
+  private isTaskStopped(task: RunningTask): boolean {
+    return this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state);
   }
 
   private emptyProgress(

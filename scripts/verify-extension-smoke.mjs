@@ -70,7 +70,7 @@ function readJsonBody(request) {
   });
 }
 
-function extractSegmentIds(prompt) {
+function extractPromptItems(prompt) {
   const inputIndex = prompt.lastIndexOf("Input:");
   if (inputIndex !== -1) {
     const inputText = prompt.slice(inputIndex + "Input:".length).trim();
@@ -78,8 +78,18 @@ function extractSegmentIds(prompt) {
       const parsed = JSON.parse(inputText);
       if (Array.isArray(parsed.items)) {
         return parsed.items
-          .map((item) => item?.segmentId ?? item?.id)
-          .filter((id) => typeof id === "string" && id !== "...");
+          .map((item) => {
+            const id = item?.segmentId ?? item?.id;
+            if (typeof id !== "string" || id === "...") {
+              return undefined;
+            }
+
+            return {
+              id,
+              text: typeof item?.text === "string" ? item.text : id,
+            };
+          })
+          .filter((item) => item !== undefined);
       }
     } catch {
       // Fall through to regex extraction for older prompt shapes.
@@ -93,7 +103,7 @@ function extractSegmentIds(prompt) {
       ids.add(match[1]);
     }
   }
-  return [...ids];
+  return [...ids].map((id) => ({ id, text: id }));
 }
 
 function countProviderRequests() {
@@ -171,9 +181,9 @@ function createMockProviderServer() {
       }
 
       promptProbe.translationPrompts.push(prompt);
-      const items = extractSegmentIds(prompt).map((segmentId) => ({
-        id: segmentId,
-        text: `[translated ${segmentId}]`,
+      const items = extractPromptItems(prompt).map((item) => ({
+        id: item.id,
+        text: `[translated ${item.id}]`,
       }));
 
       response.writeHead(200, { "content-type": "application/json" });
@@ -241,16 +251,66 @@ async function waitForCdpEndpoint(port) {
   throw new Error("Timed out waiting for detached Chrome debugging endpoint.");
 }
 
+const xLikeFeedHtml = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>X-like feed fixture</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0 auto;
+        max-width: 720px;
+      }
+      article {
+        border-bottom: 1px solid #ddd;
+        padding: 16px 0;
+      }
+      [data-testid="tweetText"] {
+        font-size: 18px;
+        line-height: 1.45;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <article data-testid="tweet">
+        <div><a href="/author">Terence</a><span>@terence</span><time>1h</time></div>
+        <div data-testid="tweetText" lang="en" dir="auto">
+          <span>Dynamic feed text should translate quickly.</span>
+        </div>
+        <div role="group" aria-label="Post actions">
+          <button>Reply</button><button>Repost</button><button>Like</button>
+        </div>
+      </article>
+      <article data-testid="tweet">
+        <div data-testid="tweetText" lang="en" dir="auto">
+          <span>Newly visible short text should translate too.</span>
+        </div>
+      </article>
+    </main>
+  </body>
+</html>`;
+
 function createArticleServer() {
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    if (url.pathname !== "/article" && url.pathname !== "/lazy-article") {
+    if (
+      url.pathname !== "/article" &&
+      url.pathname !== "/lazy-article" &&
+      url.pathname !== "/x-like-feed"
+    ) {
       response.writeHead(404);
       response.end("Not found");
       return;
     }
 
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    if (url.pathname === "/x-like-feed") {
+      response.end(xLikeFeedHtml);
+      return;
+    }
+
     if (url.pathname === "/lazy-article") {
       response.end(`<!doctype html>
         <html>
@@ -306,6 +366,7 @@ function createArticleServer() {
       resolveServer({
         url: `http://127.0.0.1:${address.port}/article`,
         lazyUrl: `http://127.0.0.1:${address.port}/lazy-article`,
+        xLikeUrl: `http://127.0.0.1:${address.port}/x-like-feed`,
         close: () => new Promise((resolveClose) => server.close(resolveClose)),
       });
     });
@@ -749,22 +810,144 @@ async function main() {
       "Lazy viewport injected the recovered segment more than once.",
     );
 
-    const lazyProgressResponse = await optionsPage.evaluate(async (targetTabId) => {
-      return chrome.runtime.sendMessage({
-        type: "getTaskForTab",
-        tabId: targetTabId,
-      });
-    }, lazyTab.id);
-    assert(
-      lazyProgressResponse?.type === "taskProgress" &&
-        lazyProgressResponse.progress.state === "completed" &&
-        lazyProgressResponse.progress.translated === recoveredLazySnapshot.length,
-      `Lazy viewport recovery did not complete cleanly: ${JSON.stringify(lazyProgressResponse)}`,
+    await waitForCondition(
+      async () => {
+        const response = await optionsPage.evaluate(async (targetTabId) => {
+          return chrome.runtime.sendMessage({
+            type: "getTaskForTab",
+            tabId: targetTabId,
+          });
+        }, lazyTab.id);
+        const translatedCount = recoveredLazySnapshot.filter((item) => !item.pending).length;
+        if (
+          response?.type === "taskProgress" &&
+          response.progress.state === "completed" &&
+          response.progress.translated === translatedCount
+        ) {
+          return response;
+        }
+
+        throw new Error(
+          JSON.stringify({
+            response,
+            snapshot: recoveredLazySnapshot,
+            translatedCount,
+          }),
+        );
+      },
+      "Lazy viewport recovery did not complete cleanly.",
+      15000,
     );
     assert(
       countProviderRequests() > beforeLazyTranslationRequestCount,
       "Lazy viewport recovery did not send any provider requests.",
     );
+
+    const beforeFeedLoadRequestCount = countProviderRequests();
+    const xLikePage = await context.newPage();
+    await xLikePage.goto(articleServer.xLikeUrl);
+    await xLikePage.waitForSelector('[data-testid="tweetText"]');
+    await assertProviderRequestCountStays(
+      beforeFeedLoadRequestCount,
+      "Loading an X-like feed sent a provider request.",
+    );
+
+    const xLikeTab = await getTabForUrl(serviceWorker, xLikePage.url());
+    const beforeFeedTranslationRequestCount = countProviderRequests();
+    await optionsPage.evaluate(async (targetTabId) => {
+      await chrome.runtime.sendMessage({
+        type: "translatePage",
+        tabId: targetTabId,
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+      });
+    }, xLikeTab.id);
+
+    const xLikeResult = await waitForCondition(
+      async () => {
+        const promptItems = promptProbe.requests
+          .slice(beforeFeedTranslationRequestCount)
+          .flatMap((request) => extractPromptItems(request.prompt));
+        const firstTweetItem = promptItems.find(
+          (item) => item.text === "Dynamic feed text should translate quickly.",
+        );
+        const secondTweetItem = promptItems.find(
+          (item) => item.text === "Newly visible short text should translate too.",
+        );
+        if (!firstTweetItem || !secondTweetItem) {
+          return undefined;
+        }
+
+        const snapshot = await translationSnapshot(xLikePage);
+        const translatedText = snapshot
+          .filter((item) => !item.pending)
+          .map((item) => item.text)
+          .join("\n");
+
+        return translatedText.includes(`[translated ${firstTweetItem.id}]`) &&
+          translatedText.includes(`[translated ${secondTweetItem.id}]`)
+          ? { snapshot }
+          : undefined;
+      },
+      "X-like feed did not inject deterministic tweet text translations.",
+      10000,
+    );
+    const xLikeSnapshot = xLikeResult.snapshot;
+    assertUniqueInjectedSegments(
+      xLikeSnapshot,
+      "X-like feed duplicated injected translations.",
+    );
+    const translatedFeedText = xLikeSnapshot
+      .filter((item) => !item.pending)
+      .map((item) => item.text)
+      .join("\n");
+    assert(
+      !translatedFeedText.includes("Reply") &&
+        !translatedFeedText.includes("Repost") &&
+        !translatedFeedText.includes("Like"),
+      "X-like feed smoke must not translate action button labels.",
+    );
+    const feedTranslationRequests = promptProbe.requests.slice(
+      beforeFeedTranslationRequestCount,
+    );
+    const feedTranslationPromptText = feedTranslationRequests
+      .map((request) => request.prompt)
+      .join("\n");
+    assert(
+      !feedTranslationPromptText.includes("Reply") &&
+        !feedTranslationPromptText.includes("Repost") &&
+        !feedTranslationPromptText.includes("Like"),
+      "X-like action labels reached the provider prompt.",
+    );
+    assert(
+      feedTranslationRequests.some(
+        (request) =>
+          request.prompt.includes("Dynamic feed text should translate quickly.") &&
+          request.prompt.includes("Newly visible short text should translate too."),
+      ),
+      "X-like feed provider request did not include both tweet texts.",
+    );
+    const xLikeProgressResponse = await optionsPage.evaluate(async (targetTabId) => {
+      return chrome.runtime.sendMessage({
+        type: "getTaskForTab",
+        tabId: targetTabId,
+      });
+    }, xLikeTab.id);
+    if (
+      xLikeProgressResponse?.type === "taskProgress" &&
+      !["completed", "completedWithErrors", "failed", "cancelled"].includes(
+        xLikeProgressResponse.progress.state,
+      )
+    ) {
+      await optionsPage.evaluate(async (taskId) => {
+        await chrome.runtime.sendMessage({
+          type: "cancelTask",
+          taskId,
+          reason: "userCancelled",
+        });
+      }, xLikeProgressResponse.progress.taskId);
+    }
+    await xLikePage.close();
 
     if (detachBrowser) {
       await optionsPage.close().catch(() => undefined);

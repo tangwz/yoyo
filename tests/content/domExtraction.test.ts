@@ -4,6 +4,8 @@ import { isPageUrlSupported } from "@/content/domEligibility";
 
 describe("collectPageSegments", () => {
   const originalInnerHeight = window.innerHeight;
+  const originalDocumentLanguage = document.documentElement.getAttribute("lang");
+  const originalBodyLanguage = document.body.getAttribute("lang");
 
   beforeEach(() => {
     document.body.innerHTML = "";
@@ -18,6 +20,16 @@ describe("collectPageSegments", () => {
       configurable: true,
       value: originalInnerHeight,
     });
+    if (originalDocumentLanguage === null) {
+      document.documentElement.removeAttribute("lang");
+    } else {
+      document.documentElement.setAttribute("lang", originalDocumentLanguage);
+    }
+    if (originalBodyLanguage === null) {
+      document.body.removeAttribute("lang");
+    } else {
+      document.body.setAttribute("lang", originalBodyLanguage);
+    }
   });
 
   it("extracts leaf readable blocks without parent duplicates", async () => {
@@ -172,6 +184,153 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("keeps normal article inline numeric spans", async () => {
+    document.body.innerHTML = `
+      <article>
+        <p>Revenue in <span>2024</span> grew.</p>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Revenue in 2024 grew.",
+    ]);
+  });
+
+  it("keeps normal article generic numeric spans", async () => {
+    const sourceText =
+      "Revenue in 2024 grew because the platform reduced operational complexity across multiple product teams.";
+    document.body.innerHTML = `
+      <article>
+        <section>
+          Revenue in <span>2024</span> grew because the platform reduced operational complexity across multiple product teams.
+        </section>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      sourceText,
+    ]);
+  });
+
+  it("keeps article header headings and body text", async () => {
+    document.body.innerHTML = `
+      <article>
+        <header><h1>Article title</h1></header>
+        <p>Article body.</p>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(
+      result.segments.map(({ sourceText, kind }) => ({ sourceText, kind })),
+    ).toEqual([
+      { sourceText: "Article title", kind: "heading" },
+      { sourceText: "Article body.", kind: "paragraph" },
+    ]);
+  });
+
+  it("keeps meaningful article footer and nav text", async () => {
+    document.body.innerHTML = `
+      <article>
+        <p>Article body.</p>
+        <footer>
+          <p>Article footer note.</p>
+        </footer>
+        <nav>
+          <p>Article source index.</p>
+        </nav>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Article body.",
+      "Article footer note.",
+      "Article source index.",
+    ]);
+  });
+
+  it("does not extract weak language roots from navigation outside an article", async () => {
+    document.body.innerHTML = `
+      <nav><span lang="en">Home</span></nav>
+      <article><p>Article body.</p></article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Article body.",
+    ]);
+  });
+
+  it("does not extract weak direction roots from sidebars outside an article", async () => {
+    document.body.innerHTML = `
+      <article><p>Article body.</p></article>
+      <aside><span dir="auto">Related</span></aside>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Article body.",
+    ]);
+  });
+
+  it("does not extract nested weak language roots from article navigation", async () => {
+    document.body.innerHTML = `
+      <article>
+        <nav><span lang="en">Home</span></nav>
+        <p>Article body.</p>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Article body.",
+    ]);
+  });
+
+  it("does not extract nested weak direction roots from article footer chrome", async () => {
+    document.body.innerHTML = `
+      <article>
+        <p>Article body.</p>
+        <footer><span dir="auto">Related</span></footer>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Article body.",
+    ]);
+  });
+
+  it("does not extract long nested weak language roots from article header chrome", async () => {
+    const headerChrome =
+      "This language-marked header chrome is intentionally long enough to pass the generic threshold, but it should not be extracted as article content.";
+    document.body.innerHTML = `
+      <article>
+        <header>
+          <div lang="en">${headerChrome}</div>
+        </header>
+        <p>Article body.</p>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Article body.",
+    ]);
+  });
+
   it("does not merge nested list items into a parent list item segment", async () => {
     document.body.innerHTML = `
       <article>
@@ -271,6 +430,142 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("prefers article roots over enclosing main on ordinary article pages", async () => {
+    document.body.innerHTML = `
+      <main>
+        <article><p>Primary article body.</p></article>
+        <aside><p>Related card should not be extracted.</p></aside>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Primary article body.",
+    ]);
+  });
+
+  it("falls back to body when only weak language roots are discovered", async () => {
+    const bodyText =
+      "This normal body section should still be discovered even when a small language marked sidebar appears first.";
+    document.body.innerHTML = `
+      <aside lang="en">Tiny label</aside>
+      <section>${bodyText}</section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toContain(
+      bodyText,
+    );
+  });
+
+  it("preserves body reading order when weak roots need fallback", async () => {
+    const bodyText =
+      "This normal body section is long enough to pass generic extraction and appears first in DOM.";
+    document.body.innerHTML = `
+      <section>${bodyText}</section>
+      <aside lang="en">Tiny label</aside>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
+      "Tiny label",
+    ]);
+  });
+
+  it("falls back to body when only weak path and editable hints are discovered", async () => {
+    const bodyText =
+      "This normal body section should still be discovered even when path and editable hints appear first.";
+    document.body.innerHTML = `
+      <div data-path="/compose/thread">Thread label</div>
+      <div contenteditable="true">Draft composer text.</div>
+      <section>${bodyText}</section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
+    ]);
+  });
+
+  it("uses editable hints to discover surrounding readable content", async () => {
+    const bodyText =
+      "Readable content near an editor should be discovered without extracting active draft text.";
+    document.body.innerHTML = `
+      <main>
+        <p>Main article text.</p>
+      </main>
+      <section>
+        <div contenteditable="true">Draft composer text.</div>
+        <p>${bodyText}</p>
+      </section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Main article text.",
+      bodyText,
+    ]);
+  });
+
+  it("keeps promoted editable hint roots weak for body fallback", async () => {
+    const bodyText =
+      "Sibling body content should still be discovered when an editable composer is nested inside a sidebar.";
+    document.body.innerHTML = `
+      <aside>
+        <div contenteditable="true">Draft composer text.</div>
+      </aside>
+      <section>${bodyText}</section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
+    ]);
+  });
+
+  it("keeps editable-only article roots weak for body fallback", async () => {
+    const bodyText =
+      "Sibling body content should still be discovered when an editable composer is inside an article wrapper.";
+    document.body.innerHTML = `
+      <article>
+        <div contenteditable="true">Draft composer text.</div>
+      </article>
+      <section>${bodyText}</section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
+    ]);
+  });
+
+  it("keeps nested editable-only article roots weak for body fallback", async () => {
+    const bodyText =
+      "Sibling body content should still be discovered when an editable composer is nested inside an article wrapper.";
+    document.body.innerHTML = `
+      <article>
+        <div>
+          <div contenteditable="true">Draft composer text.</div>
+        </div>
+      </article>
+      <section>${bodyText}</section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
+    ]);
+  });
+
   it("does not extract a generic parent from skipped subtree text", async () => {
     const skippedLongText =
       "This skipped subtree contains enough text to pass the generic block extraction threshold, but it must not create a parent segment.";
@@ -321,6 +616,503 @@ describe("collectPageSegments", () => {
 
     expect(result.segments.map((segment) => segment.sourceText)).toEqual([
       visibleText,
+    ]);
+  });
+
+  it("extracts X-like tweet text from information-feed roots", async () => {
+    document.body.innerHTML = `
+      <main>
+        <article data-testid="tweet">
+          <div>
+            <a href="/author">Terence</a>
+            <span>@terence</span>
+            <time>1h</time>
+          </div>
+          <div data-testid="tweetText" lang="en" dir="auto">
+            <span>Shipping reliable software is mostly about</span>
+            <span> reducing accidental complexity.</span>
+          </div>
+          <div role="group" aria-label="Post actions">
+            <button>Reply</button>
+            <button>Repost</button>
+            <button>Like</button>
+          </div>
+        </article>
+        <article data-testid="tweet">
+          <div data-testid="tweetText" lang="en" dir="auto">
+            <span>Short tweet text should still translate.</span>
+          </div>
+        </article>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Shipping reliable software is mostly about reducing accidental complexity.",
+      "Short tweet text should still translate.",
+    ]);
+    expect(result.segments.map((segment) => segment.kind)).toEqual([
+      "paragraph",
+      "paragraph",
+    ]);
+  });
+
+  it("keeps numeric spans inside tweet text", async () => {
+    document.body.innerHTML = `
+      <main>
+        <article data-testid="tweet">
+          <div data-testid="tweetText">
+            <span>Revenue in </span>
+            <span>2024</span>
+            <span> grew.</span>
+          </div>
+          <span>42</span>
+        </article>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Revenue in 2024 grew.",
+    ]);
+  });
+
+  it("skips dir-auto header chrome when tweet text exists", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <div>
+          <span dir="auto">Terence</span>
+          <span dir="auto">@handle</span>
+        </div>
+        <div data-testid="tweetText">Actual tweet body.</div>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual tweet body.",
+    ]);
+  });
+
+  it("skips long dir-auto header chrome when tweet text exists", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <div>
+          <span dir="auto">
+            This display name is intentionally long enough to pass the generic text threshold and should still be treated as feed chrome.
+          </span>
+        </div>
+        <div data-testid="tweetText">Actual tweet body.</div>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual tweet body.",
+    ]);
+  });
+
+  it("skips direct readable header chrome when tweet text exists", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <p>Terence <span>@terence</span> <span>1h</span></p>
+        <div data-testid="tweetText">Actual tweet body.</div>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual tweet body.",
+    ]);
+  });
+
+  it("skips bare direct readable display name when tweet text exists", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <p>Terence</p>
+        <div data-testid="tweetText">Actual tweet body.</div>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual tweet body.",
+    ]);
+  });
+
+  it("keeps numeric spans inside fallback dir-auto tweet body", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <div dir="auto">
+          Revenue in <span>2024</span> grew.
+        </div>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Revenue in 2024 grew.",
+    ]);
+  });
+
+  it("keeps body mentions inside fallback tweet body", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <div dir="auto">
+          Thanks <a href="/alice">@alice</a> for the review.
+        </div>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Thanks @alice for the review.",
+    ]);
+  });
+
+  it("skips feed timestamps outside body text", async () => {
+    const bodyText =
+      "Feed body text should not include the absolute timestamp while still being long enough for generic feed extraction.";
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <time>May 16, 2026</time>
+        <section>
+          ${bodyText}
+        </section>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
+    ]);
+  });
+
+  it("skips feed chrome inside direct readable body text", async () => {
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <p>
+          Body text
+          <span aria-label="Post metadata">
+            <time>May 16, 2026</time>
+            <span>@handle</span>
+            <span>42</span>
+          </span>
+        </p>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Body text",
+    ]);
+  });
+
+  it("skips common feed chrome while keeping body text", async () => {
+    document.body.innerHTML = `
+      <main>
+        <nav>Home Search Notifications Messages</nav>
+        <article>
+          <div lang="en" dir="auto">Actual comment text.</div>
+          <div aria-label="Timeline controls">Show more</div>
+          <button>Like</button>
+          <a href="/user">@handle</a>
+          <span>42</span>
+        </article>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual comment text.",
+    ]);
+  });
+
+  it("skips feed header chrome while keeping post body text", async () => {
+    document.body.innerHTML = `
+      <main>
+        <article data-testid="tweet">
+          <header>
+            <h1>Terence</h1>
+            <span>@terence</span>
+            <time>1h</time>
+          </header>
+          <p>Feed body text remains extractable.</p>
+        </article>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Feed body text remains extractable.",
+    ]);
+  });
+
+  it("extracts short cellInnerDiv post text without tweetText markup", async () => {
+    document.body.innerHTML = `
+      <main>
+        <div data-testid="cellInnerDiv">
+          <div>Short cell post text.</div>
+        </div>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Short cell post text.",
+    ]);
+  });
+
+  it("extracts nested tweet text instead of the cell wrapper", async () => {
+    document.body.innerHTML = `
+      <main>
+        <div data-testid="cellInnerDiv">
+          <article data-testid="tweet">
+            <div>
+              <a href="/terence">Terence</a>
+              <span>@terence</span>
+            </div>
+            <header>
+              <h1>Terence</h1>
+              <span>@terence</span>
+              <time>1h</time>
+            </header>
+            <div data-testid="tweetText">
+              <span>Actual tweet body only.</span>
+            </div>
+            <div role="group" aria-label="Post actions">
+              <button>Reply</button>
+              <button>Like</button>
+            </div>
+          </article>
+        </div>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual tweet body only.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelector('[data-testid="tweetText"]'),
+    );
+  });
+
+  it("skips role-based feed header chrome while keeping body text", async () => {
+    document.body.innerHTML = `
+      <section role="feed">
+        <div role="listitem">
+          <div role="article">
+            <header>
+              <h1>Display Name</h1>
+              <span>@display</span>
+              <time>2h</time>
+            </header>
+            <div>Role feed body text.</div>
+          </div>
+        </div>
+      </section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Role feed body text.",
+    ]);
+  });
+
+  it("skips navigation listitem chrome while keeping feed listitem posts", async () => {
+    document.body.innerHTML = `
+      <nav>
+        <div role="listitem">Navigation item</div>
+      </nav>
+      <section role="feed">
+        <div role="listitem">
+          <div>Role listitem post text.</div>
+        </div>
+      </section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Role listitem post text.",
+    ]);
+  });
+
+  it("does not treat ordinary aria listitems as feed roots", async () => {
+    const sectionText =
+      "This independent body section should still be discovered after a normal ARIA list item card.";
+    document.body.innerHTML = `
+      <div role="listitem">
+        <header><h2>Ordinary result title</h2></header>
+        <div>Ordinary result summary.</div>
+      </div>
+      <section>${sectionText}</section>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Ordinary result title",
+      sectionText,
+    ]);
+  });
+
+  it("does not treat ordinary listitem articles as feed context", async () => {
+    document.body.innerHTML = `
+      <div role="listitem">
+        <div role="article">
+          <header><h2>Ordinary result title</h2></header>
+          <p>Ordinary result body.</p>
+        </div>
+      </div>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Ordinary result title",
+      "Ordinary result body.",
+    ]);
+  });
+
+  it("deduplicates nested multi-root discoveries", async () => {
+    document.body.innerHTML = `
+      <main>
+        <article>
+          <div data-testid="tweetText" lang="en" dir="auto">
+            <span>Nested root text should appear once.</span>
+          </div>
+        </article>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Nested root text should appear once.",
+    ]);
+  });
+
+  it("preserves sibling feed roots and independent text roots", async () => {
+    document.body.innerHTML = `
+      <article>
+        <div data-testid="tweetText" lang="en" dir="auto">
+          <span>First sibling article text.</span>
+        </div>
+      </article>
+      <article>
+        <div data-testid="tweetText" lang="en" dir="auto">
+          <span>Second sibling article text.</span>
+        </div>
+      </article>
+      <main>
+        <p>Normal page section.</p>
+      </main>
+      <div lang="en" dir="auto">Standalone short feed text.</div>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "First sibling article text.",
+      "Second sibling article text.",
+      "Normal page section.",
+      "Standalone short feed text.",
+    ]);
+  });
+
+  it("ignores html language when discovering specific roots", async () => {
+    document.documentElement.setAttribute("lang", "en");
+    document.body.innerHTML = `
+      <article>
+        <div data-testid="tweetText" lang="en" dir="auto">
+          <span>First html language article text.</span>
+        </div>
+      </article>
+      <main>
+        <p>Normal html language page section.</p>
+      </main>
+      <div lang="en" dir="auto">Standalone html language feed text.</div>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "First html language article text.",
+      "Normal html language page section.",
+      "Standalone html language feed text.",
+    ]);
+  });
+
+  it("does not treat body language as high-confidence fallback text", async () => {
+    document.body.setAttribute("lang", "en");
+    document.body.innerHTML = `
+      <div>Short body fallback text.</div>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments).toEqual([]);
+  });
+
+  it("keeps repeated independent text nodes as separate anchors", async () => {
+    document.body.innerHTML = `
+      <main>
+        <p>Repeated visible text.</p>
+        <p>Repeated visible text.</p>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Repeated visible text.",
+      "Repeated visible text.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelectorAll("p")[0],
+    );
+    expect(result.anchors.get("seg_2")?.sourceNode).toBe(
+      document.querySelectorAll("p")[1],
+    );
+  });
+
+  it("excludes low-value feed descendants from generic source text", async () => {
+    const bodyText =
+      "This generic feed item contains enough meaningful text for translation extraction without including controls.";
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <section>
+          ${bodyText}
+          <div aria-label="Post actions">
+            <button>Like</button>
+            <button>Reply</button>
+          </div>
+          <span>42</span>
+        </section>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
     ]);
   });
 });
