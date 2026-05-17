@@ -205,6 +205,25 @@ describe("options app", () => {
     expect(screen.getByRole("spinbutton", { name: "最大输出长度" })).toHaveValue(4096);
   });
 
+  it("defaults to Chrome Built-in AI first when the browser supports it", async () => {
+    vi.stubGlobal("navigator", {
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+    });
+    vi.stubGlobal("LanguageDetector", {});
+    vi.stubGlobal("Translator", {});
+
+    await renderReady();
+
+    const providerTypeOptions = screen.getAllByRole("radio");
+
+    expect(providerTypeOptions[0]).toHaveAccessibleName("Chrome Built-in AI");
+    expect(screen.getByRole("radio", { name: "Chrome Built-in AI" })).toBeChecked();
+    expect(screen.getByRole("heading", { name: "Chrome Built-in AI" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "服务预设" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "测试连接" })).not.toBeInTheDocument();
+  });
+
   it("saves Chrome Built-in AI as a zero-configuration provider when supported", async () => {
     vi.stubGlobal("navigator", {
       userAgent:

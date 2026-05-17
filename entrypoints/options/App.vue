@@ -26,7 +26,13 @@ import { defaultUiPreferences, type UiPreferences } from "@/storage/defaults";
 import { createStorageRepositories } from "@/storage/repositories";
 import type { TranslationMode } from "@/translation/types";
 
-const selectedProviderType = ref<ProviderProfile["type"]>("openai-compatible");
+function getDefaultProviderType(): ProviderProfile["type"] {
+  return getChromeBuiltInAiBrowserSupport().supported
+    ? chromeBuiltInAiProviderId
+    : "openai-compatible";
+}
+
+const selectedProviderType = ref<ProviderProfile["type"]>(getDefaultProviderType());
 const selectedPresetId = ref(defaultProviderPreset.id);
 const displayName = ref(defaultProviderPreset.name);
 const baseUrl = ref(defaultProviderPreset.defaultBaseUrl);
@@ -47,6 +53,7 @@ const testMessageKey = ref<OptionsMessageKey>();
 const isTestInFlight = ref(false);
 const testRequestId = ref(0);
 const providerSectionRef = ref<HTMLElement>();
+const chromeBuiltInAiRadioRef = ref<HTMLInputElement>();
 const presetSelectRef = ref<HTMLSelectElement>();
 const routeParams = new URLSearchParams(globalThis.location.search);
 const shouldLandOnProvider = routeParams.get("section") === "provider";
@@ -277,6 +284,10 @@ async function focusProviderLanding() {
 
   await nextTick();
   providerSectionRef.value?.scrollIntoView({ block: "start", behavior: "smooth" });
+  if (selectedProviderType.value === "chrome-built-in-ai") {
+    chromeBuiltInAiRadioRef.value?.focus();
+    return;
+  }
   presetSelectRef.value?.focus();
 }
 
@@ -424,20 +435,21 @@ async function testConnection() {
             <legend>{{ t("providerType.legend") }}</legend>
             <label>
               <input
-                v-model="selectedProviderType"
-                type="radio"
-                value="openai-compatible"
-              >
-              {{ t("providerType.openAiCompatible") }}
-            </label>
-            <label>
-              <input
+                ref="chromeBuiltInAiRadioRef"
                 v-model="selectedProviderType"
                 type="radio"
                 :value="chromeBuiltInAiProviderId"
                 :disabled="!canSelectChromeBuiltInAi"
               >
               {{ t("providerType.chromeBuiltInAi") }}
+            </label>
+            <label>
+              <input
+                v-model="selectedProviderType"
+                type="radio"
+                value="openai-compatible"
+              >
+              {{ t("providerType.openAiCompatible") }}
             </label>
             <p class="field-hint">
               {{ t("providerType.chromeBuiltInAiRequirement") }}
