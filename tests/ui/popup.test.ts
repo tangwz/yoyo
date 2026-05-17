@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
 import "@testing-library/jest-dom/vitest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PopupApp from "../../entrypoints/popup/App.vue";
 import LanguageSelector from "../../src/ui/components/LanguageSelector.vue";
@@ -32,6 +32,7 @@ const browserMock = vi.hoisted(() => ({
   sessionStorageGet: vi.fn(),
   sessionStorageRemove: vi.fn(),
   sessionStorageSet: vi.fn(),
+  tabsDetectLanguage: vi.fn(),
   tabsQuery: vi.fn(),
   tabsSendMessage: vi.fn(),
 }));
@@ -81,6 +82,7 @@ vi.mock("wxt/browser", () => ({
       },
     },
     tabs: {
+      detectLanguage: browserMock.tabsDetectLanguage,
       query: browserMock.tabsQuery,
       sendMessage: browserMock.tabsSendMessage,
     },
@@ -95,6 +97,7 @@ describe("popup app", () => {
     browserMock.sessionStorageGet.mockReset();
     browserMock.sessionStorageRemove.mockReset();
     browserMock.sessionStorageSet.mockReset();
+    browserMock.tabsDetectLanguage.mockReset();
     browserMock.tabsQuery.mockReset();
     browserMock.tabsSendMessage.mockReset();
 
@@ -114,6 +117,7 @@ describe("popup app", () => {
     });
 
     browserMock.tabsQuery.mockResolvedValue([{ id: 123 }]);
+    browserMock.tabsDetectLanguage.mockResolvedValue("en");
     browserMock.tabsSendMessage.mockImplementation(
       async (_tabId: number, message: { type: string }) => {
         if (message.type === "getPageRuntimeState") {
@@ -176,6 +180,10 @@ describe("popup app", () => {
 
       throw new Error(`Unexpected runtime message: ${message.type}`);
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("stops initialization when Provider status returns a background error", async () => {
@@ -822,6 +830,81 @@ describe("popup app", () => {
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getAllByText("32")).toHaveLength(2);
     expect(screen.getByText("0")).toBeVisible();
+  });
+
+  it("prepares Chrome Built-in AI from the popup click before translating", async () => {
+    const detectorDestroy = vi.fn(async () => undefined);
+    const translatorDestroy = vi.fn(async () => undefined);
+    const languageDetectorCreate = vi.fn(async () => ({
+      detect: vi.fn(async () => [{ detectedLanguage: "en", confidence: 0.9 }]),
+      destroy: detectorDestroy,
+    }));
+    const translatorCreate = vi.fn(async () => ({
+      translate: vi.fn(async () => "translated"),
+      destroy: translatorDestroy,
+    }));
+    vi.stubGlobal("LanguageDetector", {
+      availability: vi.fn(async () => "available"),
+      create: languageDetectorCreate,
+    });
+    vi.stubGlobal("Translator", {
+      availability: vi.fn(async () => "available"),
+      create: translatorCreate,
+    });
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return {
+          type: "providerStatus",
+          configured: true,
+          readiness: "ready",
+          providerLabel: "Chrome Built-in AI",
+          providerMode: "local-only",
+        };
+      }
+
+      if (message.type === "getTaskForTab") {
+        return idleTaskProgress();
+      }
+
+      if (message.type === "translatePage") {
+        return {
+          type: "taskProgress",
+          progress: {
+            taskId: "task-new",
+            state: "translating",
+            total: 32,
+            translated: 0,
+            failed: 0,
+          },
+        };
+      }
+
+      return { type: "backgroundActionResult", success: true };
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+
+    expect(languageDetectorCreate).toHaveBeenCalledTimes(1);
+    expect(detectorDestroy).toHaveBeenCalledTimes(1);
+    expect(browserMock.tabsDetectLanguage).toHaveBeenCalledWith(123);
+    expect(translatorCreate).toHaveBeenCalledWith({
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+    await waitFor(() => {
+      expect(translatorDestroy).toHaveBeenCalledTimes(1);
+    });
+    expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
+      type: "translatePage",
+      tabId: 123,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
   });
 
   it("returns cancelled task progress to a recoverable idle state", async () => {

@@ -12,6 +12,12 @@ import type {
   ContentRequest,
   ContentResponse,
 } from "@/messaging/contracts";
+import type {
+  LanguageDetectorApi,
+  LanguageDetectorInstance,
+  TranslatorApi,
+  TranslatorInstance,
+} from "@/provider/chromeBuiltInAi";
 import { sendRuntimeMessage, sendTabMessage } from "@/messaging/runtime";
 import ErrorSummary from "@/ui/components/ErrorSummary.vue";
 import LanguageSelector from "@/ui/components/LanguageSelector.vue";
@@ -50,6 +56,15 @@ type SessionStorageArea = {
   set(items: Record<string, unknown>): Promise<void>;
 };
 
+type ChromeBuiltInAiGlobals = typeof globalThis & {
+  LanguageDetector?: LanguageDetectorApi;
+  Translator?: TranslatorApi;
+};
+
+type BrowserTabsWithLanguageDetection = typeof browser.tabs & {
+  detectLanguage?: (tabId?: number) => Promise<string>;
+};
+
 const primaryLabel = computed(() => {
   if (state.value === "onboarding" || !isProviderConfigured.value) {
     return "打开设置";
@@ -73,6 +88,82 @@ const isPrimaryDisabled = computed(
 
 function isRuntimeResponse(message: unknown): message is BackgroundResponse {
   return typeof message === "object" && message !== null && "type" in message;
+}
+
+function getChromeBuiltInAiGlobals(): ChromeBuiltInAiGlobals {
+  return globalThis as ChromeBuiltInAiGlobals;
+}
+
+async function destroyPreparedBuiltInAiSession(
+  session: LanguageDetectorInstance | TranslatorInstance,
+): Promise<void> {
+  await session.destroy?.();
+}
+
+async function prepareBuiltInAiSession<
+  Session extends LanguageDetectorInstance | TranslatorInstance,
+>(sessionPromise: Promise<Session>): Promise<void> {
+  const session = await sessionPromise;
+  await destroyPreparedBuiltInAiSession(session);
+}
+
+function normalizeDetectedSourceLanguage(language: string | undefined): string | undefined {
+  if (!language || language === "und") {
+    return undefined;
+  }
+
+  const normalizedLanguage = language.toLowerCase();
+  if (normalizedLanguage.startsWith("zh")) {
+    return "zh-CN";
+  }
+
+  const primaryLanguage = normalizedLanguage.split("-")[0];
+  return sourceLanguageOptions.some((option) => option.value === primaryLanguage)
+    ? primaryLanguage
+    : undefined;
+}
+
+async function detectTabSourceLanguageForBuiltInAi(): Promise<string | undefined> {
+  const detectLanguage = (browser.tabs as BrowserTabsWithLanguageDetection).detectLanguage;
+  if (!detectLanguage || tabId.value === undefined) {
+    return undefined;
+  }
+
+  try {
+    return normalizeDetectedSourceLanguage(await detectLanguage(tabId.value));
+  } catch {
+    return undefined;
+  }
+}
+
+async function prepareChromeBuiltInAiForTranslation(): Promise<string> {
+  if (providerMode.value !== "local-only") {
+    return sourceLanguage.value;
+  }
+
+  const chromeBuiltInAi = getChromeBuiltInAiGlobals();
+  const detectorPreparation = chromeBuiltInAi.LanguageDetector
+    ? prepareBuiltInAiSession(chromeBuiltInAi.LanguageDetector.create())
+    : Promise.resolve();
+
+  let resolvedSourceLanguage = sourceLanguage.value;
+  if (resolvedSourceLanguage === "auto") {
+    resolvedSourceLanguage =
+      (await detectTabSourceLanguageForBuiltInAi()) ?? resolvedSourceLanguage;
+  }
+
+  const translatorPreparation =
+    resolvedSourceLanguage !== "auto" && chromeBuiltInAi.Translator
+      ? prepareBuiltInAiSession(
+          chromeBuiltInAi.Translator.create({
+            sourceLanguage: resolvedSourceLanguage,
+            targetLanguage: targetLanguage.value,
+          }),
+        )
+      : Promise.resolve();
+
+  await Promise.all([detectorPreparation, translatorPreparation]);
+  return resolvedSourceLanguage;
 }
 
 function applyProgress(response: BackgroundResponse): void {
@@ -385,6 +476,18 @@ async function onPrimaryAction(): Promise<void> {
   const shouldRemoveExistingTranslations = state.value === "existingTranslations";
 
   errorMessage.value = "";
+  let requestedSourceLanguage: string;
+
+  try {
+    requestedSourceLanguage = await prepareChromeBuiltInAiForTranslation();
+  } catch (error: unknown) {
+    state.value = "error";
+    errorMessage.value =
+      error instanceof Error
+        ? error.message
+        : "Chrome Built-in AI 初始化失败，请稍后重试。";
+    return;
+  }
 
   if (shouldRemoveExistingTranslations) {
     try {
@@ -412,7 +515,7 @@ async function onPrimaryAction(): Promise<void> {
     const response = await sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
       type: "translatePage",
       tabId: tabId.value,
-      sourceLanguage: sourceLanguage.value,
+      sourceLanguage: requestedSourceLanguage,
       targetLanguage: targetLanguage.value,
     });
 

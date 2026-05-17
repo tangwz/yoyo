@@ -209,7 +209,18 @@ class OffscreenPortSession {
 
       this.port.onMessage.addListener(messageListener);
       this.port.onDisconnect.addListener(disconnectListener);
-      this.port.postMessage(request);
+      try {
+        this.port.postMessage(request);
+      } catch (error) {
+        settle(() => {
+          this.disconnect();
+          reject(
+            error instanceof Error
+              ? error
+              : new Error("Chrome Built-in AI offscreen request could not be sent."),
+          );
+        });
+      }
     });
   }
 

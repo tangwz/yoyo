@@ -249,6 +249,40 @@ describe("chrome-built-in-ai offscreen handler", () => {
     });
 
     expect(() => session.disconnect()).not.toThrow();
+    await Promise.resolve();
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(session.hasTranslator("translator-1")).toBe(false);
+  });
+
+  it("catches synchronous translator destroy errors during disconnect cleanup", async () => {
+    const destroy = vi.fn(() => {
+      throw new Error("destroy failed");
+    });
+    const session = createChromeBuiltInAiOffscreenSession({
+      createTranslatorId: () => "translator-1",
+      getTranslatorApi: () => ({
+        availability: vi.fn(async () => "available" as const),
+        create: vi.fn(async () => ({
+          translate: vi.fn(async () => "translated"),
+          destroy,
+        })),
+      }),
+    });
+
+    await expect(
+      session.handleRequest({
+        requestId: "create-1",
+        type: "chromeBuiltInAi.create",
+        options: { sourceLanguage: "en", targetLanguage: "zh-CN" },
+      }),
+    ).resolves.toEqual({
+      requestId: "create-1",
+      ok: true,
+      translatorId: "translator-1",
+    });
+
+    expect(() => session.disconnect()).not.toThrow();
+    await Promise.resolve();
     expect(destroy).toHaveBeenCalledTimes(1);
     expect(session.hasTranslator("translator-1")).toBe(false);
   });

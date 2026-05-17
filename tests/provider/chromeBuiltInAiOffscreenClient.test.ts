@@ -411,4 +411,50 @@ describe("ChromeBuiltInAiOffscreenClient", () => {
     expect(messageListeners.size).toBe(0);
     expect(disconnectListeners.size).toBe(0);
   });
+
+  it("cleans per-request listeners when port postMessage throws", async () => {
+    const messageListeners = new Set<(message: ResponseMessage) => void>();
+    const disconnectListeners = new Set<() => void>();
+    const cause = new Error("Port disconnected.");
+    const port: MockPort = {
+      onMessage: {
+        addListener(listener) {
+          messageListeners.add(listener);
+        },
+        removeListener(listener) {
+          messageListeners.delete(listener);
+        },
+      },
+      onDisconnect: {
+        addListener(listener) {
+          disconnectListeners.add(listener);
+        },
+        removeListener(listener) {
+          disconnectListeners.delete(listener);
+        },
+      },
+      postMessage: vi.fn(() => {
+        throw cause;
+      }),
+      disconnect: vi.fn(),
+    };
+    const client = new ChromeBuiltInAiOffscreenClient({
+      runtime: {
+        getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
+        getContexts: vi.fn(async () => [{ contextId: "existing" }]),
+        connect: vi.fn(() => port),
+      },
+      offscreen: {
+        createDocument: vi.fn(async () => undefined),
+      },
+    });
+
+    await expect(
+      client.availability({ sourceLanguage: "en", targetLanguage: "zh-CN" }),
+    ).rejects.toBe(cause);
+
+    expect(messageListeners.size).toBe(0);
+    expect(disconnectListeners.size).toBe(0);
+    expect(port.disconnect).toHaveBeenCalledTimes(1);
+  });
 });
