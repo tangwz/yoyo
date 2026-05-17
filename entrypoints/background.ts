@@ -1,10 +1,15 @@
-import { onTranslatePageMenuClick, registerContextMenus } from "@/background/contextMenu";
+import {
+  onTranslatePageMenuClick,
+  onTranslateSelectionMenuClick,
+  registerContextMenus,
+} from "@/background/contextMenu";
 import { notifyPageCannotTranslate, notifyProviderMissing } from "@/background/notifications";
 import {
   buildProviderStatusResponse,
   getStoredProviderState,
   selectReadyProviderProfile,
 } from "@/background/providerStatus";
+import { translateSelection } from "@/background/selectionTranslation";
 import { TranslationTaskOrchestrator } from "@/background/taskOrchestrator";
 import { openOptionsPage } from "@/browser/browserApi";
 import type {
@@ -14,7 +19,10 @@ import type {
   ContentResponse,
 } from "@/messaging/contracts";
 import { addRuntimeMessageListener, sendTabMessage } from "@/messaging/runtime";
+import { ChromeBuiltInTranslatorProvider } from "@/provider/chromeBuiltInAi";
+import { ChromeBuiltInAiOffscreenClient } from "@/provider/chromeBuiltInAiOffscreenClient";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
+import { TranslationProviderResolver } from "@/provider/resolver";
 import type { ProviderProfile } from "@/provider/types";
 import { createStorageRepositories } from "@/storage/repositories";
 
@@ -32,6 +40,16 @@ function createErrorResponse(error: unknown): BackgroundResponse {
 export default defineBackground(() => {
   const storage = createStorageRepositories();
   const provider = new OpenAiCompatibleProvider();
+  let chromeBuiltInAiOffscreenClient: ChromeBuiltInAiOffscreenClient | undefined;
+  const translationProviderResolver = new TranslationProviderResolver({
+    openAiProvider: provider,
+    chromeBuiltInTranslatorProvider: new ChromeBuiltInTranslatorProvider({
+      getTranslatorApi: () => {
+        chromeBuiltInAiOffscreenClient ??= new ChromeBuiltInAiOffscreenClient();
+        return chromeBuiltInAiOffscreenClient;
+      },
+    }),
+  });
 
   async function listProfiles(): Promise<ProviderProfile[]> {
     return storage.providers.listProfiles();
@@ -59,10 +77,18 @@ export default defineBackground(() => {
     return selectReadyProviderProfile(await listProfiles(), providerId);
   }
 
+  function getChromeBuiltInAiOffscreenClient(): ChromeBuiltInAiOffscreenClient {
+    chromeBuiltInAiOffscreenClient ??= new ChromeBuiltInAiOffscreenClient();
+    return chromeBuiltInAiOffscreenClient;
+  }
+
   const orchestrator = new TranslationTaskOrchestrator({
     getActiveProfile,
     getProviderProfile,
-    provider,
+    getTranslationProvider: (profile) =>
+      translationProviderResolver.getTranslationProvider(profile),
+    detectSourceLanguage: (text, signal) =>
+      getChromeBuiltInAiOffscreenClient().detectLanguage(text, signal),
     sendToContent: (tabId, message) =>
       sendTabMessage<ContentRequest, ContentResponse>(tabId, message),
     emitProgress: (progress, tabId) => {
@@ -82,7 +108,8 @@ export default defineBackground(() => {
 
   onTranslatePageMenuClick(
     async (tabId) => {
-      if (!(await getActiveProfile())) {
+      const activeProfile = await getActiveProfile();
+      if (!activeProfile) {
         await notifyProviderMissing();
         return;
       }
@@ -108,6 +135,36 @@ export default defineBackground(() => {
       void notifyPageCannotTranslate(
         error instanceof Error ? error.message : "The page could not be translated.",
       );
+    },
+  );
+
+  onTranslateSelectionMenuClick(
+    async ({ tabId, text }) => {
+      const activeProfile = await getActiveProfile();
+
+      await translateSelection(
+        {
+          tabId,
+          text,
+          sourceLanguage: "auto",
+          targetLanguage: "zh-CN",
+        },
+        {
+          getActiveProfile: async () => activeProfile,
+          getTranslationProvider: (profile) =>
+            translationProviderResolver.getTranslationProvider(profile),
+          detectSourceLanguage: (sourceText) =>
+            getChromeBuiltInAiOffscreenClient().detectLanguage(sourceText),
+          sendToContent: (targetTabId, message) =>
+            sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
+        },
+      );
+    },
+    (error, tabId) => {
+      console.error("[yoyo] failed to handle translate selection menu click", {
+        tabId,
+        error,
+      });
     },
   );
 
@@ -181,6 +238,17 @@ export default defineBackground(() => {
           const { activeProviderId, profiles } = await loadStoredProviderState();
           return buildProviderStatusResponse(profiles, activeProviderId);
         }
+        case "translateSelection":
+          await translateSelection(request, {
+            getActiveProfile,
+            getTranslationProvider: (profile) =>
+              translationProviderResolver.getTranslationProvider(profile),
+            detectSourceLanguage: (sourceText) =>
+              getChromeBuiltInAiOffscreenClient().detectLanguage(sourceText),
+            sendToContent: (targetTabId, message) =>
+              sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
+          });
+          return { type: "backgroundActionResult", success: true };
         case "openOptions":
           await openOptionsPage({
             section: request.section,

@@ -7,7 +7,9 @@ import {
   hidePageTranslations,
   removePageTranslations,
   showPageTranslations,
+  finalizeLazyRecoverySourceLanguage,
 } from "@/content/pageRuntime";
+import { showSelectionTranslation } from "@/content/selectionPanel";
 import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
 import { addRuntimeMessageListener } from "@/messaging/runtime";
 
@@ -52,6 +54,7 @@ export default defineContentScript({
               request.targetLanguage,
               request.providerId,
               request.textModel,
+              request.deferLazyCollection,
             );
             return {
               type: "collectSegmentsResult",
@@ -59,6 +62,17 @@ export default defineContentScript({
               segments,
               collectionComplete: request.translationMode !== "lazyViewport",
             };
+          }
+          case "finalizeLazyRecoverySourceLanguage": {
+            const request = message as Extract<
+              ContentRequest,
+              { type: "finalizeLazyRecoverySourceLanguage" }
+            >;
+            const success = finalizeLazyRecoverySourceLanguage(
+              request.taskId,
+              request.sourceLanguage,
+            );
+            return { type: "contentActionResult", success };
           }
           case "applyTranslations": {
             const request = message as Extract<
@@ -107,6 +121,14 @@ export default defineContentScript({
               { type: "taskProgress" }
             >;
             handleTaskProgress(request.progress);
+            return { type: "contentActionResult", success: true };
+          }
+          case "showSelectionTranslation": {
+            const request = message as Extract<
+              ContentRequest,
+              { type: "showSelectionTranslation" }
+            >;
+            showSelectionTranslation(request);
             return { type: "contentActionResult", success: true };
           }
           default:

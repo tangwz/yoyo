@@ -44,6 +44,40 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function normalizeProviderProfile(value: unknown): ProviderProfile | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  if (value.type === "chrome-built-in-ai") {
+    return {
+      id: "chrome-built-in-ai",
+      displayName:
+        typeof value.displayName === "string" && value.displayName.trim()
+          ? value.displayName
+          : "Chrome Built-in AI",
+      type: "chrome-built-in-ai",
+    };
+  }
+
+  if (value.type !== "openai-compatible") {
+    return undefined;
+  }
+
+  return {
+    id: typeof value.id === "string" ? value.id : "custom",
+    displayName:
+      typeof value.displayName === "string" ? value.displayName : "Custom Provider",
+    presetId: typeof value.presetId === "string" ? value.presetId : undefined,
+    type: "openai-compatible",
+    baseURL: typeof value.baseURL === "string" ? value.baseURL : "",
+    apiKey: typeof value.apiKey === "string" ? value.apiKey : "",
+    textModel: typeof value.textModel === "string" ? value.textModel : "",
+    visionModel: typeof value.visionModel === "string" ? value.visionModel : undefined,
+    requestParams: isRecord(value.requestParams) ? value.requestParams : undefined,
+  };
+}
+
 export function createInMemoryStorageArea(): StorageArea {
   const values = new Map<string, unknown>();
 
@@ -96,7 +130,16 @@ export function providerProfileRepository({
     const result = await privateStorage.get({
       [storageKeys.providerProfiles]: [],
     });
-    return result[storageKeys.providerProfiles] as ProviderProfile[];
+    const profiles = result[storageKeys.providerProfiles];
+
+    if (!Array.isArray(profiles)) {
+      return [];
+    }
+
+    return profiles.flatMap((profile) => {
+      const normalizedProfile = normalizeProviderProfile(profile);
+      return normalizedProfile ? [normalizedProfile] : [];
+    });
   }
 
   async function saveProfile(profile: ProviderProfile): Promise<void> {

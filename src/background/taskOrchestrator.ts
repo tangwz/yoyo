@@ -4,20 +4,15 @@ import type {
   LazySegmentRecoverySnapshot,
 } from "@/messaging/contracts";
 import { ProviderError } from "@/provider/errors";
-import type { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
-import type { ProviderProfile } from "@/provider/types";
+import type { TranslationProvider } from "@/provider/translationProvider";
+import {
+  isOpenAiCompatibleProviderProfile,
+  type ProviderProfile,
+} from "@/provider/types";
 import { splitSegmentsIntoBatches } from "@/translation/batch";
 import { SessionTranslationCache } from "@/translation/cache";
 import { createCacheKey, serializeCacheKey } from "@/translation/hash";
-import {
-  createStreamingTranslationResultParser,
-  parseTranslationBatchResult,
-} from "@/translation/jsonResult";
-import {
-  buildStreamingTranslationPrompt,
-  buildTranslationPrompt,
-  translationPromptVersion,
-} from "@/translation/prompt";
+import { translationPromptVersion } from "@/translation/prompt";
 import { isTerminalTaskState } from "@/translation/types";
 import type {
   CancelReason,
@@ -39,8 +34,8 @@ const rateLimitBackoffMs = 250;
 export type TranslationTaskOrchestratorDependencies = {
   getActiveProfile: () => Promise<ProviderProfile | undefined>;
   getProviderProfile: (providerId: string) => Promise<ProviderProfile | undefined>;
-  provider: Pick<OpenAiCompatibleProvider, "generateText"> &
-    Partial<Pick<OpenAiCompatibleProvider, "streamText">>;
+  getTranslationProvider: (profile: ProviderProfile) => TranslationProvider;
+  detectSourceLanguage?: (text: string, signal: AbortSignal) => Promise<string | undefined>;
   sendToContent: (tabId: number, message: ContentRequest) => Promise<ContentResponse>;
   emitProgress?: (progress: TranslationProgress, tabId: number) => void | Promise<void>;
   now: () => number;
@@ -402,10 +397,12 @@ export class TranslationTaskOrchestrator {
       return undefined;
     }
 
-    return {
-      ...profile,
-      textModel: recovery.textModel ?? profile.textModel,
-    };
+    return isOpenAiCompatibleProviderProfile(profile)
+      ? {
+          ...profile,
+          textModel: recovery.textModel ?? profile.textModel,
+        }
+      : profile;
   }
 
   private mergeLazyRecoverySnapshot(
@@ -530,9 +527,13 @@ export class TranslationTaskOrchestrator {
         taskId: task.progress.taskId,
         translationMode: context.translationMode,
         sourceLanguage: context.sourceLanguage,
+        deferLazyCollection:
+          profile.type === "chrome-built-in-ai" &&
+          context.sourceLanguage === "auto" &&
+          context.translationMode === "lazyViewport",
         targetLanguage: context.targetLanguage,
         providerId: profile.id,
-        textModel: profile.textModel,
+        textModel: isOpenAiCompatibleProviderProfile(profile) ? profile.textModel : undefined,
       });
 
       if (this.isTaskStopped(task)) {
@@ -549,15 +550,47 @@ export class TranslationTaskOrchestrator {
       const collectedSegments = collectResponse.segments;
       this.mergeTranslationBatchSegments(task, collectedSegments);
       const collectionComplete = collectResponse.collectionComplete ?? true;
+      const sourceLanguage = await this.resolveSourceLanguageForProfile(
+        profile,
+        context.sourceLanguage,
+        collectedSegments,
+        task.controller.signal,
+        context.translationMode === "lazyViewport",
+      );
+
+      if (this.isTaskStopped(task)) {
+        return this.cloneProgress(task.progress);
+      }
 
       if (collectionComplete) {
         task.collectionComplete = true;
       }
 
+      task.context = {
+        profile,
+        sourceLanguage,
+        targetLanguage: context.targetLanguage,
+        translationMode: context.translationMode,
+      };
+
       this.updateProgress(task, {
         state: "translating",
         total: task.segmentsById.size,
       });
+
+      if (
+        context.translationMode === "lazyViewport" &&
+        profile.type === "chrome-built-in-ai" &&
+        context.sourceLanguage === "auto"
+      ) {
+        if (!(await this.finalizeLazyRecoverySourceLanguage(task, sourceLanguage))) {
+          return this.failTask(
+            task,
+            "Content script could not finalize Chrome Built-in AI language detection.",
+            task.segmentsById.size,
+          );
+        }
+      }
 
       await this.processSegmentsForTask(
         task,
@@ -656,6 +689,45 @@ export class TranslationTaskOrchestrator {
     return task;
   }
 
+  private async resolveSourceLanguageForProfile(
+    profile: ProviderProfile,
+    sourceLanguage: string,
+    segments: readonly PageSegment[],
+    signal: AbortSignal,
+    allowPendingAuto = false,
+  ): Promise<string> {
+    if (profile.type !== "chrome-built-in-ai" || sourceLanguage !== "auto") {
+      return sourceLanguage;
+    }
+
+    const sample = this.createLanguageDetectionSample(segments);
+    if (!sample && allowPendingAuto) {
+      return "auto";
+    }
+    if (!sample || !this.dependencies.detectSourceLanguage) {
+      throw new Error(
+        "Chrome Built-in AI could not detect the page language. No remote provider was used.",
+      );
+    }
+
+    const detectedLanguage = await this.dependencies.detectSourceLanguage(sample, signal);
+    if (!detectedLanguage) {
+      throw new Error(
+        "Chrome Built-in AI could not detect the page language. No remote provider was used.",
+      );
+    }
+
+    return detectedLanguage;
+  }
+
+  private createLanguageDetectionSample(segments: readonly PageSegment[]): string {
+    return segments
+      .map((segment) => segment.sourceText.trim())
+      .filter(Boolean)
+      .join("\n")
+      .slice(0, 2000);
+  }
+
   private cancelTasksForTab(tabId: number, reason: CancelReason): void {
     for (const task of this.tasks.values()) {
       if (task.tabId === tabId && !isTerminalTaskState(task.progress.state)) {
@@ -726,6 +798,10 @@ export class TranslationTaskOrchestrator {
       return;
     }
 
+    if (!(await this.resolveTaskSourceLanguageForSegments(task, candidates))) {
+      return;
+    }
+
     for (const segment of candidates) {
       task.inFlightSegmentIds.add(segment.id);
     }
@@ -746,6 +822,65 @@ export class TranslationTaskOrchestrator {
         }
       }
     }
+  }
+
+  private async resolveTaskSourceLanguageForSegments(
+    task: RunningTask,
+    segments: readonly PageSegment[],
+  ): Promise<boolean> {
+    if (!task.context || task.context.sourceLanguage !== "auto") {
+      return true;
+    }
+
+    try {
+      const sourceLanguage = await this.resolveSourceLanguageForProfile(
+        task.context.profile,
+        task.context.sourceLanguage,
+        segments,
+        task.controller.signal,
+      );
+      const shouldSyncContentSourceLanguage =
+        task.context.profile.type === "chrome-built-in-ai" &&
+        task.context.translationMode === "lazyViewport" &&
+        task.context.sourceLanguage === "auto" &&
+        sourceLanguage !== "auto";
+      task.context = {
+        ...task.context,
+        sourceLanguage,
+      };
+      if (
+        shouldSyncContentSourceLanguage &&
+        !(await this.finalizeLazyRecoverySourceLanguage(task, sourceLanguage))
+      ) {
+        this.failTask(
+          task,
+          "Content script could not finalize Chrome Built-in AI language detection.",
+          task.progress.total,
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      this.failTask(
+        task,
+        error instanceof Error ? error.message : "Translation task failed.",
+        task.progress.total,
+      );
+      return false;
+    }
+  }
+
+  private async finalizeLazyRecoverySourceLanguage(
+    task: RunningTask,
+    sourceLanguage: string,
+  ): Promise<boolean> {
+    const response = await this.dependencies.sendToContent(task.tabId, {
+      type: "finalizeLazyRecoverySourceLanguage",
+      taskId: task.progress.taskId,
+      sourceLanguage,
+    });
+
+    return response.type === "contentActionResult" && response.success;
   }
 
   private async translateSegments(
@@ -846,11 +981,9 @@ export class TranslationTaskOrchestrator {
   private async requestAndApplyBatch(
     input: TranslationBatchInput,
   ): Promise<TranslationBatchResult> {
-    if (this.dependencies.provider.streamText) {
-      const streamingResult = await this.requestAndApplyStreamingBatch(input);
-      if (streamingResult) {
-        return streamingResult;
-      }
+    const streamingResult = await this.requestAndApplyStreamingBatch(input);
+    if (streamingResult) {
+      return streamingResult;
     }
 
     return this.requestAndApplyBufferedBatch(input);
@@ -859,14 +992,11 @@ export class TranslationTaskOrchestrator {
   private async requestAndApplyStreamingBatch(
     input: TranslationBatchInput,
   ): Promise<TranslationBatchResult | undefined> {
-    const streamText = this.dependencies.provider.streamText;
-    if (!streamText) {
+    const provider = this.dependencies.getTranslationProvider(input.profile);
+    if (!provider.streamBatch) {
       return undefined;
     }
 
-    const parser = createStreamingTranslationResultParser(
-      input.segments.map((segment) => segment.id),
-    );
     const appliedRepresentativeIds = new Set<string>();
     let sawValidItem = false;
     let acquiredProviderSlot = false;
@@ -877,20 +1007,18 @@ export class TranslationTaskOrchestrator {
       }
       acquiredProviderSlot = true;
 
-      for await (const chunk of streamText({
+      for await (const response of provider.streamBatch({
         profile: input.profile,
-        prompt: buildStreamingTranslationPrompt({
-          sourceLanguage: input.sourceLanguage,
-          targetLanguage: input.targetLanguage,
-          segments: input.segments,
-        }),
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        segments: input.segments,
         abortSignal: input.task.controller.signal,
       })) {
         if (this.isTaskStopped(input.task)) {
           return { missingSegments: [] };
         }
 
-        for (const item of parser.push(chunk.text)) {
+        for (const item of this.filterBatchItems(response.items, input.segments)) {
           if (this.isTaskStopped(input.task)) {
             return { missingSegments: [] };
           }
@@ -904,17 +1032,6 @@ export class TranslationTaskOrchestrator {
 
       if (this.isTaskStopped(input.task)) {
         return { missingSegments: [] };
-      }
-
-      for (const item of parser.finish().items) {
-        if (this.isTaskStopped(input.task)) {
-          return { missingSegments: [] };
-        }
-
-        sawValidItem = true;
-        if (await this.applyAndCacheRepresentativeItem(input, item)) {
-          appliedRepresentativeIds.add(item.segmentId);
-        }
       }
 
       if (!sawValidItem) {
@@ -956,15 +1073,14 @@ export class TranslationTaskOrchestrator {
       return { missingSegments: [] };
     }
 
-    let response: Awaited<ReturnType<TranslationTaskOrchestratorDependencies["provider"]["generateText"]>>;
+    let response: Awaited<ReturnType<TranslationProvider["translateBatch"]>>;
     try {
-      response = await this.dependencies.provider.generateText({
+      const provider = this.dependencies.getTranslationProvider(input.profile);
+      response = await provider.translateBatch({
         profile: input.profile,
-        prompt: buildTranslationPrompt({
-          sourceLanguage: input.sourceLanguage,
-          targetLanguage: input.targetLanguage,
-          segments: input.segments,
-        }),
+        sourceLanguage: input.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        segments: input.segments,
         abortSignal: input.task.controller.signal,
       });
     } finally {
@@ -975,15 +1091,10 @@ export class TranslationTaskOrchestrator {
       return { missingSegments: [] };
     }
 
-    const expectedSegmentIds = input.segments.map((segment) => segment.id);
-    const parsed = parseTranslationBatchResult(response.text, expectedSegmentIds);
+    const validItems = this.filterBatchItems(response.items, input.segments);
 
-    if (this.isTaskStopped(input.task)) {
-      return { missingSegments: [] };
-    }
-
-    if (parsed.items.length > 0) {
-      const fanOutItems = parsed.items.flatMap((item) =>
+    if (validItems.length > 0) {
+      const fanOutItems = validItems.flatMap((item) =>
         this.fanOutTranslationItem(item, input.fanOutGroups),
       );
       const appliedItems = await this.applyTranslations(input.task, fanOutItems);
@@ -993,14 +1104,22 @@ export class TranslationTaskOrchestrator {
       }
 
       if (appliedItems.length > 0) {
-        await this.cacheAppliedGroups(input, parsed.items, appliedItems);
+        await this.cacheAppliedGroups(input, validItems, appliedItems);
       }
     }
 
-    const missingIds = new Set(parsed.missingSegmentIds);
+    const translatedIds = new Set(validItems.map((item) => item.segmentId));
     return {
-      missingSegments: input.segments.filter((segment) => missingIds.has(segment.id)),
+      missingSegments: input.segments.filter((segment) => !translatedIds.has(segment.id)),
     };
+  }
+
+  private filterBatchItems(
+    items: TranslationResultItem[],
+    segments: PageSegment[],
+  ): TranslationResultItem[] {
+    const expectedSegmentIds = new Set(segments.map((segment) => segment.id));
+    return items.filter((item) => expectedSegmentIds.has(item.segmentId));
   }
 
   private async applyAndCacheRepresentativeItem(
@@ -1300,15 +1419,31 @@ export class TranslationTaskOrchestrator {
       targetLanguage: string;
     },
   ): Promise<TranslationCacheKey> {
+    const providerIdentity = this.providerCacheIdentity(input.profile);
+
     return createCacheKey({
       sourceText: segment.sourceText,
       sourceLanguage: input.sourceLanguage,
       targetLanguage: input.targetLanguage,
-      providerId: input.profile.id,
-      textModel: input.profile.textModel,
+      providerId: providerIdentity.providerId,
+      textModel: providerIdentity.textModel,
       translationStyle,
       promptVersion: translationPromptVersion,
     });
+  }
+
+  private providerCacheIdentity(profile: ProviderProfile): Pick<TranslationCacheKey, "providerId" | "textModel"> {
+    if (isOpenAiCompatibleProviderProfile(profile)) {
+      return {
+        providerId: profile.id,
+        textModel: profile.textModel,
+      };
+    }
+
+    return {
+      providerId: profile.id,
+      textModel: profile.type,
+    };
   }
 
   private failTask(

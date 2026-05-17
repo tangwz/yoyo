@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultProviderPreset, providerPresets } from "@/provider/presets";
+import {
+  chromeBuiltInAiProviderId,
+  chromeBuiltInAiProviderProfile,
+  defaultProviderPreset,
+  providerPresets,
+} from "@/provider/presets";
 
 describe("provider presets", () => {
   it("keeps OpenAI as the explicit first-run default preset", () => {
@@ -45,6 +50,18 @@ describe("provider presets", () => {
           defaultTextModel: "mimo-v2-flash",
         },
       ]),
+    );
+  });
+
+  it("exposes Chrome Built-in AI as a zero-config provider profile outside remote presets", () => {
+    expect(chromeBuiltInAiProviderId).toBe("chrome-built-in-ai");
+    expect(chromeBuiltInAiProviderProfile).toEqual({
+      id: "chrome-built-in-ai",
+      displayName: "Chrome Built-in AI",
+      type: "chrome-built-in-ai",
+    });
+    expect(providerPresets).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "chrome-built-in-ai" })]),
     );
   });
 });

@@ -12,6 +12,12 @@ import type {
   ContentRequest,
   ContentResponse,
 } from "@/messaging/contracts";
+import type {
+  LanguageDetectorApi,
+  LanguageDetectorInstance,
+  TranslatorApi,
+  TranslatorInstance,
+} from "@/provider/chromeBuiltInAi";
 import { sendRuntimeMessage, sendTabMessage } from "@/messaging/runtime";
 import ErrorSummary from "@/ui/components/ErrorSummary.vue";
 import LanguageSelector from "@/ui/components/LanguageSelector.vue";
@@ -30,6 +36,7 @@ type PopupState =
 const sourceLanguage = ref("auto");
 const targetLanguage = ref("zh-CN");
 const providerLabel = ref("正在读取翻译服务...");
+const providerMode = ref<"remote" | "local-only">("remote");
 const isProviderConfigured = ref(true);
 const tabId = ref<number>();
 const isInitializing = ref(true);
@@ -47,6 +54,15 @@ type SessionStorageArea = {
   get(key: string): Promise<Record<string, unknown>>;
   remove(key: string): Promise<void>;
   set(items: Record<string, unknown>): Promise<void>;
+};
+
+type ChromeBuiltInAiGlobals = typeof globalThis & {
+  LanguageDetector?: LanguageDetectorApi;
+  Translator?: TranslatorApi;
+};
+
+type BrowserTabsWithLanguageDetection = typeof browser.tabs & {
+  detectLanguage?: (tabId?: number) => Promise<string>;
 };
 
 const primaryLabel = computed(() => {
@@ -67,12 +83,87 @@ const primaryLabel = computed(() => {
 
 const isPrimaryDisabled = computed(
   () =>
-    isProviderConfigured.value &&
-    (isInitializing.value || (!canTranslate.value && state.value !== "translating")),
+    isInitializing.value || (!canTranslate.value && state.value !== "translating"),
 );
 
 function isRuntimeResponse(message: unknown): message is BackgroundResponse {
   return typeof message === "object" && message !== null && "type" in message;
+}
+
+function getChromeBuiltInAiGlobals(): ChromeBuiltInAiGlobals {
+  return globalThis as ChromeBuiltInAiGlobals;
+}
+
+async function destroyPreparedBuiltInAiSession(
+  session: LanguageDetectorInstance | TranslatorInstance,
+): Promise<void> {
+  await session.destroy?.();
+}
+
+async function prepareBuiltInAiSession<
+  Session extends LanguageDetectorInstance | TranslatorInstance,
+>(sessionPromise: Promise<Session>): Promise<void> {
+  const session = await sessionPromise;
+  await destroyPreparedBuiltInAiSession(session);
+}
+
+function normalizeDetectedSourceLanguage(language: string | undefined): string | undefined {
+  if (!language || language === "und") {
+    return undefined;
+  }
+
+  const normalizedLanguage = language.toLowerCase();
+  if (normalizedLanguage.startsWith("zh")) {
+    return "zh-CN";
+  }
+
+  const primaryLanguage = normalizedLanguage.split("-")[0];
+  return sourceLanguageOptions.some((option) => option.value === primaryLanguage)
+    ? primaryLanguage
+    : undefined;
+}
+
+async function detectTabSourceLanguageForBuiltInAi(): Promise<string | undefined> {
+  const detectLanguage = (browser.tabs as BrowserTabsWithLanguageDetection).detectLanguage;
+  if (!detectLanguage || tabId.value === undefined) {
+    return undefined;
+  }
+
+  try {
+    return normalizeDetectedSourceLanguage(await detectLanguage(tabId.value));
+  } catch {
+    return undefined;
+  }
+}
+
+async function prepareChromeBuiltInAiForTranslation(): Promise<string> {
+  if (providerMode.value !== "local-only") {
+    return sourceLanguage.value;
+  }
+
+  const chromeBuiltInAi = getChromeBuiltInAiGlobals();
+  const detectorPreparation = chromeBuiltInAi.LanguageDetector
+    ? prepareBuiltInAiSession(chromeBuiltInAi.LanguageDetector.create())
+    : Promise.resolve();
+
+  let resolvedSourceLanguage = sourceLanguage.value;
+  if (resolvedSourceLanguage === "auto") {
+    resolvedSourceLanguage =
+      (await detectTabSourceLanguageForBuiltInAi()) ?? resolvedSourceLanguage;
+  }
+
+  const translatorPreparation =
+    resolvedSourceLanguage !== "auto" && chromeBuiltInAi.Translator
+      ? prepareBuiltInAiSession(
+          chromeBuiltInAi.Translator.create({
+            sourceLanguage: resolvedSourceLanguage,
+            targetLanguage: targetLanguage.value,
+          }),
+        )
+      : Promise.resolve();
+
+  await Promise.all([detectorPreparation, translatorPreparation]);
+  return resolvedSourceLanguage;
 }
 
 function applyProgress(response: BackgroundResponse): void {
@@ -83,6 +174,7 @@ function applyProgress(response: BackgroundResponse): void {
         configured: false,
         readiness: "missingProvider",
         providerLabel: "未配置翻译服务",
+        providerMode: "remote",
       });
       return;
     }
@@ -136,9 +228,19 @@ function applyProgress(response: BackgroundResponse): void {
 }
 
 function applyProviderStatus(response: Extract<BackgroundResponse, { type: "providerStatus" }>) {
-  isProviderConfigured.value = response.configured;
   providerLabel.value = response.providerLabel;
+  providerMode.value = response.providerMode;
 
+  if (isUnsupportedLocalProvider(response)) {
+    isProviderConfigured.value = true;
+    canTranslate.value = false;
+    state.value = "error";
+    currentTaskId.value = "";
+    errorMessage.value = "Chrome Built-in AI requires desktop Chrome 138 or later.";
+    return;
+  }
+
+  isProviderConfigured.value = response.configured;
   if (!response.configured) {
     state.value = "onboarding";
     currentTaskId.value = "";
@@ -147,6 +249,12 @@ function applyProviderStatus(response: Extract<BackgroundResponse, { type: "prov
     state.value = "idle";
     errorMessage.value = "";
   }
+}
+
+function isUnsupportedLocalProvider(
+  response: Extract<BackgroundResponse, { type: "providerStatus" }>,
+): boolean {
+  return response.providerMode === "local-only" && response.readiness === "browserUnsupported";
 }
 
 function applyActionFailure(response: ContentResponse, fallbackMessage: string): void {
@@ -265,6 +373,10 @@ onMounted(async () => {
     }
 
     applyProviderStatus(providerStatus);
+    if (isUnsupportedLocalProvider(providerStatus)) {
+      return;
+    }
+
     if (!providerStatus.configured) {
       await maybeOpenProviderOnboardingSettings().catch((error: unknown) => {
         errorMessage.value =
@@ -364,6 +476,18 @@ async function onPrimaryAction(): Promise<void> {
   const shouldRemoveExistingTranslations = state.value === "existingTranslations";
 
   errorMessage.value = "";
+  let requestedSourceLanguage: string;
+
+  try {
+    requestedSourceLanguage = await prepareChromeBuiltInAiForTranslation();
+  } catch (error: unknown) {
+    state.value = "error";
+    errorMessage.value =
+      error instanceof Error
+        ? error.message
+        : "Chrome Built-in AI 初始化失败，请稍后重试。";
+    return;
+  }
 
   if (shouldRemoveExistingTranslations) {
     try {
@@ -391,7 +515,7 @@ async function onPrimaryAction(): Promise<void> {
     const response = await sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
       type: "translatePage",
       tabId: tabId.value,
-      sourceLanguage: sourceLanguage.value,
+      sourceLanguage: requestedSourceLanguage,
       targetLanguage: targetLanguage.value,
     });
 
@@ -492,6 +616,12 @@ async function onRemoveTranslations(): Promise<void> {
       />
 
       <ProviderCard :provider-label="providerLabel" />
+      <p
+        v-if="providerMode === 'local-only'"
+        class="provider-mode"
+      >
+        Local only. No remote provider will be used.
+      </p>
 
       <button
         class="primary-action"
@@ -616,6 +746,18 @@ async function onRemoveTranslations(): Promise<void> {
 .primary-action:focus-visible {
   outline: 3px solid var(--yoyo-focus-ring);
   outline-offset: 3px;
+}
+
+.provider-mode {
+  margin: -6px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #c7e6d4;
+  border-radius: 10px;
+  color: #155c35;
+  background: #f0fbf4;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .existing-translations {

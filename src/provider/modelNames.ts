@@ -1,7 +1,10 @@
 import { providerPresets } from "@/provider/presets";
-import type { ProviderProfile } from "@/provider/types";
+import type { OpenAiCompatibleProviderProfile } from "@/provider/types";
 
-type ProviderModelContext = Pick<ProviderProfile, "id" | "presetId">;
+type ProviderModelContext = {
+  id: string;
+  presetId?: string;
+};
 type ModelCandidateOptions = {
   preferLowerCase?: boolean;
 };
@@ -35,7 +38,7 @@ export function normalizeModelNameForProfile(
 }
 
 export function createTextModelCandidates(
-  profile: ProviderProfile,
+  profile: OpenAiCompatibleProviderProfile,
   options: ModelCandidateOptions = {},
 ): string[] {
   const candidates: string[] = [];

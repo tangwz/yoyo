@@ -34,6 +34,25 @@ describe("storage repositories", () => {
     expect(await sync.get("yoyo.providerProfiles")).toEqual({});
   });
 
+  it("keeps Chrome Built-in AI profiles without requiring remote settings", async () => {
+    const privateStorage = createInMemoryStorageArea();
+    const repository = providerProfileRepository({ privateStorage });
+
+    await repository.saveProfile({
+      id: "chrome-built-in-ai",
+      displayName: "Chrome Built-in AI",
+      type: "chrome-built-in-ai",
+    });
+
+    await expect(repository.listProfiles()).resolves.toEqual([
+      {
+        id: "chrome-built-in-ai",
+        displayName: "Chrome Built-in AI",
+        type: "chrome-built-in-ai",
+      },
+    ]);
+  });
+
   it("stores UI preferences in sync storage", async () => {
     const local = createInMemoryStorageArea();
     const sync = createInMemoryStorageArea();
@@ -101,7 +120,9 @@ describe("storage repositories", () => {
     });
 
     const profiles = await repository.listProfiles();
-    profiles[0].apiKey = "mutated";
+    if (profiles[0]?.type === "openai-compatible") {
+      profiles[0].apiKey = "mutated";
+    }
     profiles.push({
       id: "provider-2",
       displayName: "Mutated Provider",

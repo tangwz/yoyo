@@ -59,6 +59,16 @@ describe("messaging contracts", () => {
       { type: "showTranslations", taskId: "task-1" },
       { type: "removeTranslations", taskId: "task-1" },
       { type: "getPageRuntimeState" },
+      {
+        type: "showSelectionTranslation",
+        sourceText: "Hello",
+        translatedText: "你好",
+      },
+      {
+        type: "showSelectionTranslation",
+        sourceText: "Hello",
+        errorMessage: "Selection translation failed.",
+      },
     ] satisfies ContentRequest[];
 
     expect(requests.map((request) => request.type)).toEqual([
@@ -70,7 +80,27 @@ describe("messaging contracts", () => {
       "showTranslations",
       "removeTranslations",
       "getPageRuntimeState",
+      "showSelectionTranslation",
+      "showSelectionTranslation",
     ]);
+  });
+
+  it("supports selection translation requests to the background", () => {
+    const request = {
+      type: "translateSelection",
+      tabId: 42,
+      text: "Hello",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+    } satisfies BackgroundRequest;
+
+    expect(request).toEqual({
+      type: "translateSelection",
+      tabId: 42,
+      text: "Hello",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+    });
   });
 
   it("supports lazy segment enqueue requests from content scripts", () => {
@@ -185,12 +215,21 @@ describe("messaging contracts", () => {
       configured: false,
       readiness: "missingProvider",
       providerLabel: "未配置翻译服务",
+      providerMode: "remote",
     } satisfies BackgroundResponse;
     const readyResponse = {
       type: "providerStatus",
       configured: true,
       readiness: "ready",
       providerLabel: "Work Provider / api.example.com",
+      providerMode: "remote",
+    } satisfies BackgroundResponse;
+    const localOnlyResponse = {
+      type: "providerStatus",
+      configured: true,
+      readiness: "ready",
+      providerLabel: "Chrome Built-in AI / Local only",
+      providerMode: "local-only",
     } satisfies BackgroundResponse;
 
     expect(request.type).toBe("getProviderStatus");
@@ -200,6 +239,7 @@ describe("messaging contracts", () => {
     expect(readyResponse.configured).toBe(true);
     expect(readyResponse.readiness).toBe("ready");
     expect(readyResponse.providerLabel).toBe("Work Provider / api.example.com");
+    expect(localOnlyResponse.providerMode).toBe("local-only");
   });
 
   it("accepts options routing metadata in background requests", () => {

@@ -4,9 +4,11 @@ import {
   formatProviderLabel,
   resolveReadyProviderProfile,
 } from "@/provider/readiness";
-import type { ProviderProfile } from "@/provider/types";
+import type { OpenAiCompatibleProviderProfile, ProviderProfile } from "@/provider/types";
 
-function profile(overrides: Partial<ProviderProfile> = {}): ProviderProfile {
+function profile(
+  overrides: Partial<OpenAiCompatibleProviderProfile> = {},
+): OpenAiCompatibleProviderProfile {
   return {
     id: "provider-1",
     displayName: "Work Provider",
@@ -57,12 +59,53 @@ describe("provider readiness", () => {
       readiness: "ready",
       profile: activeProfile,
     });
-    if (result.readiness === "ready") {
-      expectTypeOf(result.profile).toEqualTypeOf<ProviderProfile>();
+    if (result.readiness === "ready" && result.profile.type === "openai-compatible") {
+      expectTypeOf(result.profile).toEqualTypeOf<OpenAiCompatibleProviderProfile>();
     }
     expect(resolveReadyProviderProfile([activeProfile], "provider-1")).toBe(
       activeProfile,
     );
+  });
+
+  it("treats Chrome Built-in AI as ready when browser support is present", () => {
+    const activeProfile: ProviderProfile = {
+      id: "chrome-built-in-ai",
+      displayName: "Chrome Built-in AI",
+      type: "chrome-built-in-ai",
+    };
+
+    expect(
+      evaluateProviderReadiness([activeProfile], "chrome-built-in-ai", {
+        chromeBuiltInAiBrowserSupport: {
+          supported: true,
+          reason: "supported",
+          minimumChromeVersion: 138,
+          detectedChromeVersion: 138,
+        },
+      }),
+    ).toEqual({
+      readiness: "ready",
+      profile: activeProfile,
+    });
+  });
+
+  it("rejects Chrome Built-in AI when Chrome is below the required version", () => {
+    const activeProfile: ProviderProfile = {
+      id: "chrome-built-in-ai",
+      displayName: "Chrome Built-in AI",
+      type: "chrome-built-in-ai",
+    };
+
+    expect(
+      evaluateProviderReadiness([activeProfile], "chrome-built-in-ai", {
+        chromeBuiltInAiBrowserSupport: {
+          supported: false,
+          reason: "chromeVersionTooOld",
+          minimumChromeVersion: 138,
+          detectedChromeVersion: 137,
+        },
+      }).readiness,
+    ).toBe("browserUnsupported");
   });
 
   it("formats provider labels without exposing API keys", () => {
@@ -71,5 +114,15 @@ describe("provider readiness", () => {
     expect(formatProviderLabel(profile({ baseURL: "not a url" }))).toBe(
       "Work Provider",
     );
+  });
+
+  it("formats Chrome Built-in AI provider labels with the canonical local label", () => {
+    expect(
+      formatProviderLabel({
+        id: "chrome-built-in-ai",
+        displayName: "Custom Built-in Provider",
+        type: "chrome-built-in-ai",
+      }),
+    ).toBe("Chrome Built-in AI / Local only");
   });
 });

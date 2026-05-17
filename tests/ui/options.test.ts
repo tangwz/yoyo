@@ -111,7 +111,9 @@ describe("options app", () => {
       screen.getByText("只有在你手动开始翻译时，扩展才会提取页面文本。"),
     ).toBeVisible();
     expect(
-      screen.getByText("翻译过程中，提取的文本会发送到你配置的模型服务。"),
+      screen.getByText(
+        "选择 OpenAI-compatible Provider 时，提取的文本会发送到你配置的模型服务；选择 Chrome Built-in AI 时，文本在本地处理，不会自动回退到远端 Provider。",
+      ),
     ).toBeVisible();
   });
 
@@ -177,6 +179,9 @@ describe("options app", () => {
   it("renders provider form fields and advanced controls", async () => {
     await renderReady();
 
+    expect(screen.getByRole("radio", { name: "OpenAI 兼容服务" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Chrome Built-in AI" })).toBeDisabled();
+    expect(screen.getByText("需要桌面版 Chrome 138 或更高版本。无需访问密钥。")).toBeVisible();
     expect(screen.getByRole("combobox", { name: "服务预设" })).toHaveDisplayValue("OpenAI");
     expect(screen.getByRole("textbox", { name: "显示名称" })).toHaveValue("OpenAI");
     expect(screen.getByRole("textbox", { name: "接口地址" })).toHaveValue(
@@ -198,6 +203,58 @@ describe("options app", () => {
       "0.1",
     );
     expect(screen.getByRole("spinbutton", { name: "最大输出长度" })).toHaveValue(4096);
+  });
+
+  it("saves Chrome Built-in AI as a zero-configuration provider when supported", async () => {
+    vi.stubGlobal("navigator", {
+      userAgent:
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+    });
+    await renderReady();
+
+    await fireEvent.click(screen.getByRole("radio", { name: "Chrome Built-in AI" }));
+
+    expect(screen.getByRole("radio", { name: "Chrome Built-in AI" })).toBeChecked();
+    expect(screen.queryByRole("combobox", { name: "服务预设" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("访问密钥")).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "超时时间" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "温度" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "最大输出长度" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Chrome Built-in AI" })).toBeVisible();
+    expect(screen.getByText("在支持的桌面版 Chrome 中本地运行。无需访问密钥。")).toBeVisible();
+    expect(screen.getByText("需要桌面版 Chrome 138 或更高版本。")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "测试连接" })).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "保存翻译服务" }));
+
+    expect(saveProfile).toHaveBeenCalledWith({
+      id: "chrome-built-in-ai",
+      displayName: "Chrome Built-in AI",
+      type: "chrome-built-in-ai",
+    });
+    expect(setActiveProviderId).toHaveBeenCalledWith("chrome-built-in-ai");
+  });
+
+  it("keeps a saved Chrome Built-in AI provider selected when the browser is unsupported", async () => {
+    listProfiles.mockResolvedValue([
+      {
+        id: "chrome-built-in-ai",
+        displayName: "Chrome Built-in AI",
+        type: "chrome-built-in-ai",
+      },
+    ]);
+    getActiveProviderId.mockResolvedValue("chrome-built-in-ai");
+
+    await renderReady();
+
+    expect(screen.getByRole("radio", { name: "Chrome Built-in AI" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Chrome Built-in AI" })).toBeDisabled();
+    expect(screen.getByText("需要桌面版 Chrome 138 或更高版本。无需访问密钥。")).toBeVisible();
+    expect(screen.getByText("当前浏览器不可使用 Chrome Built-in AI。")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Chrome Built-in AI" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "服务预设" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "超时时间" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "测试连接" })).not.toBeInTheDocument();
   });
 
   it("saves the selected UI language and rerenders options messages", async () => {

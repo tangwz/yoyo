@@ -1,4 +1,11 @@
-import type { ProviderProfile } from "@/provider/types";
+import {
+  getChromeBuiltInAiBrowserSupport,
+  type ChromeBuiltInAiBrowserSupport,
+} from "@/provider/browserSupport";
+import {
+  isOpenAiCompatibleProviderProfile,
+  type ProviderProfile,
+} from "@/provider/types";
 
 export type ProviderReadiness =
   | "ready"
@@ -6,9 +13,14 @@ export type ProviderReadiness =
   | "missingApiKey"
   | "missingBaseURL"
   | "missingTextModel"
-  | "invalidActiveProvider";
+  | "invalidActiveProvider"
+  | "browserUnsupported";
 
 type ProviderNotReady = Exclude<ProviderReadiness, "ready">;
+
+export type ProviderReadinessContext = {
+  chromeBuiltInAiBrowserSupport?: ChromeBuiltInAiBrowserSupport;
+};
 
 export type ProviderReadinessResult =
   | {
@@ -24,24 +36,43 @@ function hasText(value: string | undefined): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function isCompleteProfile(profile: ProviderProfile): boolean {
+function isCompleteProfile(
+  profile: ProviderProfile,
+  context: ProviderReadinessContext = {},
+): boolean {
+  if (profile.type === "chrome-built-in-ai") {
+    return isChromeBuiltInAiSupported(context);
+  }
+
+  if (!isOpenAiCompatibleProviderProfile(profile)) {
+    return false;
+  }
+
   return hasText(profile.apiKey) && hasText(profile.baseURL) && hasText(profile.textModel);
+}
+
+function isChromeBuiltInAiSupported(context: ProviderReadinessContext): boolean {
+  return (
+    context.chromeBuiltInAiBrowserSupport ?? getChromeBuiltInAiBrowserSupport()
+  ).supported;
 }
 
 export function selectStoredActiveProviderId(
   profiles: ProviderProfile[],
   activeProviderId: string | undefined,
+  context: ProviderReadinessContext = {},
 ): string | undefined {
   if (hasText(activeProviderId) && profiles.some((profile) => profile.id === activeProviderId)) {
     return activeProviderId;
   }
 
-  return profiles.find(isCompleteProfile)?.id;
+  return profiles.find((profile) => isCompleteProfile(profile, context))?.id;
 }
 
 export function evaluateProviderReadiness(
   profiles: ProviderProfile[],
   activeProviderId: string | undefined,
+  context: ProviderReadinessContext = {},
 ): ProviderReadinessResult {
   if (!hasText(activeProviderId)) {
     return { readiness: "missingProvider" };
@@ -50,6 +81,16 @@ export function evaluateProviderReadiness(
   const profile = profiles.find((candidate) => candidate.id === activeProviderId);
   if (!profile) {
     return { readiness: "invalidActiveProvider" };
+  }
+
+  if (profile.type === "chrome-built-in-ai") {
+    return isChromeBuiltInAiSupported(context)
+      ? { readiness: "ready", profile }
+      : { readiness: "browserUnsupported" };
+  }
+
+  if (!isOpenAiCompatibleProviderProfile(profile)) {
+    return { readiness: "missingApiKey" };
   }
 
   if (!hasText(profile.apiKey)) {
@@ -70,14 +111,19 @@ export function evaluateProviderReadiness(
 export function resolveReadyProviderProfile(
   profiles: ProviderProfile[],
   activeProviderId: string | undefined,
+  context: ProviderReadinessContext = {},
 ): ProviderProfile | undefined {
-  const result = evaluateProviderReadiness(profiles, activeProviderId);
+  const result = evaluateProviderReadiness(profiles, activeProviderId, context);
   return result.readiness === "ready" ? result.profile : undefined;
 }
 
 export function formatProviderLabel(profile: ProviderProfile | undefined): string {
   if (!profile) {
     return "未配置翻译服务";
+  }
+
+  if (profile.type === "chrome-built-in-ai") {
+    return "Chrome Built-in AI / Local only";
   }
 
   try {

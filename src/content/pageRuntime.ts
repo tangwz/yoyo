@@ -630,6 +630,7 @@ function buildLazyRecoverySnapshot(taskId: string): LazySegmentRecoverySnapshot 
 function startLazySegmentReporting(
   taskId: string,
   recoverySnapshot: Omit<LazySegmentRecoverySnapshot, "processedSegmentIds">,
+  options: { deferReporting?: boolean } = {},
 ): void {
   lazyReportTaskId = taskId;
   lazyRecoverySnapshot = recoverySnapshot;
@@ -640,6 +641,13 @@ function startLazySegmentReporting(
       .filter((anchor) => priorityForElement(anchor.sourceNode) !== "normal")
       .map((anchor) => anchor.segmentId),
   );
+  if (options.deferReporting) {
+    return;
+  }
+  startLazyViewportReporting();
+}
+
+function startLazyViewportReporting(): void {
   window.addEventListener("scroll", scheduleLazySegmentReport, { passive: true });
   window.addEventListener("resize", scheduleLazySegmentReport, { passive: true });
 }
@@ -779,6 +787,7 @@ export async function collectSegments(
   targetLanguage = "zh-CN",
   providerId?: string,
   textModel?: string,
+  deferLazyCollection = false,
 ) {
   if (!isPageUrlSupported(location.href)) {
     throw new Error("Unsupported page URL.");
@@ -821,7 +830,9 @@ export async function collectSegments(
       ? segments.filter((segment) => segment.priority !== "normal")
       : segments,
   );
-  scheduleTranslationQueueFlush();
+  if (!(translationMode === "lazyViewport" && deferLazyCollection)) {
+    scheduleTranslationQueueFlush();
+  }
 
   if (translationMode === "lazyViewport") {
     startVisibilityObserver(taskId);
@@ -832,14 +843,40 @@ export async function collectSegments(
       providerId,
       textModel,
       segments,
-    });
-    scheduleDeferredLazyCollection(taskId);
+    }, { deferReporting: deferLazyCollection });
+    if (!deferLazyCollection) {
+      scheduleDeferredLazyCollection(taskId);
+    }
   } else {
     stopVisibilityObserver();
   }
   startMutationObserver();
 
   return segments;
+}
+
+export function finalizeLazyRecoverySourceLanguage(
+  taskId: string,
+  sourceLanguage: string,
+): boolean {
+  if (lazyReportTaskId !== taskId || !lazyRecoverySnapshot) {
+    return false;
+  }
+
+  lazyRecoverySnapshot = {
+    ...lazyRecoverySnapshot,
+    sourceLanguage,
+  };
+  if (translationQueueContext?.taskId === taskId) {
+    translationQueueContext = {
+      ...translationQueueContext,
+      sourceLanguage,
+    };
+  }
+  scheduleTranslationQueueFlush();
+  startLazyViewportReporting();
+  scheduleDeferredLazyCollection(taskId);
+  return true;
 }
 
 export function applyTranslationResults(
