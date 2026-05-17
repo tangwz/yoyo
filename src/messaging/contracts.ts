@@ -119,6 +119,17 @@ export type BackgroundRequest =
       segmentIds: string[];
       failedSegmentIds?: string[];
       recovery?: LazySegmentRecoverySnapshot;
+    }
+  | {
+      type: "enqueueTranslationBatch";
+      taskId: string;
+      sourceLanguage: string;
+      targetLanguage: string;
+      translationMode: TranslationMode;
+      segments: PageSegment[];
+      collectionComplete?: boolean;
+      failedSegmentIds?: string[];
+      recovery?: LazySegmentRecoverySnapshot;
     };
 
 export type BackgroundResponse =

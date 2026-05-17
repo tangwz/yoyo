@@ -139,6 +139,65 @@ describe("messaging contracts", () => {
     });
   });
 
+  it("supports runtime translation batch requests from content scripts", () => {
+    const request = {
+      type: "enqueueTranslationBatch",
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      failedSegmentIds: ["seg_2"],
+      recovery: {
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        segments: [],
+        processedSegmentIds: [],
+      },
+      segments: [
+        {
+          id: "seg_1",
+          order: 1,
+          sourceText: "Visible dynamic text.",
+          kind: "paragraph",
+          pathHint: "body.p[1]",
+          textHash: "hash-1",
+          priority: "viewport",
+        },
+      ],
+    } satisfies BackgroundRequest;
+
+    expect(request.segments[0]?.priority).toBe("viewport");
+    expect(request).toEqual({
+      type: "enqueueTranslationBatch",
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: false,
+      failedSegmentIds: ["seg_2"],
+      recovery: {
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        segments: [],
+        processedSegmentIds: [],
+      },
+      segments: [
+        {
+          id: "seg_1",
+          order: 1,
+          sourceText: "Visible dynamic text.",
+          kind: "paragraph",
+          pathHint: "body.p[1]",
+          textHash: "hash-1",
+          priority: "viewport",
+        },
+      ],
+    });
+  });
+
   it("keeps content error responses available to runtime handlers", () => {
     const response = {
       type: "contentError",
