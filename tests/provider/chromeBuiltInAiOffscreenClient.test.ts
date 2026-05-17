@@ -362,6 +362,39 @@ describe("ChromeBuiltInAiOffscreenClient", () => {
     );
   });
 
+  it("disconnects when the signal is aborted after opening a request port", async () => {
+    const port: MockPort = {
+      onMessage: {
+        addListener: vi.fn(),
+      },
+      onDisconnect: {
+        addListener: vi.fn(),
+      },
+      postMessage: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    const abortController = new AbortController();
+    const client = new ChromeBuiltInAiOffscreenClient({
+      runtime: {
+        getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
+        getContexts: vi.fn(async () => [{ contextId: "existing" }]),
+        connect: vi.fn(() => {
+          abortController.abort();
+          return port;
+        }),
+      },
+      offscreen: {
+        createDocument: vi.fn(async () => undefined),
+      },
+    });
+
+    await expect(client.detectLanguage("Hello", abortController.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(port.postMessage).not.toHaveBeenCalled();
+    expect(port.disconnect).toHaveBeenCalledTimes(1);
+  });
+
   it("removes per-request port listeners after responses settle", async () => {
     const messageListeners = new Set<(message: ResponseMessage) => void>();
     const disconnectListeners = new Set<() => void>();

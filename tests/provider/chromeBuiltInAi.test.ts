@@ -160,6 +160,32 @@ describe("ChromeBuiltInTranslatorProvider", () => {
     } satisfies Partial<LocalAiError>);
   });
 
+  it("maps plain offscreen Translator API missing errors to local API unavailable errors", async () => {
+    const cause = new Error("Chrome Built-in AI Translator API is not available.");
+    const provider = new ChromeBuiltInTranslatorProvider({
+      getTranslatorApi: () => ({
+        availability: vi.fn(async () => {
+          throw cause;
+        }),
+        create: vi.fn(async () => ({
+          translate: vi.fn(async (text: string) => `translated:${text}`),
+        })),
+      }),
+    });
+
+    await expect(
+      provider.translateText({
+        profile: profile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        text: "Hello",
+      }),
+    ).rejects.toMatchObject({
+      code: "apiUnavailable",
+      cause,
+    } satisfies Partial<LocalAiError>);
+  });
+
   it("does not fall back to the global Translator when an injected API getter returns undefined", async () => {
     vi.stubGlobal("Translator", {
       availability: vi.fn(async () => "available" as const),

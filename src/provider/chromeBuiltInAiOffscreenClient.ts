@@ -398,6 +398,11 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
     await this.ensureDocument();
 
     const session = await this.createPortSession();
-    return session.send(request, signal, { disconnectOnSettle: true });
+    try {
+      return await session.send(request, signal, { disconnectOnSettle: true });
+    } catch (error) {
+      session.disconnect();
+      throw error;
+    }
   }
 }

@@ -101,6 +101,23 @@ function getErrorName(error: unknown): string | undefined {
   return typeof name === "string" ? name : undefined;
 }
 
+function getErrorMessage(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("message" in error)) {
+    return undefined;
+  }
+
+  const message = (error as { message?: unknown }).message;
+  return typeof message === "string" ? message : undefined;
+}
+
+function isApiUnavailableError(error: unknown): boolean {
+  if (getErrorName(error) === "ApiUnavailableError") {
+    return true;
+  }
+
+  return getErrorMessage(error) === "Chrome Built-in AI Translator API is not available.";
+}
+
 function mapTranslatorError(error: unknown, aborted: boolean): LocalAiError {
   if (aborted || getErrorName(error) === "AbortError") {
     return new LocalAiError(
@@ -135,15 +152,17 @@ function mapTranslatorError(error: unknown, aborted: boolean): LocalAiError {
         "Chrome needs user activation to download or initialize the local translation model.",
         error,
       );
-    case "ApiUnavailableError":
-      return new LocalAiError(
-        "apiUnavailable",
-        "Chrome Built-in AI Translator API is not available.",
-        error,
-      );
-    default:
-      return new LocalAiError("unknown", "Chrome Built-in AI translation failed.", error);
   }
+
+  if (isApiUnavailableError(error)) {
+    return new LocalAiError(
+      "apiUnavailable",
+      "Chrome Built-in AI Translator API is not available.",
+      error,
+    );
+  }
+
+  return new LocalAiError("unknown", "Chrome Built-in AI translation failed.", error);
 }
 
 async function destroyTranslator(translator: TranslatorInstance): Promise<void> {
