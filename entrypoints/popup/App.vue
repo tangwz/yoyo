@@ -38,6 +38,7 @@ const targetLanguage = ref("zh-CN");
 const providerLabel = ref("正在读取翻译服务...");
 const providerMode = ref<"remote" | "local-only">("remote");
 const isProviderConfigured = ref(true);
+const hasProviderStatusIssue = ref(false);
 const tabId = ref<number>();
 const isInitializing = ref(true);
 const canTranslate = ref(true);
@@ -84,6 +85,9 @@ const primaryLabel = computed(() => {
 const isPrimaryDisabled = computed(
   () =>
     isInitializing.value || (!canTranslate.value && state.value !== "translating"),
+);
+const shouldShowProviderCard = computed(
+  () => !isProviderConfigured.value || hasProviderStatusIssue.value,
 );
 
 function isRuntimeResponse(message: unknown): message is BackgroundResponse {
@@ -230,6 +234,7 @@ function applyProgress(response: BackgroundResponse): void {
 function applyProviderStatus(response: Extract<BackgroundResponse, { type: "providerStatus" }>) {
   providerLabel.value = response.providerLabel;
   providerMode.value = response.providerMode;
+  hasProviderStatusIssue.value = isUnsupportedLocalProvider(response);
 
   if (isUnsupportedLocalProvider(response)) {
     isProviderConfigured.value = true;
@@ -615,13 +620,10 @@ async function onRemoveTranslations(): Promise<void> {
         :target-options="targetLanguageOptions"
       />
 
-      <ProviderCard :provider-label="providerLabel" />
-      <p
-        v-if="providerMode === 'local-only'"
-        class="provider-mode"
-      >
-        Local only. No remote provider will be used.
-      </p>
+      <ProviderCard
+        v-if="shouldShowProviderCard"
+        :provider-label="providerLabel"
+      />
 
       <button
         class="primary-action"
@@ -746,18 +748,6 @@ async function onRemoveTranslations(): Promise<void> {
 .primary-action:focus-visible {
   outline: 3px solid var(--yoyo-focus-ring);
   outline-offset: 3px;
-}
-
-.provider-mode {
-  margin: -6px 0 0;
-  padding: 10px 12px;
-  border: 1px solid #c7e6d4;
-  border-radius: 10px;
-  color: #155c35;
-  background: #f0fbf4;
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1.35;
 }
 
 .existing-translations {

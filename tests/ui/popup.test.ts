@@ -208,7 +208,7 @@ describe("popup app", () => {
     expect(browserMock.tabsSendMessage).not.toHaveBeenCalled();
   });
 
-  it("renders the default popup controls", async () => {
+  it("renders the default popup controls without configured provider details", async () => {
     render(PopupApp);
 
     expect(screen.getByText("悠悠阅读助手")).toBeVisible();
@@ -218,8 +218,6 @@ describe("popup app", () => {
     expect(screen.getByRole("combobox", { name: "Target language" })).toHaveDisplayValue(
       "简体中文",
     );
-    expect(screen.getByText("翻译服务")).toBeVisible();
-    expect(await screen.findByText("OpenAI / api.openai.com")).toBeVisible();
     expect(screen.getByText("翻译当前页面")).toBeVisible();
     expect(screen.getByText("设置")).toBeVisible();
     expect(screen.getByText("0.1.0")).toBeVisible();
@@ -228,6 +226,8 @@ describe("popup app", () => {
     await waitFor(() => {
       expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
     });
+    expect(screen.queryByLabelText("Translation provider")).not.toBeInTheDocument();
+    expect(screen.queryByText("OpenAI / api.openai.com")).not.toBeInTheDocument();
   });
 
   it("disables translation while resolving the active tab", async () => {
@@ -306,7 +306,7 @@ describe("popup app", () => {
     });
   });
 
-  it("shows local-only copy for a configured local provider", async () => {
+  it("does not show extra local-only copy for a configured local provider", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
       if (message.type === "getProviderStatus") {
         return {
@@ -327,15 +327,18 @@ describe("popup app", () => {
 
     render(PopupApp);
 
-    expect(await screen.findByText("Chrome Built-in AI / Local only")).toBeVisible();
-    expect(screen.getByText("Local only. No remote provider will be used.")).toBeVisible();
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+    expect(screen.queryByLabelText("Translation provider")).not.toBeInTheDocument();
+    expect(screen.queryByText("Chrome Built-in AI / Local only")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Local only. No remote provider will be used."),
+    ).not.toBeInTheDocument();
     expect(browserMock.runtimeSendMessage).not.toHaveBeenCalledWith({
       type: "openOptions",
       section: "provider",
       source: "first-run",
-    });
-    await waitFor(() => {
-      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
     });
   });
 
@@ -361,7 +364,9 @@ describe("popup app", () => {
     render(PopupApp);
 
     expect(await screen.findByText("Chrome Built-in AI / Local only")).toBeVisible();
-    expect(screen.getByText("Local only. No remote provider will be used.")).toBeVisible();
+    expect(
+      screen.queryByText("Local only. No remote provider will be used."),
+    ).not.toBeInTheDocument();
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Chrome Built-in AI requires desktop Chrome 138 or later.",
     );
