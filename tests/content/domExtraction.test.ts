@@ -460,7 +460,7 @@ describe("collectPageSegments", () => {
     );
   });
 
-  it("preserves body reading order when weak roots need fallback", async () => {
+  it("preserves body reading order when weak page chrome roots need fallback", async () => {
     const bodyText =
       "This normal body section is long enough to pass generic extraction and appears first in DOM.";
     document.body.innerHTML = `
@@ -472,7 +472,6 @@ describe("collectPageSegments", () => {
 
     expect(result.segments.map((segment) => segment.sourceText)).toEqual([
       bodyText,
-      "Tiny label",
     ]);
   });
 
@@ -775,6 +774,107 @@ describe("collectPageSegments", () => {
 
     expect(result.segments.map((segment) => segment.sourceText)).toEqual([
       "Thanks @alice for the review.",
+    ]);
+  });
+
+  it("preserves spacing around X tweet inline links and mentions", async () => {
+    const tweetTextHtml = [
+      "<span>If a fix on main lands, </span>",
+      '<div><span><a href="/clawsweeper">@clawsweeper</a></span></div>',
+      "<span> will eventually find the issue. We build </span>",
+      '<a href="https://t.co/example"><span aria-hidden="true">http://</span>clawpatch.ai</a>',
+      "<span> to split projects into functional units.</span>",
+    ].join("");
+
+    document.body.innerHTML = `
+      <article data-testid="tweet">
+        <div data-testid="tweetText" lang="en" dir="auto">${tweetTextHtml}</div>
+      </article>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "If a fix on main lands, @clawsweeper will eventually find the issue. We build clawpatch.ai to split projects into functional units.",
+    ]);
+  });
+
+  it("skips X related user sidebar chrome outside the tweet article", async () => {
+    document.body.innerHTML = `
+      <main>
+        <section>
+          <div data-testid="cellInnerDiv">
+            <article data-testid="tweet">
+              <div data-testid="tweetText" lang="en" dir="auto">
+                <span>Actual tweet body.</span>
+              </div>
+            </article>
+          </div>
+        </section>
+        <aside>
+          <ul>
+            <li>
+              <div dir="auto">Peter Steinberger</div>
+              <div dir="auto">@steipete</div>
+            </li>
+          </ul>
+        </aside>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual tweet body.",
+    ]);
+  });
+
+  it("skips X trends rail chrome outside the tweet article", async () => {
+    document.body.innerHTML = `
+      <main>
+        <section>
+          <div data-testid="cellInnerDiv">
+            <article data-testid="tweet">
+              <div data-testid="tweetText" lang="en" dir="auto">
+                <span>Actual tweet body.</span>
+              </div>
+            </article>
+          </div>
+        </section>
+        <div aria-label="当前趋势">
+          <section role="region" aria-labelledby="trends-title">
+            <h1 id="trends-title" dir="auto" role="heading">当前趋势</h1>
+            <div aria-label="时间线：当前趋势">Middle East</div>
+          </section>
+        </div>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Actual tweet body.",
+    ]);
+  });
+
+  it("skips sidebar list items outside article content", async () => {
+    const bodyText =
+      "Primary page content should be extracted without pulling in recommendation sidebar entries.";
+    document.body.innerHTML = `
+      <main>
+        <section>${bodyText}</section>
+        <aside>
+          <ul>
+            <li>Peter Steinberger @steipete</li>
+          </ul>
+        </aside>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      bodyText,
     ]);
   });
 

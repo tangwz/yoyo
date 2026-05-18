@@ -77,6 +77,21 @@ const pageChromeSelector = [
   "[role='toolbar']",
 ].join(",");
 
+const extractablePageChromeSelector = [
+  "nav",
+  "aside",
+  "[role='navigation']",
+  "[role='menu']",
+  "[role='menubar']",
+  "[role='toolbar']",
+].join(",");
+
+const feedPageChromeSelector = [
+  '[aria-label*="trend" i]',
+  '[aria-label*="trending" i]',
+  '[aria-label*="趋势"]',
+].join(",");
+
 const feedLowValueSelector = [
   "nav",
   "footer",
@@ -416,10 +431,25 @@ function isLowValueElement(
   textCache?: TextNormalizationCache,
 ): boolean {
   return (
+    isFeedPageChromeElement(element) ||
+    isPageChromeDescendantOutsideArticle(element) ||
     isWeakTextHintInPageChrome(element) ||
     isGenericLowValueElement(element, textCache) ||
     isFeedLowValueElement(element, textCache)
   );
+}
+
+function isFeedPageChromeElement(element: Element): boolean {
+  if (isFeedHeuristicContext(element)) return false;
+  return element.closest(feedPageChromeSelector) !== null;
+}
+
+function isPageChromeDescendantOutsideArticle(element: Element): boolean {
+  const chrome = element.closest(extractablePageChromeSelector);
+  if (!chrome) return false;
+
+  const article = element.closest("article, [role='article']");
+  return article === null || !article.contains(chrome);
 }
 
 function hasNestedPostTextCandidate(element: Element): boolean {
@@ -560,6 +590,17 @@ function collectTextStream(
   skipFeedLowValue = true,
   textCache?: TextNormalizationCache,
 ): string {
+  return normalizeSourceText(
+    collectRawTextStream(element, excludedTags, skipFeedLowValue, textCache),
+  );
+}
+
+function collectRawTextStream(
+  element: Element,
+  excludedTags: ReadonlySet<string>,
+  skipFeedLowValue: boolean,
+  textCache?: TextNormalizationCache,
+): string {
   const parts: string[] = [];
 
   for (const child of [...element.childNodes]) {
@@ -572,17 +613,17 @@ function collectTextStream(
 
     const childElement = child as Element;
     if (isElementSkippable(childElement)) continue;
+    if (isFeedPageChromeElement(childElement)) continue;
+    if (isPageChromeDescendantOutsideArticle(childElement)) continue;
     if (isWeakTextHintInPageChrome(childElement)) continue;
     if (isGenericLowValueElement(childElement, textCache)) continue;
     if (skipFeedLowValue && isFeedLowValueElement(childElement, textCache)) continue;
     if (excludedTags.has(childElement.tagName)) continue;
 
-    parts.push(
-      collectTextStream(childElement, excludedTags, skipFeedLowValue, textCache),
-    );
+    parts.push(collectRawTextStream(childElement, excludedTags, skipFeedLowValue, textCache));
   }
 
-  return normalizeSourceText(parts.join(""));
+  return parts.join("");
 }
 
 function shouldExtractElement(
