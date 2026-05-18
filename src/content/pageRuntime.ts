@@ -395,7 +395,13 @@ async function flushTranslationQueue(): Promise<void> {
     return;
   }
 
-  translationQueue.markTranslated(segmentIds);
+  const translatedSegmentIds = [
+    ...segmentIds,
+    ...retrySegmentIds,
+    ...failedSegmentIds,
+  ];
+  translationQueue.markTranslating(translatedSegmentIds);
+  translationQueue.markTranslated(translatedSegmentIds);
   scheduleTranslationQueueFlush();
 }
 
