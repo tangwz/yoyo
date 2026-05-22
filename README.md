@@ -89,7 +89,7 @@ Create a distributable zip:
 pnpm zip
 ```
 
-WXT writes the zip file to `build`. The file name includes the package name, extension version, and browser target, for example `build/yoyo-reading-assistant-0.1.0-chrome.zip`. This artifact can be used for manual distribution, review submission, or release archiving.
+WXT writes the zip file to `build`. The file name includes the package name, extension version, and browser target, for example `build/yoyo-reading-assistant-0.2.0-chrome.zip`. This artifact can be used for manual distribution, review submission, or release archiving.
 
 ## Verification
 

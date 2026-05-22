@@ -669,7 +669,7 @@ async function onRemoveTranslations(): Promise<void> {
 
     <PopupFooter
       left-label="设置"
-      version="0.1.0"
+      version="0.2.0"
       @open-settings="onOpenSettings"
     />
   </main>
