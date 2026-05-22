@@ -1,4 +1,4 @@
-import type { ProviderProfile } from "@/provider/types";
+import type { ProviderProfile, ProviderTraceContext } from "@/provider/types";
 import type { PageSegment, TranslationResultItem } from "@/translation/types";
 
 export type TranslateTextRequest = {
@@ -6,6 +6,7 @@ export type TranslateTextRequest = {
   sourceLanguage: string;
   targetLanguage: string;
   text: string;
+  traceContext?: ProviderTraceContext;
   abortSignal?: AbortSignal;
 };
 
@@ -18,6 +19,7 @@ export type TranslateBatchRequest = {
   sourceLanguage: string;
   targetLanguage: string;
   segments: PageSegment[];
+  traceContext?: ProviderTraceContext;
   abortSignal?: AbortSignal;
 };
 

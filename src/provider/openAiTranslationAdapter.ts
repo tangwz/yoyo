@@ -2,6 +2,7 @@ import type { TranslationProvider } from "@/provider/translationProvider";
 import type {
   GenerateTextRequest,
   GenerateTextResponse,
+  ProviderTraceContext,
   StreamTextChunk,
   StreamTextRequest,
 } from "@/provider/types";
@@ -16,6 +17,18 @@ type OpenAiTextProvider = {
   streamText?(request: StreamTextRequest): AsyncGenerator<StreamTextChunk>;
 };
 
+function buildOpenAiTraceContext(
+  traceContext: ProviderTraceContext | undefined,
+  sourceTexts: readonly string[],
+): ProviderTraceContext {
+  return {
+    ...traceContext,
+    providerType: "openai-compatible",
+    segmentCount: sourceTexts.length,
+    sourceCharCount: sourceTexts.reduce((total, text) => total + text.length, 0),
+  };
+}
+
 export class OpenAiTranslationAdapter implements TranslationProvider {
   constructor(private readonly provider: OpenAiTextProvider) {}
 
@@ -29,6 +42,7 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
       sourceLanguage: request.sourceLanguage,
       targetLanguage: request.targetLanguage,
       abortSignal: request.abortSignal,
+      traceContext: buildOpenAiTraceContext(request.traceContext, [request.text]),
       segments: [
         {
           id: "selection",
@@ -64,6 +78,10 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
         targetLanguage: request.targetLanguage,
         segments: request.segments,
       }),
+      traceContext: buildOpenAiTraceContext(
+        request.traceContext,
+        request.segments.map((segment) => segment.sourceText),
+      ),
       abortSignal: request.abortSignal,
     });
 
@@ -95,6 +113,10 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
         targetLanguage: request.targetLanguage,
         segments: request.segments,
       }),
+      traceContext: buildOpenAiTraceContext(
+        request.traceContext,
+        request.segments.map((segment) => segment.sourceText),
+      ),
       abortSignal: request.abortSignal,
     })) {
       const items = parser.push(chunk.text);

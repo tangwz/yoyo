@@ -78,6 +78,52 @@ describe("OpenAiTranslationAdapter", () => {
     expect(generateText.mock.calls[0]?.[0].prompt).toContain("Target language: zh-CN");
   });
 
+  it("forwards batch trace context to the text provider", async () => {
+    const generateText = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ segmentId: "seg_1", translatedText: "你好" }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+    const adapter = new OpenAiTranslationAdapter({ generateText });
+
+    await adapter.translateBatch({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      traceContext: {
+        taskId: "task-1",
+        batchId: "batch-1",
+        stage: "page",
+        providerType: "openai-compatible",
+      },
+      segments: [
+        {
+          id: "seg_1",
+          order: 1,
+          sourceText: "Hello",
+          kind: "paragraph",
+          priority: "viewport",
+          pathHint: "p:nth-child(1)",
+          textHash: "hash-1",
+        },
+      ],
+    });
+
+    expect(generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceContext: expect.objectContaining({
+          taskId: "task-1",
+          batchId: "batch-1",
+          stage: "page",
+          providerType: "openai-compatible",
+          segmentCount: 1,
+          sourceCharCount: 5,
+        }),
+      }),
+    );
+  });
+
   it("translates text selections through the OpenAI-compatible provider", async () => {
     const abortController = new AbortController();
     const generateText = vi.fn().mockResolvedValue({
