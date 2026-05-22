@@ -148,6 +148,81 @@ async function* streamBatchResponses(
 }
 
 describe("TranslationTaskOrchestrator", () => {
+  it("traces page translation batches without logging segment text", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const collectedSegment = segment({
+      id: "segment-1",
+      sourceText: "Private source text.",
+    });
+    const translatedText = "Private translated text.";
+    const { orchestrator, translateBatch, sendToContent } = createOrchestrator();
+
+    try {
+      sendToContent.mockImplementation(async (_tabId, message) => {
+        if (message.type === "collectSegments") {
+          return {
+            type: "collectSegmentsResult",
+            taskId: message.taskId,
+            segments: [collectedSegment],
+          };
+        }
+
+        if (message.type === "applyTranslations") {
+          return {
+            type: "contentActionResult",
+            success: true,
+            appliedSegmentIds: message.items.map((item) => item.segmentId),
+          };
+        }
+
+        throw new Error(`Unexpected content message: ${message.type}`);
+      });
+      translateBatch.mockResolvedValue({
+        items: [{ segmentId: "segment-1", translatedText }],
+      });
+
+      await orchestrator.translatePage({
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "fullPage",
+      });
+
+      expect(translateBatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          traceContext: expect.objectContaining({
+            taskId: "task-1",
+            batchId: expect.stringMatching(/^batch-/),
+            stage: "page",
+            providerType: "openai-compatible",
+            segmentCount: 1,
+            sourceCharCount: collectedSegment.sourceText.length,
+          }),
+        }),
+      );
+
+      const output = infoSpy.mock.calls
+        .map((call) =>
+          call
+            .map((value) => (typeof value === "string" ? value : JSON.stringify(value)))
+            .join(" "),
+        )
+        .join("\n");
+
+      expect(output).toContain("translation.task.start");
+      expect(output).toContain("translation.collect.done");
+      expect(output).toContain("translation.batch.start");
+      expect(output).toContain("translation.batch.done");
+      expect(output).toContain("translation.batch.apply.done");
+      expect(output).not.toContain(collectedSegment.sourceText);
+      expect(output).not.toContain(translatedText);
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("creates a task before collecting segments and completes translation", async () => {
     const collectedSegments = [
       segment({ id: "segment-1", sourceText: "Hello world." }),

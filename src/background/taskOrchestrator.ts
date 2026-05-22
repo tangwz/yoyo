@@ -14,6 +14,7 @@ import { SessionTranslationCache } from "@/translation/cache";
 import { createCacheKey, serializeCacheKey } from "@/translation/hash";
 import { translationPromptVersion } from "@/translation/prompt";
 import { isTerminalTaskState } from "@/translation/types";
+import { elapsedMs, metadataForError, nowMs, tracePerf } from "@/utils/perfTrace";
 import type {
   CancelReason,
   PageSegment,
@@ -97,6 +98,7 @@ type TranslationBatchInput = TaskTranslationContext & {
   task: RunningTask;
   segments: PageSegment[];
   fanOutGroups: Map<string, PageSegment[]>;
+  batchId?: string;
 };
 
 type TranslationBatchResult = {
@@ -112,6 +114,7 @@ export class TranslationTaskOrchestrator {
   private readonly tasks = new Map<string, RunningTask>();
   private readonly cache = new SessionTranslationCache();
   private nextTaskSequence = 0;
+  private nextBatchSequence = 0;
 
   constructor(private readonly dependencies: TranslationTaskOrchestratorDependencies) {}
 
@@ -486,13 +489,18 @@ export class TranslationTaskOrchestrator {
 
     const taskId = this.dependencies.createTaskId();
     const task = this.createTask(taskId, input.tabId);
+    const translationMode = input.translationMode ?? "lazyViewport";
     task.collectionComplete = false;
     task.pendingContext = {
       sourceLanguage: input.sourceLanguage,
       targetLanguage: input.targetLanguage,
-      translationMode: input.translationMode ?? "lazyViewport",
+      translationMode,
     };
     task.pendingContextSource = "translatePage";
+    tracePerf("translation.task.start", {
+      taskId,
+      translationMode,
+    });
     return task;
   }
 
@@ -522,19 +530,23 @@ export class TranslationTaskOrchestrator {
       task.pendingContextSource = undefined;
       this.wakeContextWaiters(task);
 
-      const collectResponse = await this.dependencies.sendToContent(input.tabId, {
-        type: "collectSegments",
-        taskId: task.progress.taskId,
-        translationMode: context.translationMode,
-        sourceLanguage: context.sourceLanguage,
-        deferLazyCollection:
-          profile.type === "chrome-built-in-ai" &&
-          context.sourceLanguage === "auto" &&
-          context.translationMode === "lazyViewport",
-        targetLanguage: context.targetLanguage,
-        providerId: profile.id,
-        textModel: isOpenAiCompatibleProviderProfile(profile) ? profile.textModel : undefined,
-      });
+      const collectStartedAt = nowMs();
+      const collectResponse = await this.dependencies.sendToContent(
+        input.tabId,
+        {
+          type: "collectSegments",
+          taskId: task.progress.taskId,
+          translationMode: context.translationMode,
+          sourceLanguage: context.sourceLanguage,
+          deferLazyCollection:
+            profile.type === "chrome-built-in-ai" &&
+            context.sourceLanguage === "auto" &&
+            context.translationMode === "lazyViewport",
+          targetLanguage: context.targetLanguage,
+          providerId: profile.id,
+          textModel: isOpenAiCompatibleProviderProfile(profile) ? profile.textModel : undefined,
+        },
+      );
 
       if (this.isTaskStopped(task)) {
         return this.cloneProgress(task.progress);
@@ -548,8 +560,17 @@ export class TranslationTaskOrchestrator {
       }
 
       const collectedSegments = collectResponse.segments;
+      tracePerf("translation.collect.done", {
+        taskId: task.progress.taskId,
+        translationMode: context.translationMode,
+        segmentCount: collectedSegments.length,
+        sourceCharCount: this.sourceCharCount(collectedSegments),
+        durationMs: elapsedMs(collectStartedAt),
+        success: true,
+      });
       this.mergeTranslationBatchSegments(task, collectedSegments);
       const collectionComplete = collectResponse.collectionComplete ?? true;
+      const detectStartedAt = nowMs();
       const sourceLanguage = await this.resolveSourceLanguageForProfile(
         profile,
         context.sourceLanguage,
@@ -557,6 +578,13 @@ export class TranslationTaskOrchestrator {
         task.controller.signal,
         context.translationMode === "lazyViewport",
       );
+      tracePerf("translation.detectLanguage.done", {
+        taskId: task.progress.taskId,
+        providerType: profile.type,
+        sourceLanguage,
+        durationMs: elapsedMs(detectStartedAt),
+        success: true,
+      });
 
       if (this.isTaskStopped(task)) {
         return this.cloneProgress(task.progress);
@@ -687,6 +715,19 @@ export class TranslationTaskOrchestrator {
 
     this.tasks.set(taskId, task);
     return task;
+  }
+
+  private createBatchId(): string {
+    this.nextBatchSequence += 1;
+    return `batch-${this.nextBatchSequence}`;
+  }
+
+  private sourceCharCount(segments: readonly PageSegment[]): number {
+    return segments.reduce((total, segment) => total + segment.sourceText.length, 0);
+  }
+
+  private traceStageForTask(task: RunningTask): "page" | "lazy" {
+    return task.context?.translationMode === "lazyViewport" ? "lazy" : "page";
   }
 
   private async resolveSourceLanguageForProfile(
@@ -950,47 +991,64 @@ export class TranslationTaskOrchestrator {
     input: TranslationBatchInput,
     attempt: number,
   ): Promise<void> {
-    try {
-      const result = await this.requestAndApplyBatch(input);
+    const batchId = input.batchId ?? this.createBatchId();
+    const batchInput = { ...input, batchId };
 
-      if (this.isTaskStopped(input.task)) {
+    try {
+      const result = await this.requestAndApplyBatch(batchInput, attempt);
+
+      if (this.isTaskStopped(batchInput.task)) {
         return;
       }
 
       if (result.error) {
-        await this.handleBatchError(input.task, result.error);
+        await this.handleBatchError(batchInput.task, result.error);
       } else {
-        this.recordSuccessfulBatch(input.task);
+        this.recordSuccessfulBatch(batchInput.task);
       }
 
       if (result.missingSegments.length === 0) {
         return;
       }
 
-      await this.retryOrDegradeBatch({ ...input, segments: result.missingSegments }, attempt);
+      tracePerf("translation.batch.missing", {
+        taskId: batchInput.task.progress.taskId,
+        batchId,
+        attempt: attempt + 1,
+        providerType: batchInput.profile.type,
+        segmentCount: batchInput.segments.length,
+        missingCount: result.missingSegments.length,
+      });
+
+      await this.retryOrDegradeBatch(
+        { ...batchInput, segments: result.missingSegments },
+        attempt,
+      );
     } catch (error) {
-      if (this.isTaskStopped(input.task)) {
+      if (this.isTaskStopped(batchInput.task)) {
         return;
       }
 
-      await this.handleBatchError(input.task, error);
-      await this.retryOrDegradeBatch(input, attempt);
+      await this.handleBatchError(batchInput.task, error);
+      await this.retryOrDegradeBatch(batchInput, attempt);
     }
   }
 
   private async requestAndApplyBatch(
     input: TranslationBatchInput,
+    attempt: number,
   ): Promise<TranslationBatchResult> {
-    const streamingResult = await this.requestAndApplyStreamingBatch(input);
+    const streamingResult = await this.requestAndApplyStreamingBatch(input, attempt);
     if (streamingResult) {
       return streamingResult;
     }
 
-    return this.requestAndApplyBufferedBatch(input);
+    return this.requestAndApplyBufferedBatch(input, attempt);
   }
 
   private async requestAndApplyStreamingBatch(
     input: TranslationBatchInput,
+    attempt: number,
   ): Promise<TranslationBatchResult | undefined> {
     const provider = this.dependencies.getTranslationProvider(input.profile);
     if (!provider.streamBatch) {
@@ -1000,18 +1058,34 @@ export class TranslationTaskOrchestrator {
     const appliedRepresentativeIds = new Set<string>();
     let sawValidItem = false;
     let acquiredProviderSlot = false;
+    let startedAt = 0;
+    const traceContext = {
+      taskId: input.task.progress.taskId,
+      batchId: input.batchId,
+      stage: this.traceStageForTask(input.task),
+      providerType: input.profile.type,
+      segmentCount: input.segments.length,
+      sourceCharCount: this.sourceCharCount(input.segments),
+    } as const;
 
     try {
       if (!(await this.acquireProviderRequestSlot(input.task))) {
         return { missingSegments: [] };
       }
       acquiredProviderSlot = true;
+      startedAt = nowMs();
+      tracePerf("translation.batch.start", {
+        ...traceContext,
+        attempt: attempt + 1,
+        currentConcurrency: input.task.currentConcurrency,
+      });
 
       for await (const response of provider.streamBatch({
         profile: input.profile,
         sourceLanguage: input.sourceLanguage,
         targetLanguage: input.targetLanguage,
         segments: input.segments,
+        traceContext,
         abortSignal: input.task.controller.signal,
       })) {
         if (this.isTaskStopped(input.task)) {
@@ -1035,18 +1109,44 @@ export class TranslationTaskOrchestrator {
       }
 
       if (!sawValidItem) {
+        tracePerf("translation.batch.done", {
+          ...traceContext,
+          attempt: attempt + 1,
+          returnedCount: 0,
+          missingCount: input.segments.length,
+          durationMs: elapsedMs(startedAt),
+          success: true,
+        });
         return undefined;
       }
 
-      return {
-        missingSegments: input.segments.filter(
-          (segment) => !appliedRepresentativeIds.has(segment.id),
-        ),
-      };
+      const missingSegments = input.segments.filter(
+        (segment) => !appliedRepresentativeIds.has(segment.id),
+      );
+      tracePerf("translation.batch.done", {
+        ...traceContext,
+        attempt: attempt + 1,
+        returnedCount: appliedRepresentativeIds.size,
+        missingCount: missingSegments.length,
+        durationMs: elapsedMs(startedAt),
+        success: true,
+      });
+
+      return { missingSegments };
     } catch (error) {
       if (this.isTaskStopped(input.task)) {
         return { missingSegments: [] };
       }
+
+      tracePerf("translation.batch.done", {
+        ...traceContext,
+        attempt: attempt + 1,
+        returnedCount: appliedRepresentativeIds.size,
+        missingCount: input.segments.length - appliedRepresentativeIds.size,
+        durationMs: startedAt === 0 ? undefined : elapsedMs(startedAt),
+        success: false,
+        ...metadataForError(error),
+      });
 
       if (!sawValidItem) {
         await this.handleBatchError(input.task, error);
@@ -1068,12 +1168,28 @@ export class TranslationTaskOrchestrator {
 
   private async requestAndApplyBufferedBatch(
     input: TranslationBatchInput,
+    attempt: number,
   ): Promise<TranslationBatchResult> {
     if (!(await this.acquireProviderRequestSlot(input.task))) {
       return { missingSegments: [] };
     }
 
     let response: Awaited<ReturnType<TranslationProvider["translateBatch"]>>;
+    const startedAt = nowMs();
+    const traceContext = {
+      taskId: input.task.progress.taskId,
+      batchId: input.batchId,
+      stage: this.traceStageForTask(input.task),
+      providerType: input.profile.type,
+      segmentCount: input.segments.length,
+      sourceCharCount: this.sourceCharCount(input.segments),
+    } as const;
+    tracePerf("translation.batch.start", {
+      ...traceContext,
+      attempt: attempt + 1,
+      currentConcurrency: input.task.currentConcurrency,
+    });
+
     try {
       const provider = this.dependencies.getTranslationProvider(input.profile);
       response = await provider.translateBatch({
@@ -1081,8 +1197,18 @@ export class TranslationTaskOrchestrator {
         sourceLanguage: input.sourceLanguage,
         targetLanguage: input.targetLanguage,
         segments: input.segments,
+        traceContext,
         abortSignal: input.task.controller.signal,
       });
+    } catch (error) {
+      tracePerf("translation.batch.done", {
+        ...traceContext,
+        attempt: attempt + 1,
+        durationMs: elapsedMs(startedAt),
+        success: false,
+        ...metadataForError(error),
+      });
+      throw error;
     } finally {
       this.releaseProviderRequestSlot(input.task);
     }
@@ -1109,8 +1235,18 @@ export class TranslationTaskOrchestrator {
     }
 
     const translatedIds = new Set(validItems.map((item) => item.segmentId));
+    const missingSegments = input.segments.filter((segment) => !translatedIds.has(segment.id));
+    tracePerf("translation.batch.done", {
+      ...traceContext,
+      attempt: attempt + 1,
+      returnedCount: validItems.length,
+      missingCount: missingSegments.length,
+      durationMs: elapsedMs(startedAt),
+      success: true,
+    });
+
     return {
-      missingSegments: input.segments.filter((segment) => !translatedIds.has(segment.id)),
+      missingSegments,
     };
   }
 
@@ -1182,6 +1318,14 @@ export class TranslationTaskOrchestrator {
     }
 
     if (attempt + 1 < maxBatchAttempts) {
+      tracePerf("translation.batch.retry", {
+        taskId: input.task.progress.taskId,
+        batchId: input.batchId,
+        attempt: attempt + 1,
+        providerType: input.profile.type,
+        reason: "retry",
+        segmentCount: input.segments.length,
+      });
       await this.translateBatchWithFallback(input, attempt + 1);
       return;
     }
@@ -1196,6 +1340,15 @@ export class TranslationTaskOrchestrator {
       return;
     }
 
+    tracePerf("translation.batch.retry", {
+      taskId: input.task.progress.taskId,
+      batchId: input.batchId,
+      attempt: attempt + 1,
+      providerType: input.profile.type,
+      reason: "degrade",
+      segmentCount: input.segments.length,
+    });
+
     const midpoint = Math.ceil(input.segments.length / 2);
     const batches = [
       input.segments.slice(0, midpoint),
@@ -1203,7 +1356,7 @@ export class TranslationTaskOrchestrator {
     ];
 
     for (const segments of batches) {
-      await this.translateBatchWithFallback({ ...input, segments }, 0);
+      await this.translateBatchWithFallback({ ...input, segments, batchId: undefined }, 0);
     }
   }
 
@@ -1216,6 +1369,7 @@ export class TranslationTaskOrchestrator {
       return [];
     }
 
+    const startedAt = nowMs();
     try {
       const response = await this.dependencies.sendToContent(task.tabId, {
         type: "applyTranslations",
@@ -1240,13 +1394,19 @@ export class TranslationTaskOrchestrator {
           : items.filter(
               (item) => !appliedIds.has(item.segmentId) && !failedIds.has(item.segmentId),
             );
+        const failedCount = explicitFailures.length + implicitFailures.length;
 
         this.incrementProgress(task, {
           translated: appliedItems.length,
-          failed:
-            options.countFailures === false
-              ? 0
-              : explicitFailures.length + implicitFailures.length,
+          failed: options.countFailures === false ? 0 : failedCount,
+        });
+        tracePerf("translation.batch.apply.done", {
+          taskId: task.progress.taskId,
+          itemCount: items.length,
+          appliedCount: appliedItems.length,
+          failedCount,
+          durationMs: elapsedMs(startedAt),
+          success: response.success,
         });
         return appliedItems;
       }
@@ -1254,8 +1414,16 @@ export class TranslationTaskOrchestrator {
       if (options.countFailures !== false) {
         this.incrementProgress(task, { failed: items.length });
       }
+      tracePerf("translation.batch.apply.done", {
+        taskId: task.progress.taskId,
+        itemCount: items.length,
+        appliedCount: 0,
+        failedCount: items.length,
+        durationMs: elapsedMs(startedAt),
+        success: false,
+      });
       return [];
-    } catch {
+    } catch (error) {
       if (this.isTaskStopped(task)) {
         return [];
       }
@@ -1263,6 +1431,15 @@ export class TranslationTaskOrchestrator {
       if (options.countFailures !== false) {
         this.incrementProgress(task, { failed: items.length });
       }
+      tracePerf("translation.batch.apply.done", {
+        taskId: task.progress.taskId,
+        itemCount: items.length,
+        appliedCount: 0,
+        failedCount: items.length,
+        durationMs: elapsedMs(startedAt),
+        success: false,
+        ...metadataForError(error),
+      });
       return [];
     }
   }
@@ -1326,8 +1503,17 @@ export class TranslationTaskOrchestrator {
     }
 
     if (error instanceof ProviderError && error.code === "rateLimited") {
+      const previousConcurrency = task.currentConcurrency;
       task.currentConcurrency = minConcurrency;
       task.consecutiveSuccessfulBatches = 0;
+      if (previousConcurrency !== task.currentConcurrency) {
+        tracePerf("translation.concurrency.changed", {
+          taskId: task.progress.taskId,
+          previousConcurrency,
+          nextConcurrency: task.currentConcurrency,
+          reason: "rateLimited",
+        });
+      }
       this.wakeProviderRequestWaiters(task);
       await new Promise((resolve) => globalThis.setTimeout(resolve, rateLimitBackoffMs));
 
@@ -1366,8 +1552,15 @@ export class TranslationTaskOrchestrator {
   private recordSuccessfulBatch(task: RunningTask): void {
     task.consecutiveSuccessfulBatches += 1;
     if (task.currentConcurrency < defaultConcurrency && task.consecutiveSuccessfulBatches >= 2) {
+      const previousConcurrency = task.currentConcurrency;
       task.currentConcurrency = defaultConcurrency;
       task.consecutiveSuccessfulBatches = 0;
+      tracePerf("translation.concurrency.changed", {
+        taskId: task.progress.taskId,
+        previousConcurrency,
+        nextConcurrency: task.currentConcurrency,
+        reason: "successfulBatches",
+      });
     }
   }
 
