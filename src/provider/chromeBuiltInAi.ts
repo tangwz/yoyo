@@ -176,6 +176,25 @@ async function destroyTranslator(translator: TranslatorInstance): Promise<void> 
   }
 }
 
+function traceEarlyAbortedRequest(
+  request: TranslateTextRequest | TranslateBatchRequest,
+  requestType: "translateText" | "translateBatch",
+): void {
+  const startedAt = nowMs();
+  const error = new LocalAiError(
+    "aborted",
+    "Chrome Built-in AI translation was cancelled.",
+  );
+  tracePerf("localAi.request.error", {
+    ...request.traceContext,
+    providerType,
+    requestType,
+    durationMs: elapsedMs(startedAt),
+    success: false,
+    ...metadataForError(error),
+  });
+}
+
 export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
   constructor(
     private readonly dependencies: ChromeBuiltInTranslatorProviderDependencies = {},
@@ -183,6 +202,9 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
 
   async translateText(request: TranslateTextRequest) {
     assertChromeBuiltInProfile(request.profile);
+    if (request.abortSignal?.aborted) {
+      traceEarlyAbortedRequest(request, "translateText");
+    }
     const translator = await this.createTranslator({
       sourceLanguage: request.sourceLanguage,
       targetLanguage: request.targetLanguage,
@@ -223,6 +245,9 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
 
   async translateBatch(request: TranslateBatchRequest) {
     assertChromeBuiltInProfile(request.profile);
+    if (request.abortSignal?.aborted) {
+      traceEarlyAbortedRequest(request, "translateBatch");
+    }
     const translator = await this.createTranslator({
       sourceLanguage: request.sourceLanguage,
       targetLanguage: request.targetLanguage,

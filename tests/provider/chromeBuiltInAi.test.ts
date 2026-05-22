@@ -610,6 +610,47 @@ describe("ChromeBuiltInTranslatorProvider", () => {
     expect(output).not.toContain("private translated");
   });
 
+  it("traces already aborted provider text requests without private text", async () => {
+    vi.stubEnv("DEV", true);
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const availability = vi.fn(async () => "available" as const);
+    const create = vi.fn(async () => ({
+      translate: vi.fn(async (text: string) => `translated:${text}`),
+    }));
+    const provider = new ChromeBuiltInTranslatorProvider({
+      getTranslatorApi: () => ({ availability, create }),
+    });
+    const abortController = new AbortController();
+    abortController.abort();
+
+    await expect(
+      provider.translateText({
+        profile: profile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        text: "Private provider text",
+        traceContext: {
+          taskId: "task-1",
+          batchId: "batch-1",
+          stage: "selection",
+          providerType: "chrome-built-in-ai",
+        },
+        abortSignal: abortController.signal,
+      }),
+    ).rejects.toMatchObject({
+      code: "aborted",
+    } satisfies Partial<LocalAiError>);
+
+    const output = JSON.stringify(consoleInfo.mock.calls);
+    expect(output).toContain("localAi.request.error");
+    expect(output).toContain("\"providerType\":\"chrome-built-in-ai\"");
+    expect(output).toContain("\"requestType\":\"translateText\"");
+    expect(output).toContain("\"success\":false");
+    expect(output).not.toContain("Private provider text");
+    expect(availability).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("destroys batch translator sessions on failure", async () => {
     const destroy = vi.fn(async () => undefined);
     const provider = new ChromeBuiltInTranslatorProvider({
