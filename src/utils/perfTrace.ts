@@ -6,7 +6,8 @@ export type PerfTraceReason =
   | "timeout"
   | "parseFailed"
   | "providerUnavailable"
-  | "emptyResponse";
+  | "emptyResponse"
+  | "aborted";
 
 export type PerfTraceMetadata = {
   taskId?: string;

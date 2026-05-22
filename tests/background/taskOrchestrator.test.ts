@@ -426,9 +426,15 @@ describe("TranslationTaskOrchestrator", () => {
         taskId: "task-1",
         state: "cancelled",
       });
+      expect(perfTraceMetadata(infoSpy.mock.calls, "translation.batch.done")).toContainEqual(
+        expect.objectContaining({
+          success: false,
+          reason: "aborted",
+        }),
+      );
       expect(
         perfTraceMetadata(infoSpy.mock.calls, "translation.batch.done"),
-      ).not.toContainEqual(expect.objectContaining({ success: false }));
+      ).not.toContainEqual(expect.objectContaining({ errorName: "Error" }));
       expect(renderedConsoleOutput(infoSpy.mock.calls)).not.toContain(
         "Private cancelled source.",
       );
@@ -4412,12 +4418,21 @@ describe("TranslationTaskOrchestrator", () => {
 
       expect(streamBatch).toHaveBeenCalledTimes(1);
       expect(translateBatch).toHaveBeenCalledTimes(1);
-      expect(
-        perfTraceMetadata(infoSpy.mock.calls, "translation.batch.done").filter(
-          (metadata) => metadata.success === true,
-        ),
-      ).toEqual([
+      const batchStarts = perfTraceMetadata(infoSpy.mock.calls, "translation.batch.start");
+      const batchDone = perfTraceMetadata(infoSpy.mock.calls, "translation.batch.done");
+
+      expect(batchStarts).toHaveLength(2);
+      expect(batchStarts[0].batchId).not.toBe(batchStarts[1].batchId);
+      expect(batchDone).toEqual([
         expect.objectContaining({
+          batchId: batchStarts[0].batchId,
+          returnedCount: 0,
+          missingCount: 1,
+          success: false,
+          reason: "emptyResponse",
+        }),
+        expect.objectContaining({
+          batchId: batchStarts[1].batchId,
           returnedCount: 1,
           missingCount: 0,
           success: true,

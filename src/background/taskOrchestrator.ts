@@ -106,6 +106,10 @@ type TranslationBatchResult = {
   error?: unknown;
 };
 
+type TranslationBatchFallback = {
+  fallback: true;
+};
+
 type ApplyTranslationsOptions = {
   batchId?: string;
   countFailures?: boolean;
@@ -731,6 +735,25 @@ export class TranslationTaskOrchestrator {
     return task.context?.translationMode === "lazyViewport" ? "lazy" : "page";
   }
 
+  private traceBatchAborted(
+    input: TranslationBatchInput,
+    attempt: number,
+    startedAt: number,
+  ): void {
+    tracePerf("translation.batch.done", {
+      taskId: input.task.progress.taskId,
+      batchId: input.batchId,
+      attempt: attempt + 1,
+      providerType: input.profile.type,
+      stage: this.traceStageForTask(input.task),
+      segmentCount: input.segments.length,
+      sourceCharCount: this.sourceCharCount(input.segments),
+      durationMs: elapsedMs(startedAt),
+      success: false,
+      reason: "aborted",
+    });
+  }
+
   private async resolveSourceLanguageForProfile(
     profile: ProviderProfile,
     sourceLanguage: string,
@@ -1041,6 +1064,13 @@ export class TranslationTaskOrchestrator {
   ): Promise<TranslationBatchResult> {
     const streamingResult = await this.requestAndApplyStreamingBatch(input, attempt);
     if (streamingResult) {
+      if ("fallback" in streamingResult) {
+        return this.requestAndApplyBufferedBatch(
+          { ...input, batchId: this.createBatchId() },
+          attempt,
+        );
+      }
+
       return streamingResult;
     }
 
@@ -1050,7 +1080,7 @@ export class TranslationTaskOrchestrator {
   private async requestAndApplyStreamingBatch(
     input: TranslationBatchInput,
     attempt: number,
-  ): Promise<TranslationBatchResult | undefined> {
+  ): Promise<TranslationBatchResult | TranslationBatchFallback | undefined> {
     const provider = this.dependencies.getTranslationProvider(input.profile);
     if (!provider.streamBatch) {
       return undefined;
@@ -1060,6 +1090,7 @@ export class TranslationTaskOrchestrator {
     let sawValidItem = false;
     let acquiredProviderSlot = false;
     let startedAt = 0;
+    let batchStarted = false;
     const traceContext = {
       taskId: input.task.progress.taskId,
       batchId: input.batchId,
@@ -1075,6 +1106,7 @@ export class TranslationTaskOrchestrator {
       }
       acquiredProviderSlot = true;
       startedAt = nowMs();
+      batchStarted = true;
       tracePerf("translation.batch.start", {
         ...traceContext,
         attempt: attempt + 1,
@@ -1090,11 +1122,13 @@ export class TranslationTaskOrchestrator {
         abortSignal: input.task.controller.signal,
       })) {
         if (this.isTaskStopped(input.task)) {
+          this.traceBatchAborted(input, attempt, startedAt);
           return { missingSegments: [] };
         }
 
         for (const item of this.filterBatchItems(response.items, input.segments)) {
           if (this.isTaskStopped(input.task)) {
+            this.traceBatchAborted(input, attempt, startedAt);
             return { missingSegments: [] };
           }
 
@@ -1106,11 +1140,21 @@ export class TranslationTaskOrchestrator {
       }
 
       if (this.isTaskStopped(input.task)) {
+        this.traceBatchAborted(input, attempt, startedAt);
         return { missingSegments: [] };
       }
 
       if (!sawValidItem) {
-        return undefined;
+        tracePerf("translation.batch.done", {
+          ...traceContext,
+          attempt: attempt + 1,
+          returnedCount: 0,
+          missingCount: input.segments.length,
+          durationMs: elapsedMs(startedAt),
+          success: false,
+          reason: "emptyResponse",
+        });
+        return { fallback: true };
       }
 
       const missingSegments = input.segments.filter(
@@ -1128,6 +1172,9 @@ export class TranslationTaskOrchestrator {
       return { missingSegments };
     } catch (error) {
       if (this.isTaskStopped(input.task)) {
+        if (batchStarted) {
+          this.traceBatchAborted(input, attempt, startedAt);
+        }
         return { missingSegments: [] };
       }
 
@@ -1143,7 +1190,7 @@ export class TranslationTaskOrchestrator {
 
       if (!sawValidItem) {
         await this.handleBatchError(input.task, error);
-        return undefined;
+        return { fallback: true };
       }
 
       return {
@@ -1195,6 +1242,7 @@ export class TranslationTaskOrchestrator {
       });
     } catch (error) {
       if (this.isTaskStopped(input.task)) {
+        this.traceBatchAborted(input, attempt, startedAt);
         return { missingSegments: [] };
       }
 
@@ -1211,6 +1259,7 @@ export class TranslationTaskOrchestrator {
     }
 
     if (this.isTaskStopped(input.task)) {
+      this.traceBatchAborted(input, attempt, startedAt);
       return { missingSegments: [] };
     }
 
@@ -1225,6 +1274,7 @@ export class TranslationTaskOrchestrator {
       });
 
       if (this.isTaskStopped(input.task)) {
+        this.traceBatchAborted(input, attempt, startedAt);
         return { missingSegments: [] };
       }
 
