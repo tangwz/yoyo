@@ -305,11 +305,20 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
     const translatorId = response.translatorId;
     return {
       translate: async (text: string, translateOptions?: TranslatorTranslateOptions) => {
+        const startedAt = nowMs();
         if (translateOptions?.signal?.aborted) {
-          throw new DOMException(
+          const error = new DOMException(
             "Chrome Built-in AI translation was cancelled.",
             "AbortError",
           );
+          tracePerf("localAi.request.error", {
+            providerType,
+            requestType: "chromeBuiltInAi.translate",
+            durationMs: elapsedMs(startedAt),
+            success: false,
+            ...metadataForError(error),
+          });
+          throw error;
         }
 
         const translateResponse = await this.sendSessionRequest(

@@ -329,6 +329,44 @@ describe("ChromeBuiltInAiOffscreenClient", () => {
     expect(runtime.connect).toHaveBeenCalledTimes(1);
   });
 
+  it("traces already aborted translate requests without source text", async () => {
+    vi.stubEnv("DEV", true);
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const port = createPort((message) => {
+      if (message.type === "chromeBuiltInAi.create") {
+        return { requestId: message.requestId, ok: true, translatorId: "translator-1" };
+      }
+      return { requestId: message.requestId, ok: true, translatedText: "translated" };
+    });
+    const client = new ChromeBuiltInAiOffscreenClient({
+      runtime: {
+        getURL: vi.fn((path: string) => `chrome-extension://test/${path}`),
+        getContexts: vi.fn(async () => [{ contextId: "existing" }]),
+        connect: vi.fn(() => port),
+      },
+      offscreen: {
+        createDocument: vi.fn(async () => undefined),
+      },
+    });
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const translator = await client.create({
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    await expect(
+      translator.translate("Private text", { signal: abortController.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+
+    const output = JSON.stringify(consoleInfo.mock.calls);
+    expect(output).toContain("localAi.request.error");
+    expect(output).toContain("\"requestType\":\"chromeBuiltInAi.translate\"");
+    expect(output).toContain("\"success\":false");
+    expect(output).not.toContain("Private text");
+  });
+
   it("rethrows offscreen errors with the remote error name", async () => {
     const port = createPort((message) => ({
       requestId: message.requestId,
