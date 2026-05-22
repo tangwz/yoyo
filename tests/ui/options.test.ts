@@ -418,7 +418,7 @@ describe("options app", () => {
     ["kimi", "Kimi", "https://api.moonshot.ai/v1", "moonshot-v1-8k"],
     ["glm", "GLM", "https://open.bigmodel.cn/api/paas/v4", "glm-5.1"],
     ["minimax", "MiniMax", "https://api.minimax.io/v1", "MiniMax-M2.7"],
-    ["xiaomi-mimo", "Xiaomi MiMo", "https://api.xiaomimimo.com/v1", "mimo-v2-flash"],
+    ["xiaomi-mimo", "Xiaomi MiMo", "https://api.xiaomimimo.com/v1", "MiMo-V2.5"],
   ])("fills provider fields from the %s preset", async (presetId, name, url, model) => {
     await renderReady();
 
@@ -426,7 +426,25 @@ describe("options app", () => {
 
     expect(screen.getByRole("textbox", { name: "显示名称" })).toHaveValue(name);
     expect(screen.getByRole("textbox", { name: "接口地址" })).toHaveValue(url);
-    expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue(model);
+    const textModelInput =
+      presetId === "xiaomi-mimo"
+        ? screen.getByRole("combobox", { name: "文本模型" })
+        : screen.getByRole("textbox", { name: "文本模型" });
+    expect(textModelInput).toHaveValue(model);
+  });
+
+  it("offers Xiaomi MiMo Pro as a selectable text model option", async () => {
+    const { container } = await renderReady();
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "xiaomi-mimo");
+
+    const textModelInput = screen.getByRole("combobox", { name: "文本模型" });
+    expect(textModelInput).toHaveAttribute("list", "text-model-options");
+    expect(
+      [...container.querySelectorAll<HTMLOptionElement>("datalist#text-model-options option")].map(
+        (option) => option.value,
+      ),
+    ).toEqual(["MiMo-V2.5", "MiMo-V2.5-Pro"]);
   });
 
   it("saves the selected provider profile and activates it", async () => {

@@ -23,15 +23,28 @@ function appendUniqueModelName(candidates: string[], modelName: string | undefin
   candidates.push(trimmed);
 }
 
+function getPresetTextModels(context: ProviderModelContext): string[] {
+  const preset = findPreset(context);
+  const models = [preset?.defaultTextModel, ...(preset?.textModelOptions ?? [])];
+  const candidates: string[] = [];
+
+  for (const model of models) {
+    appendUniqueModelName(candidates, model);
+  }
+
+  return candidates;
+}
+
 export function normalizeModelNameForProfile(
   context: ProviderModelContext,
   modelName: string,
 ): string {
   const trimmed = modelName.trim();
-  const presetModel = findPreset(context)?.defaultTextModel;
 
-  if (presetModel && trimmed.toLowerCase() === presetModel.toLowerCase()) {
-    return presetModel;
+  for (const presetModel of getPresetTextModels(context)) {
+    if (trimmed.toLowerCase() === presetModel.toLowerCase()) {
+      return presetModel;
+    }
   }
 
   return trimmed;

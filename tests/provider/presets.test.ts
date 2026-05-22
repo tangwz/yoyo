@@ -47,7 +47,8 @@ describe("provider presets", () => {
           name: "Xiaomi MiMo",
           type: "openai-compatible",
           defaultBaseUrl: "https://api.xiaomimimo.com/v1",
-          defaultTextModel: "mimo-v2-flash",
+          defaultTextModel: "MiMo-V2.5",
+          textModelOptions: ["MiMo-V2.5", "MiMo-V2.5-Pro"],
         },
       ]),
     );
