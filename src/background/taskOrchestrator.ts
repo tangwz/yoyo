@@ -102,6 +102,7 @@ type TranslationBatchInput = TaskTranslationContext & {
 };
 
 type TranslationBatchResult = {
+  batchId?: string;
   missingSegments: PageSegment[];
   error?: unknown;
 };
@@ -1035,9 +1036,10 @@ export class TranslationTaskOrchestrator {
         return;
       }
 
+      const resultBatchId = result.batchId ?? batchId;
       tracePerf("translation.batch.missing", {
         taskId: batchInput.task.progress.taskId,
-        batchId,
+        batchId: resultBatchId,
         attempt: attempt + 1,
         providerType: batchInput.profile.type,
         segmentCount: batchInput.segments.length,
@@ -1045,7 +1047,7 @@ export class TranslationTaskOrchestrator {
       });
 
       await this.retryOrDegradeBatch(
-        { ...batchInput, segments: result.missingSegments },
+        { ...batchInput, batchId: resultBatchId, segments: result.missingSegments },
         attempt,
       );
     } catch (error) {
@@ -1102,7 +1104,7 @@ export class TranslationTaskOrchestrator {
 
     try {
       if (!(await this.acquireProviderRequestSlot(input.task))) {
-        return { missingSegments: [] };
+        return { batchId: input.batchId, missingSegments: [] };
       }
       acquiredProviderSlot = true;
       startedAt = nowMs();
@@ -1123,13 +1125,13 @@ export class TranslationTaskOrchestrator {
       })) {
         if (this.isTaskStopped(input.task)) {
           this.traceBatchAborted(input, attempt, startedAt);
-          return { missingSegments: [] };
+          return { batchId: input.batchId, missingSegments: [] };
         }
 
         for (const item of this.filterBatchItems(response.items, input.segments)) {
           if (this.isTaskStopped(input.task)) {
             this.traceBatchAborted(input, attempt, startedAt);
-            return { missingSegments: [] };
+            return { batchId: input.batchId, missingSegments: [] };
           }
 
           sawValidItem = true;
@@ -1141,7 +1143,7 @@ export class TranslationTaskOrchestrator {
 
       if (this.isTaskStopped(input.task)) {
         this.traceBatchAborted(input, attempt, startedAt);
-        return { missingSegments: [] };
+        return { batchId: input.batchId, missingSegments: [] };
       }
 
       if (!sawValidItem) {
@@ -1169,13 +1171,13 @@ export class TranslationTaskOrchestrator {
         success: true,
       });
 
-      return { missingSegments };
+      return { batchId: input.batchId, missingSegments };
     } catch (error) {
       if (this.isTaskStopped(input.task)) {
         if (batchStarted) {
           this.traceBatchAborted(input, attempt, startedAt);
         }
-        return { missingSegments: [] };
+        return { batchId: input.batchId, missingSegments: [] };
       }
 
       tracePerf("translation.batch.done", {
@@ -1194,6 +1196,7 @@ export class TranslationTaskOrchestrator {
       }
 
       return {
+        batchId: input.batchId,
         missingSegments: input.segments.filter(
           (segment) => !appliedRepresentativeIds.has(segment.id),
         ),
@@ -1211,7 +1214,7 @@ export class TranslationTaskOrchestrator {
     attempt: number,
   ): Promise<TranslationBatchResult> {
     if (!(await this.acquireProviderRequestSlot(input.task))) {
-      return { missingSegments: [] };
+      return { batchId: input.batchId, missingSegments: [] };
     }
 
     let response: Awaited<ReturnType<TranslationProvider["translateBatch"]>>;
@@ -1243,7 +1246,7 @@ export class TranslationTaskOrchestrator {
     } catch (error) {
       if (this.isTaskStopped(input.task)) {
         this.traceBatchAborted(input, attempt, startedAt);
-        return { missingSegments: [] };
+        return { batchId: input.batchId, missingSegments: [] };
       }
 
       tracePerf("translation.batch.done", {
@@ -1260,7 +1263,7 @@ export class TranslationTaskOrchestrator {
 
     if (this.isTaskStopped(input.task)) {
       this.traceBatchAborted(input, attempt, startedAt);
-      return { missingSegments: [] };
+      return { batchId: input.batchId, missingSegments: [] };
     }
 
     const validItems = this.filterBatchItems(response.items, input.segments);
@@ -1275,7 +1278,7 @@ export class TranslationTaskOrchestrator {
 
       if (this.isTaskStopped(input.task)) {
         this.traceBatchAborted(input, attempt, startedAt);
-        return { missingSegments: [] };
+        return { batchId: input.batchId, missingSegments: [] };
       }
 
       if (appliedItems.length > 0) {
@@ -1295,6 +1298,7 @@ export class TranslationTaskOrchestrator {
     });
 
     return {
+      batchId: input.batchId,
       missingSegments,
     };
   }

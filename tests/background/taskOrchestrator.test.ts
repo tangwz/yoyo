@@ -4380,7 +4380,9 @@ describe("TranslationTaskOrchestrator", () => {
     >(async () => ({
       items: [{ segmentId: "segment-1", translatedText: "Private buffered translation." }],
     }));
-    const streamBatch = vi.fn(async function* () {
+    const streamBatch = vi.fn(async function* (
+      _request: TranslateBatchRequest,
+    ): AsyncGenerator<{ items: Array<{ segmentId: string; translatedText: string }> }> {
       await Promise.resolve();
     });
     const { orchestrator, sendToContent } = createOrchestrator({
@@ -4441,6 +4443,107 @@ describe("TranslationTaskOrchestrator", () => {
       const output = renderedConsoleOutput(infoSpy.mock.calls);
       expect(output).not.toContain("Private stream source.");
       expect(output).not.toContain("Private buffered translation.");
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("correlates missing and retry traces with buffered fallback batch ids", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const translateBatch = vi.fn<
+      (request: TranslateBatchRequest) => Promise<{
+        items: Array<{ segmentId: string; translatedText: string }>;
+      }>
+    >()
+      .mockResolvedValueOnce({
+        items: [{ segmentId: "segment-1", translatedText: "Private first translation." }],
+      })
+      .mockResolvedValueOnce({
+        items: [{ segmentId: "segment-2", translatedText: "Private second translation." }],
+      });
+    const streamBatch = vi.fn(async function* (
+      _request: TranslateBatchRequest,
+    ): AsyncGenerator<{ items: Array<{ segmentId: string; translatedText: string }> }> {
+      await Promise.resolve();
+    });
+    const { orchestrator, sendToContent } = createOrchestrator({
+      getTranslationProvider: () => ({
+        translateText: vi.fn(),
+        translateBatch,
+        streamBatch,
+      }),
+    });
+
+    try {
+      sendToContent.mockImplementation(async (_tabId, message) => {
+        if (message.type === "collectSegments") {
+          return {
+            type: "collectSegmentsResult",
+            taskId: message.taskId,
+            segments: [
+              segment({ id: "segment-1", sourceText: "Private fallback source one." }),
+              segment({
+                id: "segment-2",
+                order: 2,
+                sourceText: "Private fallback source two.",
+                textHash: "hash-2",
+              }),
+            ],
+          };
+        }
+
+        if (message.type !== "applyTranslations") {
+          throw new Error(`Unexpected content message: ${message.type}`);
+        }
+
+        return { type: "contentActionResult", success: true };
+      });
+
+      await expect(
+        orchestrator.translatePage({
+          tabId: 7,
+          sourceLanguage: "en",
+          targetLanguage: "zh-CN",
+        }),
+      ).resolves.toMatchObject({ state: "completed" });
+
+      expect(streamBatch).toHaveBeenCalledTimes(2);
+      expect(translateBatch).toHaveBeenCalledTimes(2);
+      const streamBatchIds = streamBatch.mock.calls.map(
+        ([request]) => request.traceContext?.batchId,
+      );
+      const bufferedBatchIds = translateBatch.mock.calls.map(
+        ([request]) => request.traceContext?.batchId,
+      );
+
+      expect(bufferedBatchIds[0]).toEqual(expect.stringMatching(/^batch-/));
+      expect(bufferedBatchIds[0]).not.toBe(streamBatchIds[0]);
+      expect(perfTraceMetadata(infoSpy.mock.calls, "translation.batch.missing")).toContainEqual(
+        expect.objectContaining({
+          batchId: bufferedBatchIds[0],
+          missingCount: 1,
+        }),
+      );
+      expect(perfTraceMetadata(infoSpy.mock.calls, "translation.batch.retry")).toContainEqual(
+        expect.objectContaining({
+          batchId: bufferedBatchIds[0],
+          reason: "retry",
+          segmentCount: 1,
+        }),
+      );
+      expect(
+        perfTraceMetadata(infoSpy.mock.calls, "translation.batch.missing"),
+      ).not.toContainEqual(expect.objectContaining({ batchId: streamBatchIds[0] }));
+      expect(
+        perfTraceMetadata(infoSpy.mock.calls, "translation.batch.retry"),
+      ).not.toContainEqual(expect.objectContaining({ batchId: streamBatchIds[0] }));
+      const output = renderedConsoleOutput(infoSpy.mock.calls);
+      expect(output).not.toContain("Private fallback source one.");
+      expect(output).not.toContain("Private fallback source two.");
+      expect(output).not.toContain("Private first translation.");
+      expect(output).not.toContain("Private second translation.");
     } finally {
       infoSpy.mockRestore();
       vi.unstubAllEnvs();
