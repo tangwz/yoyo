@@ -2,6 +2,7 @@ import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
 import { formatLocalAiErrorMessage, LocalAiError } from "@/provider/localAiErrors";
 import type { TranslationProvider } from "@/provider/translationProvider";
 import type { ProviderProfile } from "@/provider/types";
+import { elapsedMs, metadataForError, nowMs, tracePerf } from "@/utils/perfTrace";
 
 export type TranslateSelectionInput = {
   tabId: number;
@@ -33,8 +34,22 @@ export async function translateSelection(
     return;
   }
 
+  const translationStartedAt = nowMs();
+  tracePerf("selection.translate.start", {
+    stage: "selection",
+    sourceCharCount: sourceText.length,
+    sourceLanguage: input.sourceLanguage,
+    targetLanguage: input.targetLanguage,
+  });
+
   try {
+    const profileStartedAt = nowMs();
     const profile = await dependencies.getActiveProfile();
+    tracePerf("selection.profile.done", {
+      providerType: profile?.type,
+      durationMs: elapsedMs(profileStartedAt),
+      success: profile !== undefined,
+    });
     if (!profile) {
       await sendSelectionTranslationError(
         input.tabId,
@@ -44,30 +59,65 @@ export async function translateSelection(
       );
       return;
     }
+    const detectStartedAt = nowMs();
     const sourceLanguage = await resolveSelectionSourceLanguage(
       sourceText,
       input.sourceLanguage,
       profile,
       dependencies,
     );
+    tracePerf("selection.detectLanguage.done", {
+      providerType: profile.type,
+      sourceLanguage,
+      durationMs: elapsedMs(detectStartedAt),
+      success: true,
+    });
     if (profile.type === "chrome-built-in-ai") {
+      const prepareStartedAt = nowMs();
       await dependencies.prepareChromeBuiltInAi?.(
         sourceLanguage,
         input.targetLanguage,
       );
+      tracePerf("selection.prepareLocalAi.done", {
+        providerType: "chrome-built-in-ai",
+        sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        durationMs: elapsedMs(prepareStartedAt),
+        success: true,
+      });
     }
 
+    const providerStartedAt = nowMs();
     const response = await dependencies.getTranslationProvider(profile).translateText({
       profile,
       sourceLanguage,
       targetLanguage: input.targetLanguage,
       text: sourceText,
+      traceContext: {
+        stage: "selection",
+        providerType: profile.type,
+        segmentCount: 1,
+        sourceCharCount: sourceText.length,
+      },
+    });
+    tracePerf("selection.provider.done", {
+      providerType: profile.type,
+      sourceCharCount: sourceText.length,
+      outputCharCount: response.translatedText.length,
+      durationMs: elapsedMs(providerStartedAt),
+      success: true,
     });
 
+    const showResultStartedAt = nowMs();
     await dependencies.sendToContent(input.tabId, {
       type: "showSelectionTranslation",
       sourceText,
       translatedText: response.translatedText,
+    });
+    tracePerf("selection.showResult.done", {
+      providerType: profile.type,
+      durationMs: elapsedMs(showResultStartedAt),
+      success: true,
     });
   } catch (error: unknown) {
     await sendSelectionTranslationError(
@@ -76,6 +126,12 @@ export async function translateSelection(
       getSelectionTranslationErrorMessage(error),
       dependencies,
     );
+    tracePerf("selection.translate.error", {
+      stage: "selection",
+      durationMs: elapsedMs(translationStartedAt),
+      success: false,
+      ...metadataForError(error),
+    });
   }
 }
 

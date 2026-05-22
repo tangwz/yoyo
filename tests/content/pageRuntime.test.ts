@@ -22,6 +22,16 @@ import {
   showPageTranslations,
 } from "@/content/pageRuntime";
 
+function renderedConsoleOutput(calls: unknown[][]): string {
+  return calls
+    .map((call) =>
+      call
+        .map((value) => (typeof value === "string" ? value : JSON.stringify(value)))
+        .join(" "),
+    )
+    .join("\n");
+}
+
 describe("page runtime", () => {
   const setUrl = (url: string) => {
     (window as unknown as { happyDOM: { setURL: (nextUrl: string) => void } })
@@ -180,6 +190,36 @@ describe("page runtime", () => {
     ).toBe(document.querySelector("#first"));
   });
 
+  it("traces collected segments without raw text", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    document.body.innerHTML = `
+      <article>
+        <p>First private paragraph.</p>
+        <p>Second private paragraph.</p>
+      </article>
+    `;
+
+    await collectSegments("task-1", "fullPage", "en", "zh-CN");
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] content.collectSegments.done",
+      expect.objectContaining({
+        taskId: "task-1",
+        translationMode: "fullPage",
+        segmentCount: 2,
+        sourceCharCount: 49,
+        success: true,
+      }),
+    );
+    const output = renderedConsoleOutput(infoSpy.mock.calls);
+    expect(output).not.toContain("First private paragraph.");
+    expect(output).not.toContain("Second private paragraph.");
+
+    infoSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
   it("inserts lazy pending indicators only for viewport and near-viewport segments", async () => {
     const originalInnerHeight = window.innerHeight;
     Object.defineProperty(window, "innerHeight", {
@@ -233,6 +273,8 @@ describe("page runtime", () => {
 
   it("enqueues visible lazy viewport segments as a runtime translation batch", async () => {
     vi.useFakeTimers();
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const originalInnerHeight = window.innerHeight;
     Object.defineProperty(window, "innerHeight", {
       configurable: true,
@@ -297,11 +339,34 @@ describe("page runtime", () => {
         ],
       }),
     );
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] content.queue.flush.start",
+      expect.objectContaining({
+        taskId: "task-1",
+        translationMode: "lazyViewport",
+        segmentCount: 2,
+        retryCount: 0,
+        failedReportCount: 0,
+      }),
+    );
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] content.queue.flush.done",
+      expect.objectContaining({
+        taskId: "task-1",
+        translationMode: "lazyViewport",
+        segmentCount: 2,
+        retryCount: 0,
+        failedReportCount: 0,
+        success: true,
+      }),
+    );
 
     Object.defineProperty(window, "innerHeight", {
       configurable: true,
       value: originalInnerHeight,
     });
+    infoSpy.mockRestore();
+    vi.unstubAllEnvs();
   });
 
   it("queues all discovered segments in full-page mode", async () => {
@@ -1299,6 +1364,8 @@ describe("page runtime", () => {
 
   it("marks queued segments translated when page results are applied", async () => {
     vi.useFakeTimers();
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     document.body.innerHTML = `
       <article>
         <p>Visible paragraph.</p>
@@ -1320,6 +1387,19 @@ describe("page runtime", () => {
         segments: [expect.objectContaining({ id: "seg_1" })],
       }),
     );
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] content.applyTranslations.done",
+      expect.objectContaining({
+        taskId: "task-1",
+        itemCount: 1,
+        appliedCount: 1,
+        failedCount: 0,
+        success: true,
+      }),
+    );
+
+    infoSpy.mockRestore();
+    vi.unstubAllEnvs();
   });
 
   it("marks queued segments failed when page results cannot be applied", async () => {
