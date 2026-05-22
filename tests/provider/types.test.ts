@@ -13,7 +13,7 @@ describe("provider profile types", () => {
       type: "openai-compatible",
       baseURL: "https://api.example.test/v1",
       apiKey: "secret",
-      textModel: "gpt-4.1-mini",
+      textModel: "gpt-5-mini",
     };
 
     expect(profile.type).toBe("openai-compatible");

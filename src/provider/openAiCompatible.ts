@@ -25,6 +25,15 @@ type ChatCompletionStreamResponse = {
   }>;
 };
 
+type ChatCompletionRequestBody = {
+  model: string;
+  messages: Array<{ role: "user"; content: string }>;
+  max_tokens: number;
+  temperature?: number;
+  stream?: true;
+  thinking?: { type: "disabled" };
+};
+
 function joinUrl(baseURL: string, path: string): string {
   return `${baseURL.trim().replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
@@ -61,6 +70,36 @@ function canRetryWithNextModelCandidate(error: ProviderError): boolean {
     error.code === "invalidRequest" &&
     (error.status === 400 || error.status === 404 || error.status === 422)
   );
+}
+
+function isKimiK2Model(request: GenerateTextRequest, model: string): boolean {
+  const providerId = request.profile.presetId ?? request.profile.id;
+
+  return providerId === "kimi" && /^kimi-k2\./i.test(model);
+}
+
+function buildChatCompletionRequestBody(
+  request: GenerateTextRequest,
+  model: string,
+  stream = false,
+): ChatCompletionRequestBody {
+  const body: ChatCompletionRequestBody = {
+    model,
+    messages: [{ role: "user", content: request.prompt }],
+    max_tokens: request.profile.requestParams?.maxTokens ?? 1200,
+  };
+
+  if (stream) {
+    body.stream = true;
+  }
+
+  if (isKimiK2Model(request, model)) {
+    body.thinking = { type: "disabled" };
+  } else {
+    body.temperature = request.profile.requestParams?.temperature ?? 0.2;
+  }
+
+  return body;
 }
 
 export class OpenAiCompatibleProvider {
@@ -237,12 +276,7 @@ export class OpenAiCompatibleProvider {
         "content-type": "application/json",
         authorization: `Bearer ${request.profile.apiKey}`,
       },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: request.prompt }],
-        temperature: request.profile.requestParams?.temperature ?? 0.2,
-        max_tokens: request.profile.requestParams?.maxTokens ?? 1200,
-      }),
+      body: JSON.stringify(buildChatCompletionRequestBody(request, model)),
       signal,
     });
 
@@ -284,13 +318,7 @@ export class OpenAiCompatibleProvider {
         "content-type": "application/json",
         authorization: `Bearer ${request.profile.apiKey}`,
       },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: request.prompt }],
-        temperature: request.profile.requestParams?.temperature ?? 0.2,
-        max_tokens: request.profile.requestParams?.maxTokens ?? 1200,
-        stream: true,
-      }),
+      body: JSON.stringify(buildChatCompletionRequestBody(request, model, true)),
       signal,
     });
 

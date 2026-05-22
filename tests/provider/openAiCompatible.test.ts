@@ -208,15 +208,15 @@ describe("OpenAiCompatibleProvider", () => {
       profile: {
         ...profile,
         presetId: "openai",
-        textModel: "GPT-4.1-MINI",
+        textModel: "GPT-5-MINI",
       },
       prompt: "Translate me",
     });
 
-    expect(response).toEqual({ text: "translated text", model: "gpt-4.1-mini" });
+    expect(response).toEqual({ text: "translated text", model: "gpt-5-mini" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("GPT-4.1-MINI");
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("gpt-4.1-mini");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("GPT-5-MINI");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("gpt-5-mini");
   });
 
   it("uses a pasted chat completions endpoint with query params without appending the path twice", async () => {
@@ -321,6 +321,39 @@ describe("OpenAiCompatibleProvider", () => {
       messages: [{ role: "user", content: "Reply with exactly: ok" }],
       temperature: 0,
       max_tokens: 32,
+    });
+  });
+
+  it("omits temperature and disables thinking for Kimi K2 requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "translated text" } }],
+          model: "kimi-k2.6",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    await provider.generateText({
+      profile: {
+        ...profile,
+        id: "kimi",
+        presetId: "kimi",
+        baseURL: "https://api.moonshot.ai/v1",
+        textModel: "kimi-k2.6",
+        requestParams: { temperature: 0.7, maxTokens: 2048, timeoutMs: 1000 },
+      },
+      prompt: "Translate me",
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      model: "kimi-k2.6",
+      messages: [{ role: "user", content: "Translate me" }],
+      max_tokens: 2048,
+      thinking: { type: "disabled" },
     });
   });
 

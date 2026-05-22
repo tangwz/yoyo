@@ -58,6 +58,10 @@ async function renderReady(navigationName = "设置分区") {
   return result;
 }
 
+function getTextModelInput(): HTMLInputElement {
+  return screen.getByLabelText("文本模型") as HTMLInputElement;
+}
+
 describe("options app", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -188,7 +192,7 @@ describe("options app", () => {
       "https://api.openai.com/v1",
     );
     expect(screen.getByLabelText("访问密钥")).toHaveAttribute("type", "password");
-    expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue("gpt-4.1-mini");
+    expect(getTextModelInput()).toHaveValue("gpt-5-mini");
     expect(screen.getByRole("textbox", { name: "视觉模型" })).toBeVisible();
     expect(screen.getByRole("button", { name: "测试连接" })).toBeVisible();
 
@@ -409,13 +413,13 @@ describe("options app", () => {
       "https://api.deepseek.com/v1",
     );
     expect(screen.getByLabelText("访问密钥")).toHaveValue("saved-key");
-    expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue("deepseek-chat");
+    expect(getTextModelInput()).toHaveValue("deepseek-chat");
     expect(setActiveProviderId).toHaveBeenCalledWith("deepseek");
   });
 
   it.each([
-    ["deepseek", "DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat"],
-    ["kimi", "Kimi", "https://api.moonshot.ai/v1", "moonshot-v1-8k"],
+    ["deepseek", "DeepSeek", "https://api.deepseek.com/v1", "deepseek-v4-flash"],
+    ["kimi", "Kimi", "https://api.moonshot.ai/v1", "kimi-k2.6"],
     ["glm", "GLM", "https://open.bigmodel.cn/api/paas/v4", "glm-5.1"],
     ["minimax", "MiniMax", "https://api.minimax.io/v1", "MiniMax-M2.7"],
     ["xiaomi-mimo", "Xiaomi MiMo", "https://api.xiaomimimo.com/v1", "MiMo-V2.5"],
@@ -426,11 +430,31 @@ describe("options app", () => {
 
     expect(screen.getByRole("textbox", { name: "显示名称" })).toHaveValue(name);
     expect(screen.getByRole("textbox", { name: "接口地址" })).toHaveValue(url);
-    const textModelInput =
-      presetId === "xiaomi-mimo"
-        ? screen.getByRole("combobox", { name: "文本模型" })
-        : screen.getByRole("textbox", { name: "文本模型" });
-    expect(textModelInput).toHaveValue(model);
+    expect(getTextModelInput()).toHaveValue(model);
+  });
+
+  it("offers current OpenAI, DeepSeek, and Kimi model options", async () => {
+    const { container } = await renderReady();
+
+    expect(
+      [...container.querySelectorAll<HTMLOptionElement>("datalist#text-model-options option")].map(
+        (option) => option.value,
+      ),
+    ).toEqual(["gpt-5-mini", "gpt-5", "gpt-5.2"]);
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "deepseek");
+    expect(
+      [...container.querySelectorAll<HTMLOptionElement>("datalist#text-model-options option")].map(
+        (option) => option.value,
+      ),
+    ).toEqual(["deepseek-v4-flash", "deepseek-v4-pro"]);
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "kimi");
+    expect(
+      [...container.querySelectorAll<HTMLOptionElement>("datalist#text-model-options option")].map(
+        (option) => option.value,
+      ),
+    ).toEqual(["kimi-k2.6", "kimi-k2.5"]);
   });
 
   it("offers Xiaomi MiMo Pro as a selectable text model option", async () => {
@@ -454,7 +478,7 @@ describe("options app", () => {
     await fireEvent.update(screen.getByRole("textbox", { name: "显示名称" }), "DeepSeek Work");
     await fireEvent.update(screen.getByRole("textbox", { name: "接口地址" }), "https://api.example.com/v1");
     await fireEvent.update(screen.getByLabelText("访问密钥"), "secret-key");
-    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "deepseek-chat");
+    await fireEvent.update(getTextModelInput(), "deepseek-chat");
     await fireEvent.update(screen.getByRole("textbox", { name: "视觉模型" }), "");
     await fireEvent.update(screen.getByRole("spinbutton", { name: "超时时间" }), "45000");
     await fireEvent.update(screen.getByRole("spinbutton", { name: "温度" }), "0.7");
@@ -485,14 +509,14 @@ describe("options app", () => {
     await renderReady();
 
     await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "openai");
-    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), " GPT-4.1-MINI ");
+    await fireEvent.update(getTextModelInput(), " GPT-5-MINI ");
     await fireEvent.update(screen.getByRole("textbox", { name: "视觉模型" }), " CUSTOM-VISION ");
 
     await fireEvent.click(screen.getByRole("button", { name: "保存翻译服务" }));
 
     expect(saveProfile).toHaveBeenCalledWith(
       expect.objectContaining({
-        textModel: "gpt-4.1-mini",
+        textModel: "gpt-5-mini",
         visionModel: "CUSTOM-VISION",
       }),
     );
@@ -515,7 +539,7 @@ describe("options app", () => {
     await fireEvent.update(screen.getByRole("textbox", { name: "显示名称" }), "DeepSeek Work");
     await fireEvent.update(screen.getByRole("textbox", { name: "接口地址" }), "https://api.example.com/v1");
     await fireEvent.update(screen.getByLabelText("访问密钥"), "secret-key");
-    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "deepseek-chat");
+    await fireEvent.update(getTextModelInput(), "deepseek-chat");
     await fireEvent.update(screen.getByRole("spinbutton", { name: "超时时间" }), "45000");
     await fireEvent.update(screen.getByRole("spinbutton", { name: "温度" }), "0.7");
     await fireEvent.update(screen.getByRole("spinbutton", { name: "最大输出长度" }), "2048");
@@ -547,7 +571,7 @@ describe("options app", () => {
         new Response(
           JSON.stringify({
             choices: [{ message: { content: "ok" } }],
-            model: "gpt-4.1-mini",
+            model: "gpt-5-mini",
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -581,11 +605,11 @@ describe("options app", () => {
     await renderReady();
 
     await fireEvent.update(screen.getByRole("combobox", { name: "服务预设" }), "custom");
-    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "Custom-Model");
+    await fireEvent.update(getTextModelInput(), "Custom-Model");
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
     expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
-    expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue("Custom-Model");
+    expect(getTextModelInput()).toHaveValue("Custom-Model");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("custom-model");
     expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("Custom-Model");
@@ -607,7 +631,7 @@ describe("options app", () => {
       screen.getByRole("textbox", { name: "接口地址" }),
       "https://token-plan-cn.xiaomimimo.com/v1",
     );
-    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "MiMo-V2.5");
+    await fireEvent.update(getTextModelInput(), "MiMo-V2.5");
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 
     expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
@@ -617,7 +641,7 @@ describe("options app", () => {
       temperature: 0,
       max_tokens: 32,
     });
-    expect(screen.getByRole("textbox", { name: "文本模型" })).toHaveValue("mimo-v2.5");
+    expect(getTextModelInput()).toHaveValue("mimo-v2.5");
     expect(screen.queryByText(/大小写/)).not.toBeInTheDocument();
   });
 
@@ -709,7 +733,7 @@ describe("options app", () => {
         new Response(
           JSON.stringify({
             choices: [{ message: { content: "ok" } }],
-            model: "gpt-4.1-mini",
+            model: "gpt-5-mini",
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -721,7 +745,7 @@ describe("options app", () => {
 
     expect(await screen.findByText("测试成功。")).toHaveAttribute("role", "status");
 
-    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "gpt-4.1");
+    await fireEvent.update(getTextModelInput(), "gpt-5");
 
     expect(screen.queryByText("测试成功。")).not.toBeInTheDocument();
   });
@@ -732,13 +756,13 @@ describe("options app", () => {
     await renderReady();
 
     await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
-    await fireEvent.update(screen.getByRole("textbox", { name: "文本模型" }), "gpt-4.1");
+    await fireEvent.update(getTextModelInput(), "gpt-5");
 
     response.resolve(
       new Response(
         JSON.stringify({
           choices: [{ message: { content: "ok" } }],
-          model: "gpt-4.1-mini",
+          model: "gpt-5-mini",
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       ),

@@ -14,7 +14,7 @@ function profile(): OpenAiCompatibleProviderProfile {
     type: "openai-compatible",
     baseURL: "https://api.example.test/v1",
     apiKey: "secret",
-    textModel: "gpt-4.1-mini",
+    textModel: "gpt-5-mini",
   };
 }
 
@@ -48,7 +48,7 @@ async function* streamTextChunks(chunks: readonly string[]): AsyncGenerator<{ te
 describe("OpenAiTranslationAdapter", () => {
   it("translates page segments through the OpenAI-compatible provider", async () => {
     const generateText = vi.fn().mockResolvedValue({
-      model: "gpt-4.1-mini",
+      model: "gpt-5-mini",
       text: JSON.stringify({
         items: [
           { segmentId: "segment-1", translatedText: "你好。" },
@@ -81,7 +81,7 @@ describe("OpenAiTranslationAdapter", () => {
   it("translates text selections through the OpenAI-compatible provider", async () => {
     const abortController = new AbortController();
     const generateText = vi.fn().mockResolvedValue({
-      model: "gpt-4.1-mini",
+      model: "gpt-5-mini",
       text: JSON.stringify({
         items: [{ segmentId: "selection", translatedText: "你好。" }],
       }),
@@ -106,7 +106,7 @@ describe("OpenAiTranslationAdapter", () => {
 
   it("rejects text selections when the provider omits the translated item", async () => {
     const generateText = vi.fn().mockResolvedValue({
-      model: "gpt-4.1-mini",
+      model: "gpt-5-mini",
       text: JSON.stringify({ items: [] }),
     });
     const adapter = new OpenAiTranslationAdapter({ generateText });

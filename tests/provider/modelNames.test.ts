@@ -7,6 +7,18 @@ import {
 import type { OpenAiCompatibleProviderProfile } from "@/provider/types";
 
 describe("provider model names", () => {
+  it("canonicalizes current OpenAI, DeepSeek, and Kimi preset model options", () => {
+    expect(normalizeModelNameForProfile({ id: "openai", presetId: "openai" }, " GPT-5-MINI ")).toBe(
+      "gpt-5-mini",
+    );
+    expect(
+      normalizeModelNameForProfile({ id: "deepseek", presetId: "deepseek" }, "DeepSeek-V4-Pro"),
+    ).toBe("deepseek-v4-pro");
+    expect(normalizeModelNameForProfile({ id: "kimi", presetId: "kimi" }, " KIMI-K2.6 ")).toBe(
+      "kimi-k2.6",
+    );
+  });
+
   it("canonicalizes Xiaomi MiMo preset model options", () => {
     const context = { id: "xiaomi-mimo", presetId: "xiaomi-mimo" };
 

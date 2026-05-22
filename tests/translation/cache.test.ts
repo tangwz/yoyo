@@ -8,7 +8,7 @@ function cacheKey(sourceLanguage: string): TranslationCacheKey {
     sourceLanguage,
     targetLanguage: "zh-CN",
     providerId: "openai-compatible",
-    textModel: "gpt-4.1-mini",
+    textModel: "gpt-5-mini",
     translationStyle: "concise",
     promptVersion: "v1",
   };
