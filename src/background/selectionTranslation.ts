@@ -35,6 +35,7 @@ export async function translateSelection(
   }
 
   const translationStartedAt = nowMs();
+  let currentStage = "selection";
   tracePerf("selection.translate.start", {
     stage: "selection",
     sourceCharCount: sourceText.length,
@@ -43,6 +44,7 @@ export async function translateSelection(
   });
 
   try {
+    currentStage = "profile";
     const profileStartedAt = nowMs();
     const profile = await dependencies.getActiveProfile();
     tracePerf("selection.profile.done", {
@@ -57,11 +59,12 @@ export async function translateSelection(
         "No active provider profile.",
         dependencies,
       );
-      traceSelectionTranslationError(translationStartedAt, {
+      traceSelectionTranslationError(translationStartedAt, currentStage, {
         errorCode: "providerUnavailable",
       });
       return;
     }
+    currentStage = "detectLanguage";
     const detectStartedAt = nowMs();
     const sourceLanguage = await resolveSelectionSourceLanguage(
       sourceText,
@@ -76,6 +79,7 @@ export async function translateSelection(
       success: true,
     });
     if (profile.type === "chrome-built-in-ai") {
+      currentStage = "prepareLocalAi";
       const prepareStartedAt = nowMs();
       await dependencies.prepareChromeBuiltInAi?.(
         sourceLanguage,
@@ -90,6 +94,7 @@ export async function translateSelection(
       });
     }
 
+    currentStage = "provider";
     const providerStartedAt = nowMs();
     const response = await dependencies.getTranslationProvider(profile).translateText({
       profile,
@@ -111,6 +116,7 @@ export async function translateSelection(
       success: true,
     });
 
+    currentStage = "showResult";
     const showResultStartedAt = nowMs();
     await dependencies.sendToContent(input.tabId, {
       type: "showSelectionTranslation",
@@ -129,16 +135,21 @@ export async function translateSelection(
       getSelectionTranslationErrorMessage(error),
       dependencies,
     );
-    traceSelectionTranslationError(translationStartedAt, metadataForError(error));
+    traceSelectionTranslationError(
+      translationStartedAt,
+      currentStage,
+      metadataForError(error),
+    );
   }
 }
 
 function traceSelectionTranslationError(
   startedAt: number,
+  stage: string,
   metadata: { errorName?: string; errorCode?: string; status?: number },
 ): void {
   tracePerf("selection.translate.error", {
-    stage: "selection",
+    stage,
     durationMs: elapsedMs(startedAt),
     success: false,
     ...metadata,

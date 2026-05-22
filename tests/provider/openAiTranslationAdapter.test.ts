@@ -337,6 +337,44 @@ describe("OpenAiTranslationAdapter", () => {
     expect(serializedCalls).not.toContain("Private translated stream");
   });
 
+  it("traces streaming parse duration without counting provider stream latency", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(performance, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(4)
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(1001);
+    const generateText = vi.fn();
+    const streamText = vi.fn<(request: StreamTextRequest) => AsyncGenerator<{ text: string }>>(
+      () => streamTextChunks(['{"id":"segment-1","text":"Hello"}\n']),
+    );
+    const adapter = new OpenAiTranslationAdapter({ generateText, streamText });
+
+    for await (const response of adapter.streamBatch({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      traceContext: {
+        taskId: "task-1",
+        batchId: "batch-1",
+        stage: "page",
+        providerType: "openai-compatible",
+      },
+      segments: [segment("segment-1", "Private source")],
+    })) {
+      void response;
+      // Consume the stream.
+    }
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.response.parsed",
+      expect.objectContaining({
+        durationMs: 5,
+      }),
+    );
+  });
+
   it("rejects non-OpenAI-compatible profiles for batch translation", async () => {
     const generateText = vi.fn();
     const adapter = new OpenAiTranslationAdapter({ generateText });

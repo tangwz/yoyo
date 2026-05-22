@@ -122,7 +122,7 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
 
     const expectedSegmentIds = request.segments.map((segment) => segment.id);
     const parser = createStreamingTranslationResultParser(expectedSegmentIds);
-    const parseStartedAt = nowMs();
+    let parseDurationMs = 0;
     let returnedCount = 0;
 
     for await (const chunk of this.provider.streamText({
@@ -138,23 +138,28 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
       ),
       abortSignal: request.abortSignal,
     })) {
+      const chunkParseStartedAt = nowMs();
       const items = parser.push(chunk.text);
+      parseDurationMs += elapsedMs(chunkParseStartedAt);
       returnedCount += items.length;
       if (items.length > 0) {
         yield { items };
       }
     }
 
+    const finishParseStartedAt = nowMs();
     const remainingItems = parser.finish().items;
+    parseDurationMs += elapsedMs(finishParseStartedAt);
     returnedCount += remainingItems.length;
     tracePerf("llm.response.parsed", {
       ...buildOpenAiTraceContext(
         request.traceContext,
         request.segments.map((segment) => segment.sourceText),
       ),
+      stream: true,
       returnedCount,
       missingCount: expectedSegmentIds.length - returnedCount,
-      durationMs: elapsedMs(parseStartedAt),
+      durationMs: parseDurationMs,
     });
 
     if (remainingItems.length > 0) {

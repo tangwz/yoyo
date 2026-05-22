@@ -211,7 +211,7 @@ describe("translateSelection", () => {
     expect(infoSpy).toHaveBeenCalledWith(
       "[yoyo:perf] selection.translate.error",
       expect.objectContaining({
-        stage: "selection",
+        stage: "profile",
         success: false,
         errorCode: "providerUnavailable",
       }),
@@ -242,6 +242,37 @@ describe("translateSelection", () => {
       sourceText: "Hello",
       errorMessage: "Provider failed",
     });
+  });
+
+  it("traces provider selection errors with the failing stage", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    translateText.mockRejectedValue(new Error("Provider failed with private details"));
+
+    await translateSelection(
+      {
+        tabId: 42,
+        text: "Private selected text",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+      },
+      dependencies(),
+    );
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] selection.translate.error",
+      expect.objectContaining({
+        stage: "provider",
+        success: false,
+        errorName: "Error",
+      }),
+    );
+    expect(renderedConsoleOutput(infoSpy.mock.calls)).not.toContain(
+      "Provider failed with private details",
+    );
+
+    infoSpy.mockRestore();
+    vi.unstubAllEnvs();
   });
 
   it("maps LocalAiError to the formatted local-only message", async () => {
