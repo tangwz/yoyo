@@ -72,10 +72,12 @@ function canRetryWithNextModelCandidate(error: ProviderError): boolean {
   );
 }
 
-function isKimiK2Model(request: GenerateTextRequest, model: string): boolean {
-  const providerId = request.profile.presetId ?? request.profile.id;
+function isKimiK2Model(model: string): boolean {
+  return /^kimi-k2\./i.test(model);
+}
 
-  return providerId === "kimi" && /^kimi-k2\./i.test(model);
+function isExpectedProviderTestResponse(text: string): boolean {
+  return /^ok[.!?]*$/i.test(text.trim());
 }
 
 function buildChatCompletionRequestBody(
@@ -93,7 +95,7 @@ function buildChatCompletionRequestBody(
     body.stream = true;
   }
 
-  if (isKimiK2Model(request, model)) {
+  if (isKimiK2Model(model)) {
     body.thinking = { type: "disabled" };
   } else {
     body.temperature = request.profile.requestParams?.temperature ?? 0.2;
@@ -120,7 +122,7 @@ export class OpenAiCompatibleProvider {
       createTextModelCandidates(testProfile, { preferLowerCase: true }),
     );
 
-    if (response.text.trim().toLowerCase() !== "ok") {
+    if (!isExpectedProviderTestResponse(response.text)) {
       throw new ProviderError(
         "invalidResponse",
         "Provider test response did not match the expected text.",

@@ -357,6 +357,63 @@ describe("OpenAiCompatibleProvider", () => {
     });
   });
 
+  it("detects Kimi K2 request constraints from custom profile model names", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "translated text" } }],
+          model: "kimi-k2.5",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    await provider.generateText({
+      profile: {
+        ...profile,
+        id: "custom-kimi-proxy",
+        presetId: "custom",
+        baseURL: "https://api.example.com/v1",
+        textModel: "kimi-k2.5",
+        requestParams: { temperature: 0.7, maxTokens: 2048, timeoutMs: 1000 },
+      },
+      prompt: "Translate me",
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      model: "kimi-k2.5",
+      messages: [{ role: "user", content: "Translate me" }],
+      max_tokens: 2048,
+      thinking: { type: "disabled" },
+    });
+  });
+
+  it("accepts punctuation-only Kimi K2 provider test variants", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "ok." } }],
+          model: "kimi-k2.6",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    const response = await provider.testConnection({
+      ...profile,
+      id: "kimi",
+      presetId: "kimi",
+      baseURL: "https://api.moonshot.ai/v1",
+      textModel: "kimi-k2.6",
+    });
+
+    expect(response).toEqual({ text: "ok.", model: "kimi-k2.6" });
+  });
+
   it("tests MiMo mixed-case input with the lower-case model candidate first", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
