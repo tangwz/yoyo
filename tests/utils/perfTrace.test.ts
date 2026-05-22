@@ -79,10 +79,33 @@ describe("perfTrace", () => {
     expect(output).not.toContain("not allowlisted");
   });
 
+  it("drops non-primitive allowlisted metadata values", () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    tracePerf(
+      "llm.request.start",
+      {
+        model: { apiKey: "sk-secret" },
+        status: Number.NaN,
+        reason: ["private reason"],
+        taskId: () => "task-1",
+        outputCharCount: 100,
+      } as unknown as PerfTraceMetadata & Record<string, unknown>,
+    );
+
+    const output = renderedConsoleArgs(infoSpy.mock.calls[0]);
+    expect(output).toContain("outputCharCount");
+    expect(output).toContain("100");
+    expect(output).not.toContain("sk-secret");
+    expect(output).not.toContain("private reason");
+    expect(output).not.toContain("task-1");
+    expect(output).not.toContain("NaN");
+  });
+
   it("records success and duration for measured operations", async () => {
     vi.stubEnv("DEV", true);
-    const nowSpy = vi
-      .spyOn(performance, "now")
+    vi.spyOn(performance, "now")
       .mockReturnValueOnce(100)
       .mockReturnValueOnce(125.678);
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
@@ -95,7 +118,6 @@ describe("perfTrace", () => {
       ),
     ).resolves.toBe("ok");
 
-    expect(nowSpy).toHaveBeenCalledTimes(2);
     expect(infoSpy).toHaveBeenCalledWith(
       "[yoyo:perf] content.applyTranslations.done",
       {

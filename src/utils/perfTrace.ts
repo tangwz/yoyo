@@ -1,3 +1,13 @@
+export type PerfTraceReason =
+  | "retry"
+  | "degrade"
+  | "rateLimited"
+  | "successfulBatches"
+  | "timeout"
+  | "parseFailed"
+  | "providerUnavailable"
+  | "emptyResponse";
+
 export type PerfTraceMetadata = {
   taskId?: string;
   batchId?: string;
@@ -21,7 +31,7 @@ export type PerfTraceMetadata = {
   currentConcurrency?: number;
   previousConcurrency?: number;
   nextConcurrency?: number;
-  reason?: string;
+  reason?: PerfTraceReason;
   createdDocument?: boolean;
   durationMs?: number;
   timeoutMs?: number;
@@ -165,18 +175,30 @@ function sanitizePerfMetadata(
   const sanitized: Record<string, string | number | boolean> = {};
 
   for (const key of allowedMetadataKeys) {
-    const value = metadata[key];
+    const value = sanitizePerfMetadataValue(metadata[key], key);
     if (value === undefined) {
       continue;
     }
 
-    sanitized[key] =
-      roundedMetadataKeys.has(key) && typeof value === "number"
-        ? roundDurationMs(value)
-        : value;
+    sanitized[key] = value;
   }
 
   return sanitized;
+}
+
+function sanitizePerfMetadataValue(
+  value: unknown,
+  key: keyof PerfTraceMetadata,
+): string | number | boolean | undefined {
+  if (typeof value === "string" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return roundedMetadataKeys.has(key) ? roundDurationMs(value) : value;
+  }
+
+  return undefined;
 }
 
 function roundDurationMs(value: number): number {
