@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenAiTranslationAdapter } from "@/provider/openAiTranslationAdapter";
 import type {
   OpenAiCompatibleProviderProfile,
@@ -46,6 +46,11 @@ async function* streamTextChunks(chunks: readonly string[]): AsyncGenerator<{ te
 }
 
 describe("OpenAiTranslationAdapter", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
   it("translates page segments through the OpenAI-compatible provider", async () => {
     const generateText = vi.fn().mockResolvedValue({
       model: "gpt-4.1-mini",
@@ -122,6 +127,44 @@ describe("OpenAiTranslationAdapter", () => {
         }),
       }),
     );
+  });
+
+  it("traces parsed batch results without logging parsed text", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const generateText = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ segmentId: "seg_1", translatedText: "Private translated text" }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+    const adapter = new OpenAiTranslationAdapter({ generateText });
+
+    await adapter.translateBatch({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      traceContext: {
+        taskId: "task-1",
+        batchId: "batch-1",
+        stage: "page",
+        providerType: "openai-compatible",
+      },
+      segments: [segment("seg_1", "Hello"), segment("seg_2", "Good morning")],
+    });
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.response.parsed",
+      expect.objectContaining({
+        taskId: "task-1",
+        batchId: "batch-1",
+        providerType: "openai-compatible",
+        segmentCount: 2,
+        returnedCount: 1,
+        missingCount: 1,
+      }),
+    );
+    expect(JSON.stringify(infoSpy.mock.calls)).not.toContain("Private translated text");
   });
 
   it("translates text selections through the OpenAI-compatible provider", async () => {

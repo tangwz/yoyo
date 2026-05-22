@@ -11,6 +11,7 @@ import {
   parseTranslationBatchResult,
 } from "@/translation/jsonResult";
 import { buildStreamingTranslationPrompt, buildTranslationPrompt } from "@/translation/prompt";
+import { elapsedMs, nowMs, tracePerf } from "@/utils/perfTrace";
 
 type OpenAiTextProvider = {
   generateText(request: GenerateTextRequest): Promise<GenerateTextResponse>;
@@ -91,11 +92,22 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
       abortSignal: request.abortSignal,
     });
 
+    const expectedSegmentIds = request.segments.map((segment) => segment.id);
+    const parseStartedAt = nowMs();
+    const parsed = parseTranslationBatchResult(response.text, expectedSegmentIds);
+
+    tracePerf("llm.response.parsed", {
+      ...buildOpenAiTraceContext(
+        request.traceContext,
+        request.segments.map((segment) => segment.sourceText),
+      ),
+      returnedCount: parsed.items.length,
+      missingCount: expectedSegmentIds.length - parsed.items.length,
+      durationMs: elapsedMs(parseStartedAt),
+    });
+
     return {
-      items: parseTranslationBatchResult(
-        response.text,
-        request.segments.map((segment) => segment.id),
-      ).items,
+      items: parsed.items,
     };
   }
 
