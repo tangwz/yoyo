@@ -150,6 +150,42 @@ describe("OpenAiTranslationAdapter", () => {
     expect(generateText.mock.calls[0]?.[0].prompt).toContain("Hello.");
   });
 
+  it("forces selection trace context stage for text selections", async () => {
+    const generateText = vi.fn().mockResolvedValue({
+      model: "gpt-4.1-mini",
+      text: JSON.stringify({
+        items: [{ segmentId: "selection", translatedText: "你好。" }],
+      }),
+    });
+    const adapter = new OpenAiTranslationAdapter({ generateText });
+
+    await adapter.translateText({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      text: "Hello.",
+      traceContext: {
+        taskId: "task-1",
+        batchId: "batch-1",
+        stage: "page",
+        providerType: "openai-compatible",
+      },
+    });
+
+    expect(generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceContext: expect.objectContaining({
+          taskId: "task-1",
+          batchId: "batch-1",
+          stage: "selection",
+          providerType: "openai-compatible",
+          segmentCount: 1,
+          sourceCharCount: 6,
+        }),
+      }),
+    );
+  });
+
   it("rejects text selections when the provider omits the translated item", async () => {
     const generateText = vi.fn().mockResolvedValue({
       model: "gpt-4.1-mini",

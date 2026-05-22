@@ -18,7 +18,7 @@ type OpenAiTextProvider = {
 };
 
 function buildOpenAiTraceContext(
-  traceContext: ProviderTraceContext | undefined,
+  traceContext: Partial<ProviderTraceContext> | undefined,
   sourceTexts: readonly string[],
 ): ProviderTraceContext {
   return {
@@ -42,7 +42,13 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
       sourceLanguage: request.sourceLanguage,
       targetLanguage: request.targetLanguage,
       abortSignal: request.abortSignal,
-      traceContext: buildOpenAiTraceContext(request.traceContext, [request.text]),
+      traceContext: buildOpenAiTraceContext(
+        {
+          ...request.traceContext,
+          stage: "selection",
+        },
+        [request.text],
+      ),
       segments: [
         {
           id: "selection",
