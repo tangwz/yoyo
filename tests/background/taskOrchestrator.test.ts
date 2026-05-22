@@ -212,6 +212,15 @@ describe("TranslationTaskOrchestrator", () => {
 
       expect(output).toContain("translation.task.start");
       expect(output).toContain("translation.collect.done");
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[yoyo:perf] translation.detectLanguage.done",
+        expect.objectContaining({
+          taskId: "task-1",
+          providerType: "openai-compatible",
+          sourceLanguage: "en",
+          success: true,
+        }),
+      );
       expect(output).toContain("translation.batch.start");
       expect(output).toContain("translation.batch.done");
       expect(output).toContain("translation.batch.apply.done");
