@@ -960,6 +960,66 @@ describe("page runtime", () => {
     ).toBeNull();
   });
 
+  it("keeps translations when a click-driven page update temporarily detaches a source node", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <main>
+        <article id="post">
+          <div id="tweet" data-testid="tweetText" lang="en" dir="auto">Initial tweet text.</div>
+        </article>
+      </main>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
+    applyTranslationResults("task-1", [
+      { segmentId: "seg_1", translatedText: "Translated tweet text." },
+    ]);
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    const post = document.querySelector("#post") as HTMLElement;
+    const tweet = document.querySelector("#tweet") as HTMLElement;
+    const translatedNode = document.querySelector(
+      "[data-yoyo-translation][data-yoyo-segment-id='seg_1']",
+    ) as HTMLElement;
+
+    tweet.remove();
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "childList",
+        target: post,
+        addedNodes: [] as unknown as NodeList,
+        removedNodes: [tweet] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+    if (translatedNode.isConnected) {
+      post.insertBefore(tweet, translatedNode);
+    } else {
+      post.append(tweet);
+    }
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "childList",
+        target: post,
+        addedNodes: [tweet] as unknown as NodeList,
+        removedNodes: [] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(
+      document.querySelector("[data-yoyo-translation][data-yoyo-segment-id='seg_1']"),
+    ).toBe(translatedNode);
+    expect(translatedNode.previousElementSibling).toBe(tweet);
+    expect(runtimeMock.sendRuntimeMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "enqueueTranslationBatch",
+        failedSegmentIds: ["seg_1"],
+      }),
+    );
+  });
+
   it("requeues an owning segment when descendant content is removed", async () => {
     vi.useFakeTimers();
     document.body.innerHTML = `
