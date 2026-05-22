@@ -4,6 +4,7 @@ import type {
   TranslateBatchRequest,
   TranslateTextRequest,
 } from "@/provider/translationProvider";
+import { elapsedMs, metadataForError, nowMs, tracePerf } from "@/utils/perfTrace";
 
 export type TranslatorAvailability =
   | "available"
@@ -69,6 +70,8 @@ export type LanguageDetectorApi = {
 type ChromeBuiltInTranslatorProviderDependencies = {
   getTranslatorApi?: () => TranslatorApi | undefined;
 };
+
+const providerType = "chrome-built-in-ai" as const;
 
 function getDefaultTranslatorApi(): TranslatorApi | undefined {
   return (globalThis as typeof globalThis & { Translator?: TranslatorApi }).Translator;
@@ -173,6 +176,25 @@ async function destroyTranslator(translator: TranslatorInstance): Promise<void> 
   }
 }
 
+function traceEarlyAbortedRequest(
+  request: TranslateTextRequest | TranslateBatchRequest,
+  requestType: "translateText" | "translateBatch",
+): void {
+  const startedAt = nowMs();
+  const error = new LocalAiError(
+    "aborted",
+    "Chrome Built-in AI translation was cancelled.",
+  );
+  tracePerf("localAi.request.error", {
+    ...request.traceContext,
+    providerType,
+    requestType,
+    durationMs: elapsedMs(startedAt),
+    success: false,
+    ...metadataForError(error),
+  });
+}
+
 export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
   constructor(
     private readonly dependencies: ChromeBuiltInTranslatorProviderDependencies = {},
@@ -180,19 +202,41 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
 
   async translateText(request: TranslateTextRequest) {
     assertChromeBuiltInProfile(request.profile);
+    if (request.abortSignal?.aborted) {
+      traceEarlyAbortedRequest(request, "translateText");
+    }
     const translator = await this.createTranslator({
       sourceLanguage: request.sourceLanguage,
       targetLanguage: request.targetLanguage,
       abortSignal: request.abortSignal,
     });
 
+    const translateStartedAt = nowMs();
     try {
+      const translatedText = await translator.translate(request.text, {
+        signal: request.abortSignal,
+      });
+      tracePerf("localAi.translate.segment.done", {
+        ...request.traceContext,
+        providerType,
+        segmentId: "selection",
+        segmentOrder: 1,
+        sourceCharCount: request.text.length,
+        durationMs: elapsedMs(translateStartedAt),
+        success: true,
+      });
       return {
-        translatedText: await translator.translate(request.text, {
-          signal: request.abortSignal,
-        }),
+        translatedText,
       };
     } catch (error) {
+      tracePerf("localAi.request.error", {
+        ...request.traceContext,
+        providerType,
+        requestType: "translate",
+        durationMs: elapsedMs(translateStartedAt),
+        success: false,
+        ...metadataForError(error),
+      });
       throw mapTranslatorError(error, request.abortSignal?.aborted ?? false);
     } finally {
       await destroyTranslator(translator);
@@ -201,25 +245,57 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
 
   async translateBatch(request: TranslateBatchRequest) {
     assertChromeBuiltInProfile(request.profile);
+    if (request.abortSignal?.aborted) {
+      traceEarlyAbortedRequest(request, "translateBatch");
+    }
     const translator = await this.createTranslator({
       sourceLanguage: request.sourceLanguage,
       targetLanguage: request.targetLanguage,
       abortSignal: request.abortSignal,
     });
 
+    const batchStartedAt = nowMs();
     try {
       const items = [];
+      let sourceCharCount = 0;
       for (const segment of request.segments) {
+        sourceCharCount += segment.sourceText.length;
+        const segmentStartedAt = nowMs();
         items.push({
           segmentId: segment.id,
           translatedText: await translator.translate(segment.sourceText, {
             signal: request.abortSignal,
           }),
         });
+        tracePerf("localAi.translate.segment.done", {
+          ...request.traceContext,
+          providerType,
+          segmentId: segment.id,
+          segmentOrder: segment.order,
+          sourceCharCount: segment.sourceText.length,
+          durationMs: elapsedMs(segmentStartedAt),
+          success: true,
+        });
       }
 
+      tracePerf("localAi.translate.batch.done", {
+        ...request.traceContext,
+        providerType,
+        segmentCount: request.segments.length,
+        sourceCharCount,
+        durationMs: elapsedMs(batchStartedAt),
+        success: true,
+      });
       return { items };
     } catch (error) {
+      tracePerf("localAi.request.error", {
+        ...request.traceContext,
+        providerType,
+        requestType: "translate",
+        durationMs: elapsedMs(batchStartedAt),
+        success: false,
+        ...metadataForError(error),
+      });
       throw mapTranslatorError(error, request.abortSignal?.aborted ?? false);
     } finally {
       await destroyTranslator(translator);
@@ -248,9 +324,25 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
     };
 
     let availability: TranslatorAvailability;
+    let startedAt = nowMs();
     try {
       availability = await translatorApi.availability(languageOptions);
+      tracePerf("localAi.availability.done", {
+        providerType,
+        sourceLanguage: options.sourceLanguage,
+        targetLanguage: options.targetLanguage,
+        availability,
+        durationMs: elapsedMs(startedAt),
+        success: true,
+      });
     } catch (error) {
+      tracePerf("localAi.request.error", {
+        providerType,
+        requestType: "availability",
+        durationMs: elapsedMs(startedAt),
+        success: false,
+        ...metadataForError(error),
+      });
       throw mapTranslatorError(error, options.abortSignal?.aborted ?? false);
     }
 
@@ -261,11 +353,27 @@ export class ChromeBuiltInTranslatorProvider implements TranslationProvider {
       );
     }
     try {
-      return await translatorApi.create({
+      startedAt = nowMs();
+      const translator = await translatorApi.create({
         ...languageOptions,
         signal: options.abortSignal,
       });
+      tracePerf("localAi.createTranslator.done", {
+        providerType,
+        sourceLanguage: options.sourceLanguage,
+        targetLanguage: options.targetLanguage,
+        durationMs: elapsedMs(startedAt),
+        success: true,
+      });
+      return translator;
     } catch (error) {
+      tracePerf("localAi.request.error", {
+        providerType,
+        requestType: "create",
+        durationMs: elapsedMs(startedAt),
+        success: false,
+        ...metadataForError(error),
+      });
       throw mapTranslatorError(error, options.abortSignal?.aborted ?? false);
     }
   }

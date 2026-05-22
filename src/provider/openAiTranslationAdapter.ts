@@ -2,6 +2,7 @@ import type { TranslationProvider } from "@/provider/translationProvider";
 import type {
   GenerateTextRequest,
   GenerateTextResponse,
+  ProviderTraceContext,
   StreamTextChunk,
   StreamTextRequest,
 } from "@/provider/types";
@@ -10,11 +11,24 @@ import {
   parseTranslationBatchResult,
 } from "@/translation/jsonResult";
 import { buildStreamingTranslationPrompt, buildTranslationPrompt } from "@/translation/prompt";
+import { elapsedMs, nowMs, tracePerf } from "@/utils/perfTrace";
 
 type OpenAiTextProvider = {
   generateText(request: GenerateTextRequest): Promise<GenerateTextResponse>;
   streamText?(request: StreamTextRequest): AsyncGenerator<StreamTextChunk>;
 };
+
+function buildOpenAiTraceContext(
+  traceContext: Partial<ProviderTraceContext> | undefined,
+  sourceTexts: readonly string[],
+): ProviderTraceContext {
+  return {
+    ...traceContext,
+    providerType: "openai-compatible",
+    segmentCount: sourceTexts.length,
+    sourceCharCount: sourceTexts.reduce((total, text) => total + text.length, 0),
+  };
+}
 
 export class OpenAiTranslationAdapter implements TranslationProvider {
   constructor(private readonly provider: OpenAiTextProvider) {}
@@ -29,6 +43,13 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
       sourceLanguage: request.sourceLanguage,
       targetLanguage: request.targetLanguage,
       abortSignal: request.abortSignal,
+      traceContext: buildOpenAiTraceContext(
+        {
+          ...request.traceContext,
+          stage: "selection",
+        },
+        [request.text],
+      ),
       segments: [
         {
           id: "selection",
@@ -64,14 +85,29 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
         targetLanguage: request.targetLanguage,
         segments: request.segments,
       }),
+      traceContext: buildOpenAiTraceContext(
+        request.traceContext,
+        request.segments.map((segment) => segment.sourceText),
+      ),
       abortSignal: request.abortSignal,
     });
 
+    const expectedSegmentIds = request.segments.map((segment) => segment.id);
+    const parseStartedAt = nowMs();
+    const parsed = parseTranslationBatchResult(response.text, expectedSegmentIds);
+
+    tracePerf("llm.response.parsed", {
+      ...buildOpenAiTraceContext(
+        request.traceContext,
+        request.segments.map((segment) => segment.sourceText),
+      ),
+      returnedCount: parsed.items.length,
+      missingCount: expectedSegmentIds.length - parsed.items.length,
+      durationMs: elapsedMs(parseStartedAt),
+    });
+
     return {
-      items: parseTranslationBatchResult(
-        response.text,
-        request.segments.map((segment) => segment.id),
-      ).items,
+      items: parsed.items,
     };
   }
 
@@ -84,9 +120,10 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
       return;
     }
 
-    const parser = createStreamingTranslationResultParser(
-      request.segments.map((segment) => segment.id),
-    );
+    const expectedSegmentIds = request.segments.map((segment) => segment.id);
+    const parser = createStreamingTranslationResultParser(expectedSegmentIds);
+    let parseDurationMs = 0;
+    let returnedCount = 0;
 
     for await (const chunk of this.provider.streamText({
       profile: request.profile,
@@ -95,15 +132,36 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
         targetLanguage: request.targetLanguage,
         segments: request.segments,
       }),
+      traceContext: buildOpenAiTraceContext(
+        request.traceContext,
+        request.segments.map((segment) => segment.sourceText),
+      ),
       abortSignal: request.abortSignal,
     })) {
+      const chunkParseStartedAt = nowMs();
       const items = parser.push(chunk.text);
+      parseDurationMs += elapsedMs(chunkParseStartedAt);
+      returnedCount += items.length;
       if (items.length > 0) {
         yield { items };
       }
     }
 
+    const finishParseStartedAt = nowMs();
     const remainingItems = parser.finish().items;
+    parseDurationMs += elapsedMs(finishParseStartedAt);
+    returnedCount += remainingItems.length;
+    tracePerf("llm.response.parsed", {
+      ...buildOpenAiTraceContext(
+        request.traceContext,
+        request.segments.map((segment) => segment.sourceText),
+      ),
+      stream: true,
+      returnedCount,
+      missingCount: expectedSegmentIds.length - returnedCount,
+      durationMs: parseDurationMs,
+    });
+
     if (remainingItems.length > 0) {
       yield { items: remainingItems };
     }

@@ -15,6 +15,7 @@ const profile: ProviderProfile = {
 describe("OpenAiCompatibleProvider", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
@@ -51,6 +52,45 @@ describe("OpenAiCompatibleProvider", () => {
       temperature: 0.2,
       max_tokens: 1200,
     });
+  });
+
+  it("traces non-streaming OpenAI-compatible LLM calls without logging the prompt", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "translated text" } }],
+            model: "model-a",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    const provider = new OpenAiCompatibleProvider();
+    await provider.generateText({
+      profile,
+      prompt: "Private prompt",
+      traceContext: {
+        taskId: "task-1",
+        batchId: "batch-1",
+        stage: "page",
+        providerType: "openai-compatible",
+        segmentCount: 2,
+        sourceCharCount: 19,
+      },
+    });
+
+    const serializedCalls = JSON.stringify(infoSpy.mock.calls);
+    expect(serializedCalls).toContain("llm.request.start");
+    expect(serializedCalls).toContain("llm.fetch.response");
+    expect(serializedCalls).toContain("llm.response.json.done");
+    expect(serializedCalls).toContain("task-1");
+    expect(serializedCalls).toContain("batch-1");
+    expect(serializedCalls).not.toContain("Private prompt");
   });
 
   it("streams chat completion deltas from an OpenAI-compatible SSE response", async () => {
@@ -91,6 +131,48 @@ describe("OpenAiCompatibleProvider", () => {
       max_tokens: 1200,
       stream: true,
     });
+  });
+
+  it("traces streaming OpenAI-compatible LLM calls without logging the prompt", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+              "",
+              'data: {"choices":[{"delta":{"content":" world"}}]}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+      ),
+    );
+
+    const provider = new OpenAiCompatibleProvider();
+    const chunks: string[] = [];
+    for await (const chunk of provider.streamText({ profile, prompt: "Private prompt" })) {
+      chunks.push(chunk.text);
+    }
+
+    expect(chunks).toEqual(["Hello", " world"]);
+    const serializedCalls = JSON.stringify(infoSpy.mock.calls);
+    expect(serializedCalls).toContain("llm.stream.firstChunk");
+    expect(serializedCalls).toContain("llm.stream.done");
+    expect(serializedCalls).toContain("chunkCount");
+    expect(serializedCalls).not.toContain("Private prompt");
   });
 
   it("aggregates multi-line SSE data fields before parsing streamed JSON", async () => {
@@ -187,6 +269,110 @@ describe("OpenAiCompatibleProvider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("Model-A");
     expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("model-a");
+  });
+
+  it("traces model candidate retries for retryable invalid requests", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("model not found", { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "translated text" } }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    await provider.generateText({
+      profile: { ...profile, textModel: "Model-A" },
+      prompt: "Translate me",
+    });
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.request.error",
+      expect.objectContaining({
+        model: "Model-A",
+        stream: false,
+        candidateIndex: 0,
+        status: 404,
+        errorCode: "invalidRequest",
+        durationMs: expect.any(Number),
+      }),
+    );
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.retry.modelCandidate",
+      expect.objectContaining({
+        candidateIndex: 0,
+        nextCandidateIndex: 1,
+        status: 404,
+        errorCode: "invalidRequest",
+      }),
+    );
+  });
+
+  it("traces streaming model candidate retries for retryable invalid requests", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("model not found", { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    const chunks: string[] = [];
+    for await (const chunk of provider.streamText({
+      profile: { ...profile, textModel: "Model-A" },
+      prompt: "Private prompt",
+    })) {
+      chunks.push(chunk.text);
+    }
+
+    expect(chunks).toEqual(["Hello"]);
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.request.error",
+      expect.objectContaining({
+        model: "Model-A",
+        stream: true,
+        candidateIndex: 0,
+        status: 404,
+        errorCode: "invalidRequest",
+        durationMs: expect.any(Number),
+      }),
+    );
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.retry.modelCandidate",
+      expect.objectContaining({
+        candidateIndex: 0,
+        nextCandidateIndex: 1,
+        status: 404,
+        errorCode: "invalidRequest",
+      }),
+    );
+    expect(JSON.stringify(infoSpy.mock.calls)).not.toContain("Private prompt");
   });
 
   it("uses the preset canonical model candidate after the original model during translation", async () => {

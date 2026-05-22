@@ -31,6 +31,7 @@ import {
   type TranslationProgress,
   type TranslationResultItem,
 } from "@/translation/types";
+import { elapsedMs, nowMs, tracePerf } from "@/utils/perfTrace";
 
 let currentAnchors = new AnchorRegistry();
 let activeTaskId: string | undefined;
@@ -360,9 +361,27 @@ async function flushTranslationQueue(): Promise<void> {
     }
   }
 
+  const segmentCount = request.segments.length;
+  const startedAt = nowMs();
+  tracePerf("content.queue.flush.start", {
+    taskId: context.taskId,
+    translationMode: context.translationMode,
+    segmentCount,
+    retryCount: retrySegmentIds.length,
+    failedReportCount: failedSegmentIds.length,
+  });
   const response = await Promise.resolve(
     sendRuntimeMessage<BackgroundRequest, BackgroundResponse>(request),
   ).catch(() => undefined);
+  tracePerf("content.queue.flush.done", {
+    taskId: context.taskId,
+    translationMode: context.translationMode,
+    segmentCount,
+    retryCount: retrySegmentIds.length,
+    failedReportCount: failedSegmentIds.length,
+    durationMs: elapsedMs(startedAt),
+    success: response?.type === "taskProgress",
+  });
 
   if (translationQueueContext !== context) {
     return;
@@ -807,6 +826,7 @@ export async function collectSegments(
   removeTranslations();
 
   const generation = ++collectionGeneration;
+  const startedAt = nowMs();
   const { segments, anchors } = await collectPageSegments(
     taskId,
     translationMode === "lazyViewport" ? { visibleRangeOnly: true } : undefined,
@@ -862,6 +882,17 @@ export async function collectSegments(
   }
   startMutationObserver();
 
+  tracePerf("content.collectSegments.done", {
+    taskId,
+    translationMode,
+    segmentCount: segments.length,
+    sourceCharCount: segments.reduce(
+      (total, segment) => total + segment.sourceText.length,
+      0,
+    ),
+    durationMs: elapsedMs(startedAt),
+    success: true,
+  });
   return segments;
 }
 
@@ -893,11 +924,21 @@ export function applyTranslationResults(
   taskId: string,
   items: TranslationResultItem[],
 ): ReturnType<typeof applyTranslations> {
+  const startedAt = nowMs();
   if (translationQueueContext?.taskId !== taskId) {
-    return {
+    const result = {
       appliedSegmentIds: [],
       failedSegmentIds: items.map((item) => item.segmentId),
     };
+    tracePerf("content.applyTranslations.done", {
+      taskId,
+      itemCount: items.length,
+      appliedCount: result.appliedSegmentIds.length,
+      failedCount: result.failedSegmentIds.length,
+      durationMs: elapsedMs(startedAt),
+      success: false,
+    });
+    return result;
   }
 
   const result = applyTranslations(currentAnchors, taskId, items);
@@ -907,6 +948,14 @@ export function applyTranslationResults(
   ]);
   translationQueue.markTranslated(result.appliedSegmentIds);
   translationQueue.markFailed(result.failedSegmentIds);
+  tracePerf("content.applyTranslations.done", {
+    taskId,
+    itemCount: items.length,
+    appliedCount: result.appliedSegmentIds.length,
+    failedCount: result.failedSegmentIds.length,
+    durationMs: elapsedMs(startedAt),
+    success: result.failedSegmentIds.length === 0,
+  });
   return result;
 }
 

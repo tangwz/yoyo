@@ -1,3 +1,5 @@
+import { elapsedMs, nowMs, tracePerf } from "@/utils/perfTrace";
+
 export type SelectionTranslationPanelInput =
   | {
       sourceText: string;
@@ -30,6 +32,8 @@ function createTextBlock(label: string, text: string): HTMLElement {
 export function showSelectionTranslation(
   input: SelectionTranslationPanelInput,
 ): void {
+  const startedAt = nowMs();
+
   removeExistingPanel();
 
   const panel = document.createElement("aside");
@@ -56,4 +60,11 @@ export function showSelectionTranslation(
   }
 
   document.body.append(panel);
+  tracePerf("content.selectionPanel.done", {
+    stage: "selection",
+    sourceCharCount: input.sourceText.length,
+    outputCharCount: input.translatedText?.length ?? 0,
+    durationMs: elapsedMs(startedAt),
+    success: input.errorMessage === undefined,
+  });
 }

@@ -147,7 +147,126 @@ async function* streamBatchResponses(
   }
 }
 
+function renderedConsoleOutput(calls: unknown[][]): string {
+  return calls
+    .map((call) =>
+      call
+        .map((value) => (typeof value === "string" ? value : JSON.stringify(value)))
+        .join(" "),
+    )
+    .join("\n");
+}
+
+function perfTraceMetadata(
+  calls: unknown[][],
+  eventName: string,
+): Array<Record<string, unknown>> {
+  return calls
+    .filter((call) => call[0] === `[yoyo:perf] ${eventName}`)
+    .map((call) => call[1])
+    .filter((value): value is Record<string, unknown> => typeof value === "object" && value !== null);
+}
+
 describe("TranslationTaskOrchestrator", () => {
+  it("traces page translation batches without logging segment text", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const collectedSegment = segment({
+      id: "segment-1",
+      sourceText: "Private source text.",
+    });
+    const translatedText = "Private translated text.";
+    const { orchestrator, translateBatch, sendToContent } = createOrchestrator();
+
+    try {
+      sendToContent.mockImplementation(async (_tabId, message) => {
+        if (message.type === "collectSegments") {
+          return {
+            type: "collectSegmentsResult",
+            taskId: message.taskId,
+            segments: [collectedSegment],
+          };
+        }
+
+        if (message.type === "applyTranslations") {
+          return {
+            type: "contentActionResult",
+            success: true,
+            appliedSegmentIds: message.items.map((item) => item.segmentId),
+          };
+        }
+
+        throw new Error(`Unexpected content message: ${message.type}`);
+      });
+      translateBatch.mockResolvedValue({
+        items: [{ segmentId: "segment-1", translatedText }],
+      });
+
+      await orchestrator.translatePage({
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "fullPage",
+      });
+
+      expect(translateBatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          traceContext: expect.objectContaining({
+            taskId: "task-1",
+            batchId: expect.stringMatching(/^batch-/),
+            stage: "page",
+            providerType: "openai-compatible",
+            segmentCount: 1,
+            sourceCharCount: collectedSegment.sourceText.length,
+          }),
+        }),
+      );
+
+      const output = renderedConsoleOutput(infoSpy.mock.calls);
+      const batchStart = perfTraceMetadata(infoSpy.mock.calls, "translation.batch.start");
+      const batchApplyDone = perfTraceMetadata(
+        infoSpy.mock.calls,
+        "translation.batch.apply.done",
+      );
+      const providerBatchId = translateBatch.mock.calls[0]?.[0].traceContext?.batchId;
+
+      expect(output).toContain("translation.task.start");
+      expect(output).toContain("translation.collect.done");
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[yoyo:perf] translation.detectLanguage.done",
+        expect.objectContaining({
+          taskId: "task-1",
+          providerType: "openai-compatible",
+          sourceLanguage: "en",
+          success: true,
+        }),
+      );
+      expect(output).toContain("translation.batch.start");
+      expect(output).toContain("translation.batch.done");
+      expect(output).toContain("translation.batch.apply.done");
+      expect(batchStart).toContainEqual(
+        expect.objectContaining({
+          batchId: providerBatchId,
+        }),
+      );
+      expect(batchApplyDone).toEqual([
+        expect.objectContaining({
+          taskId: "task-1",
+          batchId: providerBatchId,
+          itemCount: 1,
+          appliedCount: 1,
+          failedCount: 0,
+          success: true,
+        }),
+      ]);
+      expect(output).not.toContain(collectedSegment.sourceText);
+      expect(output).not.toContain(translatedText);
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("creates a task before collecting segments and completes translation", async () => {
     const collectedSegments = [
       segment({ id: "segment-1", sourceText: "Hello world." }),
@@ -270,6 +389,59 @@ describe("TranslationTaskOrchestrator", () => {
       taskId: "task-1",
       state: "cancelled",
     });
+  });
+
+  it("does not trace buffered provider aborts as failed batches after cancellation", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const { orchestrator, sendToContent, translateBatch } = createOrchestrator();
+    let rejectProvider: ((error: Error) => void) | undefined;
+
+    try {
+      sendToContent.mockResolvedValue({
+        type: "collectSegmentsResult",
+        taskId: "task-1",
+        segments: [segment({ sourceText: "Private cancelled source." })],
+      });
+      translateBatch.mockImplementation(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectProvider = reject;
+          }),
+      );
+
+      const running = orchestrator.translatePage({
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+      });
+      await vi.waitFor(() => {
+        expect(translateBatch).toHaveBeenCalledTimes(1);
+      });
+
+      orchestrator.cancelTask("task-1", "userCancelled");
+      rejectProvider?.(new Error("Provider request aborted."));
+
+      await expect(running).resolves.toMatchObject({
+        taskId: "task-1",
+        state: "cancelled",
+      });
+      expect(perfTraceMetadata(infoSpy.mock.calls, "translation.batch.done")).toContainEqual(
+        expect.objectContaining({
+          success: false,
+          reason: "aborted",
+        }),
+      );
+      expect(
+        perfTraceMetadata(infoSpy.mock.calls, "translation.batch.done"),
+      ).not.toContainEqual(expect.objectContaining({ errorName: "Error" }));
+      expect(renderedConsoleOutput(infoSpy.mock.calls)).not.toContain(
+        "Private cancelled source.",
+      );
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("does not collect page content when no active provider profile exists", async () => {
@@ -579,47 +751,85 @@ describe("TranslationTaskOrchestrator", () => {
   });
 
   it("retries missing segment translations before marking them failed", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const { orchestrator, translateBatch, sendToContent } = createOrchestrator();
+    const firstSourceText = "Private missing source one.";
+    const secondSourceText = "Private missing source two.";
+    const firstTranslatedText = "Private translated one.";
+    const secondTranslatedText = "Private translated two.";
 
-    sendToContent.mockResolvedValueOnce({
-      type: "collectSegmentsResult",
-      taskId: "task-1",
-      segments: [
-        segment({ id: "segment-1", sourceText: "Hello world." }),
-        segment({
-          id: "segment-2",
-          order: 2,
-          sourceText: "Good morning.",
-          textHash: "hash-2",
-        }),
-      ],
-    });
-    sendToContent.mockResolvedValue({ type: "contentActionResult", success: true });
-    translateBatch
-      .mockResolvedValueOnce({
-        items: [{ segmentId: "segment-1", translatedText: "你好，世界。" }],
-      })
-      .mockResolvedValueOnce({
-        items: [{ segmentId: "segment-2", translatedText: "早上好。" }],
+    try {
+      sendToContent.mockResolvedValueOnce({
+        type: "collectSegmentsResult",
+        taskId: "task-1",
+        segments: [
+          segment({ id: "segment-1", sourceText: firstSourceText }),
+          segment({
+            id: "segment-2",
+            order: 2,
+            sourceText: secondSourceText,
+            textHash: "hash-2",
+          }),
+        ],
+      });
+      sendToContent.mockResolvedValue({ type: "contentActionResult", success: true });
+      translateBatch
+        .mockResolvedValueOnce({
+          items: [{ segmentId: "segment-1", translatedText: firstTranslatedText }],
+        })
+        .mockResolvedValueOnce({
+          items: [{ segmentId: "segment-2", translatedText: secondTranslatedText }],
+        });
+
+      const progress = await orchestrator.translatePage({
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
       });
 
-    const progress = await orchestrator.translatePage({
-      tabId: 7,
-      sourceLanguage: "en",
-      targetLanguage: "zh-CN",
-    });
-
-    expect(translateBatch).toHaveBeenCalledTimes(2);
-    expect(translateBatch.mock.calls[1]?.[0].segments).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "segment-2" })]),
-    );
-    expect(progress).toEqual({
-      taskId: "task-1",
-      state: "completed",
-      total: 2,
-      translated: 2,
-      failed: 0,
-    });
+      expect(translateBatch).toHaveBeenCalledTimes(2);
+      expect(translateBatch.mock.calls[1]?.[0].segments).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "segment-2" })]),
+      );
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[yoyo:perf] translation.batch.missing",
+        expect.objectContaining({
+          taskId: "task-1",
+          batchId: expect.stringMatching(/^batch-/),
+          attempt: 1,
+          providerType: "openai-compatible",
+          segmentCount: 2,
+          missingCount: 1,
+        }),
+      );
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[yoyo:perf] translation.batch.retry",
+        expect.objectContaining({
+          taskId: "task-1",
+          batchId: expect.stringMatching(/^batch-/),
+          attempt: 1,
+          providerType: "openai-compatible",
+          reason: "retry",
+          segmentCount: 1,
+        }),
+      );
+      const output = renderedConsoleOutput(infoSpy.mock.calls);
+      expect(output).not.toContain(firstSourceText);
+      expect(output).not.toContain(secondSourceText);
+      expect(output).not.toContain(firstTranslatedText);
+      expect(output).not.toContain(secondTranslatedText);
+      expect(progress).toEqual({
+        taskId: "task-1",
+        state: "completed",
+        total: 2,
+        translated: 2,
+        failed: 0,
+      });
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("translates page content in priority ordered batches and applies each batch", async () => {
@@ -4107,16 +4317,17 @@ describe("TranslationTaskOrchestrator", () => {
       }),
     });
     const applyEvents: string[] = [];
+    const collectedSegments = [
+      segment({ id: "segment-1", sourceText: "One." }),
+      segment({ id: "segment-2", order: 2, sourceText: "Two.", textHash: "hash-2" }),
+    ];
 
     sendToContent.mockImplementation(async (_tabId, message) => {
       if (message.type === "collectSegments") {
         return {
           type: "collectSegmentsResult",
           taskId: message.taskId,
-          segments: [
-            segment({ id: "segment-1", sourceText: "One." }),
-            segment({ id: "segment-2", order: 2, sourceText: "Two.", textHash: "hash-2" }),
-          ],
+          segments: collectedSegments,
         };
       }
 
@@ -4135,6 +4346,21 @@ describe("TranslationTaskOrchestrator", () => {
     });
 
     expect(streamBatch).toHaveBeenCalledTimes(1);
+    expect(streamBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceContext: expect.objectContaining({
+          taskId: "task-1",
+          batchId: expect.stringMatching(/^batch-/),
+          stage: "lazy",
+          providerType: "openai-compatible",
+          segmentCount: 2,
+          sourceCharCount: collectedSegments.reduce(
+            (total, currentSegment) => total + currentSegment.sourceText.length,
+            0,
+          ),
+        }),
+      }),
+    );
     expect(translateBatch).not.toHaveBeenCalled();
     expect(applyEvents).toEqual(["segment-1", "segment-2"]);
     expect(progress).toMatchObject({
@@ -4142,6 +4368,192 @@ describe("TranslationTaskOrchestrator", () => {
       translated: 2,
       failed: 0,
     });
+  });
+
+  it("does not trace empty stream fallback as a completed batch", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const translateBatch = vi.fn<
+      (request: TranslateBatchRequest) => Promise<{
+        items: Array<{ segmentId: string; translatedText: string }>;
+      }>
+    >(async () => ({
+      items: [{ segmentId: "segment-1", translatedText: "Private buffered translation." }],
+    }));
+    const streamBatch = vi.fn<
+      (
+        request: TranslateBatchRequest,
+      ) => AsyncGenerator<{ items: Array<{ segmentId: string; translatedText: string }> }>
+    >((request) => {
+      void request;
+      return streamBatchResponses([]);
+    });
+    const { orchestrator, sendToContent } = createOrchestrator({
+      getTranslationProvider: () => ({
+        translateText: vi.fn(),
+        translateBatch,
+        streamBatch,
+      }),
+    });
+
+    try {
+      sendToContent.mockImplementation(async (_tabId, message) => {
+        if (message.type === "collectSegments") {
+          return {
+            type: "collectSegmentsResult",
+            taskId: message.taskId,
+            segments: [segment({ id: "segment-1", sourceText: "Private stream source." })],
+          };
+        }
+
+        if (message.type !== "applyTranslations") {
+          throw new Error(`Unexpected content message: ${message.type}`);
+        }
+
+        return { type: "contentActionResult", success: true };
+      });
+
+      await expect(
+        orchestrator.translatePage({
+          tabId: 7,
+          sourceLanguage: "en",
+          targetLanguage: "zh-CN",
+        }),
+      ).resolves.toMatchObject({ state: "completed" });
+
+      expect(streamBatch).toHaveBeenCalledTimes(1);
+      expect(translateBatch).toHaveBeenCalledTimes(1);
+      const batchStarts = perfTraceMetadata(infoSpy.mock.calls, "translation.batch.start");
+      const batchDone = perfTraceMetadata(infoSpy.mock.calls, "translation.batch.done");
+
+      expect(batchStarts).toHaveLength(2);
+      expect(batchStarts[0].batchId).not.toBe(batchStarts[1].batchId);
+      expect(batchDone).toEqual([
+        expect.objectContaining({
+          batchId: batchStarts[0].batchId,
+          returnedCount: 0,
+          missingCount: 1,
+          success: false,
+          reason: "emptyResponse",
+        }),
+        expect.objectContaining({
+          batchId: batchStarts[1].batchId,
+          returnedCount: 1,
+          missingCount: 0,
+          success: true,
+        }),
+      ]);
+      const output = renderedConsoleOutput(infoSpy.mock.calls);
+      expect(output).not.toContain("Private stream source.");
+      expect(output).not.toContain("Private buffered translation.");
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("correlates missing and retry traces with buffered fallback batch ids", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const translateBatch = vi.fn<
+      (request: TranslateBatchRequest) => Promise<{
+        items: Array<{ segmentId: string; translatedText: string }>;
+      }>
+    >()
+      .mockResolvedValueOnce({
+        items: [{ segmentId: "segment-1", translatedText: "Private first translation." }],
+      })
+      .mockResolvedValueOnce({
+        items: [{ segmentId: "segment-2", translatedText: "Private second translation." }],
+      });
+    const streamBatch = vi.fn<
+      (
+        request: TranslateBatchRequest,
+      ) => AsyncGenerator<{ items: Array<{ segmentId: string; translatedText: string }> }>
+    >((request) => {
+      void request;
+      return streamBatchResponses([]);
+    });
+    const { orchestrator, sendToContent } = createOrchestrator({
+      getTranslationProvider: () => ({
+        translateText: vi.fn(),
+        translateBatch,
+        streamBatch,
+      }),
+    });
+
+    try {
+      sendToContent.mockImplementation(async (_tabId, message) => {
+        if (message.type === "collectSegments") {
+          return {
+            type: "collectSegmentsResult",
+            taskId: message.taskId,
+            segments: [
+              segment({ id: "segment-1", sourceText: "Private fallback source one." }),
+              segment({
+                id: "segment-2",
+                order: 2,
+                sourceText: "Private fallback source two.",
+                textHash: "hash-2",
+              }),
+            ],
+          };
+        }
+
+        if (message.type !== "applyTranslations") {
+          throw new Error(`Unexpected content message: ${message.type}`);
+        }
+
+        return { type: "contentActionResult", success: true };
+      });
+
+      await expect(
+        orchestrator.translatePage({
+          tabId: 7,
+          sourceLanguage: "en",
+          targetLanguage: "zh-CN",
+        }),
+      ).resolves.toMatchObject({ state: "completed" });
+
+      expect(streamBatch).toHaveBeenCalledTimes(2);
+      expect(translateBatch).toHaveBeenCalledTimes(2);
+      const streamBatchIds = streamBatch.mock.calls.map(
+        ([request]) => request.traceContext?.batchId,
+      );
+      const bufferedBatchIds = translateBatch.mock.calls.map(
+        ([request]) => request.traceContext?.batchId,
+      );
+
+      expect(bufferedBatchIds[0]).toEqual(expect.stringMatching(/^batch-/));
+      expect(bufferedBatchIds[0]).not.toBe(streamBatchIds[0]);
+      expect(perfTraceMetadata(infoSpy.mock.calls, "translation.batch.missing")).toContainEqual(
+        expect.objectContaining({
+          batchId: bufferedBatchIds[0],
+          missingCount: 1,
+        }),
+      );
+      expect(perfTraceMetadata(infoSpy.mock.calls, "translation.batch.retry")).toContainEqual(
+        expect.objectContaining({
+          batchId: bufferedBatchIds[0],
+          reason: "retry",
+          segmentCount: 1,
+        }),
+      );
+      expect(
+        perfTraceMetadata(infoSpy.mock.calls, "translation.batch.missing"),
+      ).not.toContainEqual(expect.objectContaining({ batchId: streamBatchIds[0] }));
+      expect(
+        perfTraceMetadata(infoSpy.mock.calls, "translation.batch.retry"),
+      ).not.toContainEqual(expect.objectContaining({ batchId: streamBatchIds[0] }));
+      const output = renderedConsoleOutput(infoSpy.mock.calls);
+      expect(output).not.toContain("Private fallback source one.");
+      expect(output).not.toContain("Private fallback source two.");
+      expect(output).not.toContain("Private first translation.");
+      expect(output).not.toContain("Private second translation.");
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("splits a repeatedly failing batch and falls back to single segments", async () => {
@@ -4199,6 +4611,8 @@ describe("TranslationTaskOrchestrator", () => {
   });
 
   it("waits for the second active request before draining more batches after rate limiting", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     vi.useFakeTimers();
     const translateBatch = vi.fn<
       (request: TranslateBatchRequest) => Promise<{ items: Array<{ segmentId: string; translatedText: string }> }>
@@ -4207,67 +4621,103 @@ describe("TranslationTaskOrchestrator", () => {
       getTranslationProvider: () => ({ translateText: vi.fn(), translateBatch }),
     });
     let releaseSecondRequest: (() => void) | undefined;
+    const privateSourceText = "Private rate limited source.";
+    const privateTranslatedText = "Private rate limited translation.";
 
-    sendToContent.mockImplementation(async (_tabId, message) => {
-      if (message.type === "collectSegments") {
-        return {
-          type: "collectSegmentsResult",
-          taskId: message.taskId,
-          segments: Array.from({ length: 21 }, (_value, index) =>
-            segment({
-              id: `segment-${index + 1}`,
-              order: index + 1,
-              sourceText: `Paragraph ${index + 1}.`,
-              textHash: `hash-${index + 1}`,
+    try {
+      sendToContent.mockImplementation(async (_tabId, message) => {
+        if (message.type === "collectSegments") {
+          return {
+            type: "collectSegmentsResult",
+            taskId: message.taskId,
+            segments: Array.from({ length: 21 }, (_value, index) =>
+              segment({
+                id: `segment-${index + 1}`,
+                order: index + 1,
+                sourceText:
+                  index === 0 ? privateSourceText : `Paragraph ${index + 1}.`,
+                textHash: `hash-${index + 1}`,
+              }),
+            ),
+          };
+        }
+
+        return { type: "contentActionResult", success: true };
+      });
+      translateBatch
+        .mockRejectedValueOnce(
+          new ProviderError("rateLimited", "Provider rate limit exceeded.", 429),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              releaseSecondRequest = () =>
+                resolve({
+                  items: Array.from({ length: 10 }, (_value, index) => ({
+                    segmentId: `segment-${index + 11}`,
+                    translatedText:
+                      index === 0 ? privateTranslatedText : `Translated ${index + 11}`,
+                  })),
+                });
             }),
-          ),
-        };
-      }
+        )
+        .mockImplementation(async (request) => {
+          const ids = Array.from({ length: 21 }, (_value, index) => `segment-${index + 1}`)
+            .filter((id) => request.segments.some((segment) => segment.id === id));
+          return {
+            items: ids.map((id) => ({
+              segmentId: id,
+              translatedText: id === "segment-1" ? privateTranslatedText : `Translated ${id}`,
+            })),
+          };
+        });
 
-      return { type: "contentActionResult", success: true };
-    });
-    translateBatch
-      .mockRejectedValueOnce(new ProviderError("rateLimited", "Provider rate limit exceeded.", 429))
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            releaseSecondRequest = () =>
-              resolve({
-                items: Array.from({ length: 10 }, (_value, index) => ({
-                  segmentId: `segment-${index + 11}`,
-                  translatedText: `Translated ${index + 11}`,
-                })),
-              });
-          }),
-      )
-      .mockImplementation(async (request) => {
-        const ids = Array.from({ length: 21 }, (_value, index) => `segment-${index + 1}`)
-          .filter((id) => request.segments.some((segment) => segment.id === id));
-        return {
-          items: ids.map((id) => ({ segmentId: id, translatedText: `Translated ${id}` })),
-        };
+      const running = orchestrator.translatePage({
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "fullPage",
       });
 
-    const running = orchestrator.translatePage({
-      tabId: 7,
-      sourceLanguage: "en",
-      targetLanguage: "zh-CN",
-      translationMode: "fullPage",
-    });
-
-    await vi.waitFor(() => {
+      await vi.waitFor(() => {
+        expect(translateBatch).toHaveBeenCalledTimes(2);
+      });
+      await vi.advanceTimersByTimeAsync(300);
       expect(translateBatch).toHaveBeenCalledTimes(2);
-    });
-    await vi.advanceTimersByTimeAsync(300);
-    expect(translateBatch).toHaveBeenCalledTimes(2);
 
-    releaseSecondRequest?.();
-    await vi.runAllTimersAsync();
+      releaseSecondRequest?.();
+      await vi.runAllTimersAsync();
 
-    await expect(running).resolves.toMatchObject({
-      state: "completed",
-      translated: 21,
-      failed: 0,
-    });
+      await expect(running).resolves.toMatchObject({
+        state: "completed",
+        translated: 21,
+        failed: 0,
+      });
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[yoyo:perf] translation.concurrency.changed",
+        expect.objectContaining({
+          taskId: "task-1",
+          previousConcurrency: 2,
+          nextConcurrency: 1,
+          reason: "rateLimited",
+        }),
+      );
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[yoyo:perf] translation.concurrency.changed",
+        expect.objectContaining({
+          taskId: "task-1",
+          previousConcurrency: 1,
+          nextConcurrency: 2,
+          reason: "successfulBatches",
+        }),
+      );
+      const output = renderedConsoleOutput(infoSpy.mock.calls);
+      expect(output).not.toContain(privateSourceText);
+      expect(output).not.toContain(privateTranslatedText);
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllEnvs();
+      vi.useRealTimers();
+    }
   });
 });
