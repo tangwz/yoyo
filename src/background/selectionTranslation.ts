@@ -57,6 +57,9 @@ export async function translateSelection(
         "No active provider profile.",
         dependencies,
       );
+      traceSelectionTranslationError(translationStartedAt, {
+        errorCode: "providerUnavailable",
+      });
       return;
     }
     const detectStartedAt = nowMs();
@@ -126,13 +129,20 @@ export async function translateSelection(
       getSelectionTranslationErrorMessage(error),
       dependencies,
     );
-    tracePerf("selection.translate.error", {
-      stage: "selection",
-      durationMs: elapsedMs(translationStartedAt),
-      success: false,
-      ...metadataForError(error),
-    });
+    traceSelectionTranslationError(translationStartedAt, metadataForError(error));
   }
+}
+
+function traceSelectionTranslationError(
+  startedAt: number,
+  metadata: { errorName?: string; errorCode?: string; status?: number },
+): void {
+  tracePerf("selection.translate.error", {
+    stage: "selection",
+    durationMs: elapsedMs(startedAt),
+    success: false,
+    ...metadata,
+  });
 }
 
 async function resolveSelectionSourceLanguage(

@@ -188,12 +188,14 @@ describe("translateSelection", () => {
   });
 
   it("sends an error message when no active provider is available", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     getActiveProfile.mockResolvedValue(undefined);
 
     await translateSelection(
       {
         tabId: 42,
-        text: "Hello",
+        text: "Private selected text",
         sourceLanguage: "auto",
         targetLanguage: "zh-CN",
       },
@@ -203,9 +205,23 @@ describe("translateSelection", () => {
     expect(getTranslationProvider).not.toHaveBeenCalled();
     expect(sendToContent).toHaveBeenCalledWith(42, {
       type: "showSelectionTranslation",
-      sourceText: "Hello",
+      sourceText: "Private selected text",
       errorMessage: "No active provider profile.",
     });
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] selection.translate.error",
+      expect.objectContaining({
+        stage: "selection",
+        success: false,
+        errorCode: "providerUnavailable",
+      }),
+    );
+
+    const output = renderedConsoleOutput(infoSpy.mock.calls);
+    expect(output).not.toContain("Private selected text");
+
+    infoSpy.mockRestore();
+    vi.unstubAllEnvs();
   });
 
   it("sends provider error messages to content", async () => {
