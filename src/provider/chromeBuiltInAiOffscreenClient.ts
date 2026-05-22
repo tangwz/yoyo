@@ -7,6 +7,7 @@ import type {
   TranslatorLanguageOptions,
   TranslatorTranslateOptions,
 } from "@/provider/chromeBuiltInAi";
+import { elapsedMs, metadataForError, nowMs, tracePerf } from "@/utils/perfTrace";
 
 export const CHROME_BUILT_IN_AI_OFFSCREEN_PORT = "yoyo.chrome-built-in-ai-offscreen";
 export const CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT = "chrome-built-in-ai-offscreen.html";
@@ -46,6 +47,8 @@ type ChromeBuiltInAiOffscreenClientDependencies = {
   runtime?: ChromeRuntimeLike;
   offscreen?: ChromeOffscreenLike;
 };
+
+const providerType = "chrome-built-in-ai" as const;
 
 type OffscreenRequest =
   | {
@@ -260,13 +263,25 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
 
   async create(options: TranslatorCreateOptions): Promise<TranslatorInstance> {
     if (options.signal?.aborted) {
-      throw new DOMException("Chrome Built-in AI translation was cancelled.", "AbortError");
+      const error = new DOMException(
+        "Chrome Built-in AI translation was cancelled.",
+        "AbortError",
+      );
+      tracePerf("localAi.request.error", {
+        providerType,
+        requestType: "chromeBuiltInAi.create",
+        durationMs: 0,
+        success: false,
+        ...metadataForError(error),
+      });
+      throw error;
     }
 
     const session = await this.createPortSession();
     let response: Extract<OffscreenResponse, { ok: true }>;
     try {
-      response = await session.send(
+      response = await this.sendSessionRequest(
+        session,
         {
           requestId: createRequestId(),
           type: "chromeBuiltInAi.create",
@@ -297,7 +312,8 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
           );
         }
 
-        const translateResponse = await session.send(
+        const translateResponse = await this.sendSessionRequest(
+          session,
           {
             requestId: createRequestId(),
             type: "chromeBuiltInAi.translate",
@@ -315,7 +331,8 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
       },
       destroy: async () => {
         try {
-          await session.send(
+          await this.sendSessionRequest(
+            session,
             {
               requestId: createRequestId(),
               type: "chromeBuiltInAi.destroy",
@@ -332,6 +349,7 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
   }
 
   async detectLanguage(text: string, signal?: AbortSignal): Promise<string | undefined> {
+    const startedAt = nowMs();
     const response = await this.sendRequest(
       {
         requestId: createRequestId(),
@@ -341,38 +359,69 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
       signal,
     );
 
+    tracePerf("localAi.detectLanguage.done", {
+      providerType,
+      sourceCharCount: text.length,
+      detectedLanguage: response.detectedLanguage,
+      durationMs: elapsedMs(startedAt),
+      success: true,
+    });
     return response.detectedLanguage;
   }
 
   private async ensureDocument(): Promise<void> {
-    if (!this.runtime || !this.offscreen) {
-      const error = new Error("Chrome offscreen APIs are not available.");
-      error.name = "ApiUnavailableError";
-      throw error;
-    }
+    const startedAt = nowMs();
+    try {
+      if (!this.runtime || !this.offscreen) {
+        const error = new Error("Chrome offscreen APIs are not available.");
+        error.name = "ApiUnavailableError";
+        throw error;
+      }
 
-    const documentUrl = this.runtime.getURL(CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT);
-    const contexts = await this.runtime.getContexts?.({
-      contextTypes: ["OFFSCREEN_DOCUMENT"],
-      documentUrls: [documentUrl],
-    });
-
-    if (contexts && contexts.length > 0) {
-      return;
-    }
-
-    this.creatingDocument ??= this.offscreen
-      .createDocument({
-        url: CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT,
-        reasons: ["DOM_PARSER"],
-        justification:
-          "Run Chrome Built-in AI Translator API from an extension document context.",
-      })
-      .finally(() => {
-        this.creatingDocument = undefined;
+      const documentUrl = this.runtime.getURL(CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT);
+      const contexts = await this.runtime.getContexts?.({
+        contextTypes: ["OFFSCREEN_DOCUMENT"],
+        documentUrls: [documentUrl],
       });
 
-    await this.creatingDocument;
+      if (contexts && contexts.length > 0) {
+        tracePerf("localAi.offscreen.ensureDocument.done", {
+          providerType,
+          createdDocument: false,
+          durationMs: elapsedMs(startedAt),
+          success: true,
+        });
+        return;
+      }
+
+      this.creatingDocument ??= this.offscreen
+        .createDocument({
+          url: CHROME_BUILT_IN_AI_OFFSCREEN_DOCUMENT,
+          reasons: ["DOM_PARSER"],
+          justification:
+            "Run Chrome Built-in AI Translator API from an extension document context.",
+        })
+        .finally(() => {
+          this.creatingDocument = undefined;
+        });
+
+      await this.creatingDocument;
+      tracePerf("localAi.offscreen.ensureDocument.done", {
+        providerType,
+        createdDocument: true,
+        durationMs: elapsedMs(startedAt),
+        success: true,
+      });
+    } catch (error) {
+      tracePerf("localAi.request.error", {
+        providerType,
+        requestType: "ensureDocument",
+        durationMs: elapsedMs(startedAt),
+        success: false,
+        ...metadataForError(error),
+      });
+      throw error;
+    }
   }
 
   private async createPortSession(): Promise<OffscreenPortSession> {
@@ -391,17 +440,57 @@ export class ChromeBuiltInAiOffscreenClient implements TranslatorApi {
     request: OffscreenRequest,
     signal?: AbortSignal,
   ): Promise<Extract<OffscreenResponse, { ok: true }>> {
+    const startedAt = nowMs();
     if (signal?.aborted) {
-      throw new DOMException("Chrome Built-in AI translation was cancelled.", "AbortError");
+      const error = new DOMException(
+        "Chrome Built-in AI translation was cancelled.",
+        "AbortError",
+      );
+      tracePerf("localAi.request.error", {
+        providerType,
+        requestType: request.type,
+        durationMs: elapsedMs(startedAt),
+        success: false,
+        ...metadataForError(error),
+      });
+      throw error;
     }
-
-    await this.ensureDocument();
 
     const session = await this.createPortSession();
     try {
-      return await session.send(request, signal, { disconnectOnSettle: true });
+      return await this.sendSessionRequest(session, request, signal, {
+        disconnectOnSettle: true,
+      });
     } catch (error) {
       session.disconnect();
+      throw error;
+    }
+  }
+
+  private async sendSessionRequest(
+    session: OffscreenPortSession,
+    request: OffscreenRequest,
+    signal?: AbortSignal,
+    options: { disconnectOnSettle?: boolean } = {},
+  ): Promise<Extract<OffscreenResponse, { ok: true }>> {
+    const startedAt = nowMs();
+    try {
+      const response = await session.send(request, signal, options);
+      tracePerf("localAi.offscreen.request.done", {
+        providerType,
+        requestType: request.type,
+        durationMs: elapsedMs(startedAt),
+        success: true,
+      });
+      return response;
+    } catch (error) {
+      tracePerf("localAi.request.error", {
+        providerType,
+        requestType: request.type,
+        durationMs: elapsedMs(startedAt),
+        success: false,
+        ...metadataForError(error),
+      });
       throw error;
     }
   }

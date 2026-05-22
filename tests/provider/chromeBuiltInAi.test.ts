@@ -32,7 +32,9 @@ function namedError(name: string): Error {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("ChromeBuiltInTranslatorProvider", () => {
@@ -536,6 +538,76 @@ describe("ChromeBuiltInTranslatorProvider", () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(translate).toHaveBeenCalledTimes(2);
     expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("traces local provider batch translation without private text", async () => {
+    vi.stubEnv("DEV", true);
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const translate = vi.fn(async (text: string) => `private translated:${text}`);
+    const availability = vi.fn(async () => "available" as const);
+    const create = vi.fn(async () => ({ translate }));
+    const provider = new ChromeBuiltInTranslatorProvider({
+      getTranslatorApi: () => ({ availability, create }),
+    });
+
+    await expect(
+      provider.translateBatch({
+        profile: profile(),
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        traceContext: {
+          taskId: "task-1",
+          batchId: "batch-1",
+          stage: "page",
+          providerType: "chrome-built-in-ai",
+        },
+        segments: [
+          {
+            id: "segment-1",
+            order: 1,
+            sourceText: "Private source one",
+            kind: "paragraph",
+            pathHint: "body.p1",
+            textHash: "hash-1",
+            priority: "viewport",
+          },
+          {
+            id: "segment-2",
+            order: 2,
+            sourceText: "Private source two",
+            kind: "paragraph",
+            pathHint: "body.p2",
+            textHash: "hash-2",
+            priority: "viewport",
+          },
+        ],
+      }),
+    ).resolves.toEqual({
+      items: [
+        {
+          segmentId: "segment-1",
+          translatedText: "private translated:Private source one",
+        },
+        {
+          segmentId: "segment-2",
+          translatedText: "private translated:Private source two",
+        },
+      ],
+    });
+
+    const output = JSON.stringify(consoleInfo.mock.calls);
+    expect(output).toContain("localAi.availability.done");
+    expect(output).toContain("localAi.createTranslator.done");
+    expect(output).toContain("localAi.translate.segment.done");
+    expect(output).toContain("localAi.translate.batch.done");
+    expect(output).toContain("\"taskId\":\"task-1\"");
+    expect(output).toContain("\"batchId\":\"batch-1\"");
+    expect(output).toContain("\"segmentId\":\"segment-1\"");
+    expect(output).toContain("\"segmentOrder\":2");
+    expect(output).toContain("\"sourceCharCount\":36");
+    expect(output).not.toContain("Private source one");
+    expect(output).not.toContain("Private source two");
+    expect(output).not.toContain("private translated");
   });
 
   it("destroys batch translator sessions on failure", async () => {
