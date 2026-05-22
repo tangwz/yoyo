@@ -370,6 +370,7 @@ describe("OpenAiTranslationAdapter", () => {
     expect(infoSpy).toHaveBeenCalledWith(
       "[yoyo:perf] llm.response.parsed",
       expect.objectContaining({
+        stream: true,
         durationMs: 5,
       }),
     );
