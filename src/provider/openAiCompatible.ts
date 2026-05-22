@@ -3,9 +3,11 @@ import { createTextModelCandidates } from "@/provider/modelNames";
 import type {
   GenerateTextRequest,
   GenerateTextResponse,
+  ProviderTraceContext,
   StreamTextChunk,
   StreamTextRequest,
 } from "@/provider/types";
+import { elapsedMs, metadataForError, nowMs, tracePerf } from "@/utils/perfTrace";
 
 type ChatCompletionResponse = {
   model?: string;
@@ -104,6 +106,36 @@ function buildChatCompletionRequestBody(
   return body;
 }
 
+function promptTraceMetadata(
+  request: GenerateTextRequest | StreamTextRequest,
+  model: string,
+  candidateIndex: number,
+  stream: boolean,
+) {
+  return {
+    ...request.traceContext,
+    providerType: "openai-compatible" as const,
+    model,
+    candidateIndex,
+    stream,
+    timeoutMs: request.profile.requestParams?.timeoutMs ?? 30000,
+    promptCharCount: request.prompt.length,
+  };
+}
+
+function responseTraceMetadata(
+  traceContext: Partial<ProviderTraceContext> | undefined,
+  model: string,
+  stream: boolean,
+) {
+  return {
+    ...traceContext,
+    providerType: "openai-compatible" as const,
+    model,
+    stream,
+  };
+}
+
 export class OpenAiCompatibleProvider {
   async testConnection(profile: GenerateTextRequest["profile"]): Promise<GenerateTextResponse> {
     const testProfile = {
@@ -159,14 +191,28 @@ export class OpenAiCompatibleProvider {
           continue;
         }
 
+        tracePerf("llm.request.start", promptTraceMetadata(request, model, index, false));
         try {
-          return await this.generateTextWithModel(request, model, timeoutController.signal);
+          return await this.generateTextWithModel(
+            request,
+            model,
+            index,
+            timeoutController.signal,
+          );
         } catch (error) {
           if (
             error instanceof ProviderError &&
             canRetryWithNextModelCandidate(error) &&
             index + 1 < modelCandidates.length
           ) {
+            tracePerf("llm.retry.modelCandidate", {
+              ...request.traceContext,
+              providerType: "openai-compatible",
+              model,
+              candidateIndex: index,
+              nextCandidateIndex: index + 1,
+              ...metadataForError(error),
+            });
             continue;
           }
 
@@ -226,8 +272,14 @@ export class OpenAiCompatibleProvider {
           continue;
         }
 
+        tracePerf("llm.request.start", promptTraceMetadata(request, model, index, true));
         try {
-          yield* this.streamTextWithModel(request, model, timeoutController.signal);
+          yield* this.streamTextWithModel(
+            request,
+            model,
+            index,
+            timeoutController.signal,
+          );
           return;
         } catch (error) {
           if (
@@ -235,6 +287,14 @@ export class OpenAiCompatibleProvider {
             canRetryWithNextModelCandidate(error) &&
             index + 1 < modelCandidates.length
           ) {
+            tracePerf("llm.retry.modelCandidate", {
+              ...request.traceContext,
+              providerType: "openai-compatible",
+              model,
+              candidateIndex: index,
+              nextCandidateIndex: index + 1,
+              ...metadataForError(error),
+            });
             continue;
           }
 
@@ -270,108 +330,195 @@ export class OpenAiCompatibleProvider {
   private async generateTextWithModel(
     request: GenerateTextRequest,
     model: string,
+    candidateIndex: number,
     signal: AbortSignal,
   ): Promise<GenerateTextResponse> {
-    const response = await fetch(getChatCompletionsUrl(request.profile.baseURL), {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${request.profile.apiKey}`,
-      },
-      body: JSON.stringify(buildChatCompletionRequestBody(request, model)),
-      signal,
-    });
+    const startedAt = nowMs();
+    const metadata = promptTraceMetadata(request, model, candidateIndex, false);
 
-    if (!response.ok) {
-      throw mapHttpStatusToProviderError(response.status, await response.text());
-    }
-
-    let payload: ChatCompletionResponse;
     try {
-      payload = (await response.json()) as ChatCompletionResponse;
+      const response = await fetch(getChatCompletionsUrl(request.profile.baseURL), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${request.profile.apiKey}`,
+        },
+        body: JSON.stringify(buildChatCompletionRequestBody(request, model)),
+        signal,
+      });
+
+      tracePerf("llm.fetch.response", {
+        ...responseTraceMetadata(request.traceContext, model, false),
+        status: response.status,
+        durationMs: elapsedMs(startedAt),
+      });
+
+      if (!response.ok) {
+        throw mapHttpStatusToProviderError(response.status, await response.text());
+      }
+
+      let payload: ChatCompletionResponse;
+      try {
+        payload = (await response.json()) as ChatCompletionResponse;
+      } catch (error) {
+        throw new ProviderError(
+          "invalidResponse",
+          "Provider response was not valid JSON.",
+          undefined,
+          error,
+        );
+      }
+
+      const text = payload.choices?.[0]?.message?.content;
+      if (typeof text !== "string") {
+        throw new ProviderError("invalidResponse", "Provider response did not include text.");
+      }
+
+      tracePerf("llm.response.json.done", {
+        ...responseTraceMetadata(request.traceContext, payload.model ?? model, false),
+        outputCharCount: text.length,
+        durationMs: elapsedMs(startedAt),
+      });
+
+      return {
+        text,
+        model: payload.model ?? model,
+      };
     } catch (error) {
-      throw new ProviderError(
-        "invalidResponse",
-        "Provider response was not valid JSON.",
-        undefined,
-        error,
-      );
+      tracePerf("llm.request.error", {
+        ...metadata,
+        durationMs: elapsedMs(startedAt),
+        ...metadataForError(error),
+      });
+      throw error;
     }
-
-    const text = payload.choices?.[0]?.message?.content;
-    if (typeof text !== "string") {
-      throw new ProviderError("invalidResponse", "Provider response did not include text.");
-    }
-
-    return {
-      text,
-      model: payload.model ?? model,
-    };
   }
 
   private async *streamTextWithModel(
     request: StreamTextRequest,
     model: string,
+    candidateIndex: number,
     signal: AbortSignal,
   ): AsyncGenerator<StreamTextChunk> {
-    const response = await fetch(getChatCompletionsUrl(request.profile.baseURL), {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${request.profile.apiKey}`,
-      },
-      body: JSON.stringify(buildChatCompletionRequestBody(request, model, true)),
-      signal,
-    });
-
-    if (!response.ok) {
-      throw mapHttpStatusToProviderError(response.status, await response.text());
-    }
-
-    if (!response.body) {
-      throw new ProviderError("invalidResponse", "Provider response did not include a stream.");
-    }
-
-    const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.toLowerCase().includes("text/event-stream")) {
-      throw new ProviderError("invalidResponse", "Provider streaming response was not SSE.");
-    }
-
-    const decoder = new TextDecoder();
-    const reader = response.body.getReader();
-    let buffer = "";
+    const startedAt = nowMs();
+    const metadata = promptTraceMetadata(request, model, candidateIndex, true);
+    let chunkCount = 0;
+    let outputCharCount = 0;
+    let firstChunkTraced = false;
 
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
+      const response = await fetch(getChatCompletionsUrl(request.profile.baseURL), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${request.profile.apiKey}`,
+        },
+        body: JSON.stringify(buildChatCompletionRequestBody(request, model, true)),
+        signal,
+      });
+
+      tracePerf("llm.fetch.response", {
+        ...responseTraceMetadata(request.traceContext, model, true),
+        status: response.status,
+        durationMs: elapsedMs(startedAt),
+      });
+
+      if (!response.ok) {
+        throw mapHttpStatusToProviderError(response.status, await response.text());
+      }
+
+      if (!response.body) {
+        throw new ProviderError("invalidResponse", "Provider response did not include a stream.");
+      }
+
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!contentType.toLowerCase().includes("text/event-stream")) {
+        throw new ProviderError("invalidResponse", "Provider streaming response was not SSE.");
+      }
+
+      const decoder = new TextDecoder();
+      const reader = response.body.getReader();
+      let buffer = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split(/\r?\n\r?\n/);
+          buffer = events.pop() ?? "";
+
+          for (const event of events) {
+            const chunk = parseStreamEvent(event);
+            if (chunk === "done") {
+              tracePerf("llm.stream.done", {
+                ...responseTraceMetadata(request.traceContext, model, true),
+                chunkCount,
+                outputCharCount,
+                durationMs: elapsedMs(startedAt),
+              });
+              return;
+            }
+            if (chunk) {
+              chunkCount += 1;
+              outputCharCount += chunk.text.length;
+              if (!firstChunkTraced) {
+                firstChunkTraced = true;
+                tracePerf("llm.stream.firstChunk", {
+                  ...responseTraceMetadata(request.traceContext, chunk.model ?? model, true),
+                  durationMs: elapsedMs(startedAt),
+                });
+              }
+              yield chunk;
+            }
+          }
         }
 
-        buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split(/\r?\n\r?\n/);
-        buffer = events.pop() ?? "";
-
-        for (const event of events) {
-          const chunk = parseStreamEvent(event);
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+          const chunk = parseStreamEvent(buffer);
           if (chunk === "done") {
+            tracePerf("llm.stream.done", {
+              ...responseTraceMetadata(request.traceContext, model, true),
+              chunkCount,
+              outputCharCount,
+              durationMs: elapsedMs(startedAt),
+            });
             return;
           }
           if (chunk) {
+            chunkCount += 1;
+            outputCharCount += chunk.text.length;
+            if (!firstChunkTraced) {
+              firstChunkTraced = true;
+              tracePerf("llm.stream.firstChunk", {
+                ...responseTraceMetadata(request.traceContext, chunk.model ?? model, true),
+                durationMs: elapsedMs(startedAt),
+              });
+            }
             yield chunk;
           }
         }
-      }
 
-      buffer += decoder.decode();
-      if (buffer.trim()) {
-        const chunk = parseStreamEvent(buffer);
-        if (chunk && chunk !== "done") {
-          yield chunk;
-        }
+        tracePerf("llm.stream.done", {
+          ...responseTraceMetadata(request.traceContext, model, true),
+          chunkCount,
+          outputCharCount,
+          durationMs: elapsedMs(startedAt),
+        });
+      } finally {
+        reader.releaseLock();
       }
-    } finally {
-      reader.releaseLock();
+    } catch (error) {
+      tracePerf("llm.request.error", {
+        ...metadata,
+        durationMs: elapsedMs(startedAt),
+        ...metadataForError(error),
+      });
+      throw error;
     }
   }
 }

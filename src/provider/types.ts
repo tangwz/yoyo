@@ -1,5 +1,14 @@
 export type ProviderType = "openai-compatible" | "chrome-built-in-ai";
 
+export type ProviderTraceContext = {
+  taskId?: string;
+  batchId?: string;
+  stage?: "page" | "lazy" | "selection";
+  providerType: ProviderType;
+  segmentCount?: number;
+  sourceCharCount?: number;
+};
+
 export type ProviderPreset = {
   id: string;
   name: string;
@@ -47,6 +56,7 @@ export function isOpenAiCompatibleProviderProfile(
 export type GenerateTextRequest = {
   profile: OpenAiCompatibleProviderProfile;
   prompt: string;
+  traceContext?: ProviderTraceContext;
   abortSignal?: AbortSignal;
 };
 

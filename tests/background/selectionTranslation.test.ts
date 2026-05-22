@@ -7,6 +7,16 @@ import { LocalAiError } from "@/provider/localAiErrors";
 import type { TranslationProvider } from "@/provider/translationProvider";
 import type { ProviderProfile } from "@/provider/types";
 
+function renderedConsoleOutput(calls: unknown[][]): string {
+  return calls
+    .map((call) =>
+      call
+        .map((value) => (typeof value === "string" ? value : JSON.stringify(value)))
+        .join(" "),
+    )
+    .join("\n");
+}
+
 const openAiProfile = {
   id: "provider-1",
   displayName: "Work Provider",
@@ -81,6 +91,12 @@ describe("translateSelection", () => {
       sourceLanguage: "auto",
       targetLanguage: "zh-CN",
       text: "Hello",
+      traceContext: {
+        stage: "selection",
+        providerType: "openai-compatible",
+        segmentCount: 1,
+        sourceCharCount: 5,
+      },
     });
     expect(prepareChromeBuiltInAi).not.toHaveBeenCalled();
     expect(sendToContent).toHaveBeenCalledWith(42, {
@@ -88,6 +104,71 @@ describe("translateSelection", () => {
       sourceText: "Hello",
       translatedText: "你好",
     });
+  });
+
+  it("traces normal openAI selection translation without raw text", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    await translateSelection(
+      {
+        tabId: 42,
+        text: "  Hello private text  ",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+      },
+      dependencies(),
+    );
+
+    expect(translateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceContext: {
+          stage: "selection",
+          providerType: "openai-compatible",
+          segmentCount: 1,
+          sourceCharCount: 18,
+        },
+      }),
+    );
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] selection.translate.start",
+      expect.objectContaining({
+        stage: "selection",
+        sourceCharCount: 18,
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+      }),
+    );
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] selection.profile.done",
+      expect.objectContaining({
+        providerType: "openai-compatible",
+        success: true,
+      }),
+    );
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] selection.provider.done",
+      expect.objectContaining({
+        providerType: "openai-compatible",
+        sourceCharCount: 18,
+        outputCharCount: 2,
+        success: true,
+      }),
+    );
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] selection.showResult.done",
+      expect.objectContaining({
+        providerType: "openai-compatible",
+        success: true,
+      }),
+    );
+
+    const output = renderedConsoleOutput(infoSpy.mock.calls);
+    expect(output).not.toContain("Hello private text");
+    expect(output).not.toContain("你好");
+
+    infoSpy.mockRestore();
+    vi.unstubAllEnvs();
   });
 
   it("returns without provider calls for empty text", async () => {
@@ -107,12 +188,14 @@ describe("translateSelection", () => {
   });
 
   it("sends an error message when no active provider is available", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     getActiveProfile.mockResolvedValue(undefined);
 
     await translateSelection(
       {
         tabId: 42,
-        text: "Hello",
+        text: "Private selected text",
         sourceLanguage: "auto",
         targetLanguage: "zh-CN",
       },
@@ -122,9 +205,23 @@ describe("translateSelection", () => {
     expect(getTranslationProvider).not.toHaveBeenCalled();
     expect(sendToContent).toHaveBeenCalledWith(42, {
       type: "showSelectionTranslation",
-      sourceText: "Hello",
+      sourceText: "Private selected text",
       errorMessage: "No active provider profile.",
     });
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] selection.translate.error",
+      expect.objectContaining({
+        stage: "profile",
+        success: false,
+        errorCode: "providerUnavailable",
+      }),
+    );
+
+    const output = renderedConsoleOutput(infoSpy.mock.calls);
+    expect(output).not.toContain("Private selected text");
+
+    infoSpy.mockRestore();
+    vi.unstubAllEnvs();
   });
 
   it("sends provider error messages to content", async () => {
@@ -145,6 +242,37 @@ describe("translateSelection", () => {
       sourceText: "Hello",
       errorMessage: "Provider failed",
     });
+  });
+
+  it("traces provider selection errors with the failing stage", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    translateText.mockRejectedValue(new Error("Provider failed with private details"));
+
+    await translateSelection(
+      {
+        tabId: 42,
+        text: "Private selected text",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+      },
+      dependencies(),
+    );
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] selection.translate.error",
+      expect.objectContaining({
+        stage: "provider",
+        success: false,
+        errorName: "Error",
+      }),
+    );
+    expect(renderedConsoleOutput(infoSpy.mock.calls)).not.toContain(
+      "Provider failed with private details",
+    );
+
+    infoSpy.mockRestore();
+    vi.unstubAllEnvs();
   });
 
   it("maps LocalAiError to the formatted local-only message", async () => {
@@ -196,6 +324,12 @@ describe("translateSelection", () => {
       sourceLanguage: "en",
       targetLanguage: "zh-CN",
       text: "Hello",
+      traceContext: {
+        stage: "selection",
+        providerType: "chrome-built-in-ai",
+        segmentCount: 1,
+        sourceCharCount: 5,
+      },
     });
     expect(sendToContent).toHaveBeenCalledWith(42, {
       type: "showSelectionTranslation",

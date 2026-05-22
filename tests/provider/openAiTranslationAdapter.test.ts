@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenAiTranslationAdapter } from "@/provider/openAiTranslationAdapter";
 import type {
   OpenAiCompatibleProviderProfile,
@@ -46,6 +46,11 @@ async function* streamTextChunks(chunks: readonly string[]): AsyncGenerator<{ te
 }
 
 describe("OpenAiTranslationAdapter", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
   it("translates page segments through the OpenAI-compatible provider", async () => {
     const generateText = vi.fn().mockResolvedValue({
       model: "gpt-5-mini",
@@ -78,6 +83,90 @@ describe("OpenAiTranslationAdapter", () => {
     expect(generateText.mock.calls[0]?.[0].prompt).toContain("Target language: zh-CN");
   });
 
+  it("forwards batch trace context to the text provider", async () => {
+    const generateText = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ segmentId: "seg_1", translatedText: "你好" }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+    const adapter = new OpenAiTranslationAdapter({ generateText });
+
+    await adapter.translateBatch({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      traceContext: {
+        taskId: "task-1",
+        batchId: "batch-1",
+        stage: "page",
+        providerType: "openai-compatible",
+      },
+      segments: [
+        {
+          id: "seg_1",
+          order: 1,
+          sourceText: "Hello",
+          kind: "paragraph",
+          priority: "viewport",
+          pathHint: "p:nth-child(1)",
+          textHash: "hash-1",
+        },
+      ],
+    });
+
+    expect(generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceContext: expect.objectContaining({
+          taskId: "task-1",
+          batchId: "batch-1",
+          stage: "page",
+          providerType: "openai-compatible",
+          segmentCount: 1,
+          sourceCharCount: 5,
+        }),
+      }),
+    );
+  });
+
+  it("traces parsed batch results without logging parsed text", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const generateText = vi.fn().mockResolvedValue({
+      text: JSON.stringify({
+        items: [{ segmentId: "seg_1", translatedText: "Private translated text" }],
+      }),
+      model: "gpt-4.1-mini",
+    });
+    const adapter = new OpenAiTranslationAdapter({ generateText });
+
+    await adapter.translateBatch({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      traceContext: {
+        taskId: "task-1",
+        batchId: "batch-1",
+        stage: "page",
+        providerType: "openai-compatible",
+      },
+      segments: [segment("seg_1", "Hello"), segment("seg_2", "Good morning")],
+    });
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.response.parsed",
+      expect.objectContaining({
+        taskId: "task-1",
+        batchId: "batch-1",
+        providerType: "openai-compatible",
+        segmentCount: 2,
+        returnedCount: 1,
+        missingCount: 1,
+      }),
+    );
+    expect(JSON.stringify(infoSpy.mock.calls)).not.toContain("Private translated text");
+  });
+
   it("translates text selections through the OpenAI-compatible provider", async () => {
     const abortController = new AbortController();
     const generateText = vi.fn().mockResolvedValue({
@@ -102,6 +191,42 @@ describe("OpenAiTranslationAdapter", () => {
     expect(generateText).toHaveBeenCalledTimes(1);
     expect(generateText.mock.calls[0]?.[0].abortSignal).toBe(abortController.signal);
     expect(generateText.mock.calls[0]?.[0].prompt).toContain("Hello.");
+  });
+
+  it("forces selection trace context stage for text selections", async () => {
+    const generateText = vi.fn().mockResolvedValue({
+      model: "gpt-4.1-mini",
+      text: JSON.stringify({
+        items: [{ segmentId: "selection", translatedText: "你好。" }],
+      }),
+    });
+    const adapter = new OpenAiTranslationAdapter({ generateText });
+
+    await adapter.translateText({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      text: "Hello.",
+      traceContext: {
+        taskId: "task-1",
+        batchId: "batch-1",
+        stage: "page",
+        providerType: "openai-compatible",
+      },
+    });
+
+    expect(generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceContext: expect.objectContaining({
+          taskId: "task-1",
+          batchId: "batch-1",
+          stage: "selection",
+          providerType: "openai-compatible",
+          segmentCount: 1,
+          sourceCharCount: 6,
+        }),
+      }),
+    );
   });
 
   it("rejects text selections when the provider omits the translated item", async () => {
@@ -157,6 +282,98 @@ describe("OpenAiTranslationAdapter", () => {
     expect(streamText.mock.calls[0]?.[0].prompt).toContain("Target language: zh-CN");
     expect(streamText.mock.calls[0]?.[0].abortSignal).toBe(abortController.signal);
     expect(generateText).not.toHaveBeenCalled();
+  });
+
+  it("traces parsed streaming batch results without logging private content", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const privateChunk = '{"id":"segment-1","text":"Private translated stream"}\n';
+    const generateText = vi.fn();
+    const streamText = vi.fn<(request: StreamTextRequest) => AsyncGenerator<{ text: string }>>(
+      () => streamTextChunks([privateChunk]),
+    );
+    const adapter = new OpenAiTranslationAdapter({ generateText, streamText });
+    const responses = [];
+
+    for await (const response of adapter.streamBatch({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      traceContext: {
+        taskId: "task-1",
+        batchId: "batch-1",
+        stage: "page",
+        providerType: "openai-compatible",
+      },
+      segments: [
+        segment("segment-1", "Private source one"),
+        segment("segment-2", "Private source two"),
+      ],
+    })) {
+      responses.push(response);
+    }
+
+    expect(responses).toEqual([
+      { items: [{ segmentId: "segment-1", translatedText: "Private translated stream" }] },
+    ]);
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.response.parsed",
+      expect.objectContaining({
+        taskId: "task-1",
+        batchId: "batch-1",
+        providerType: "openai-compatible",
+        segmentCount: 2,
+        sourceCharCount: 36,
+        returnedCount: 1,
+        missingCount: 1,
+        durationMs: expect.any(Number),
+      }),
+    );
+
+    const serializedCalls = JSON.stringify(infoSpy.mock.calls);
+    expect(serializedCalls).not.toContain("Private source one");
+    expect(serializedCalls).not.toContain("Private source two");
+    expect(serializedCalls).not.toContain(privateChunk);
+    expect(serializedCalls).not.toContain("Private translated stream");
+  });
+
+  it("traces streaming parse duration without counting provider stream latency", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(performance, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(4)
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(1001);
+    const generateText = vi.fn();
+    const streamText = vi.fn<(request: StreamTextRequest) => AsyncGenerator<{ text: string }>>(
+      () => streamTextChunks(['{"id":"segment-1","text":"Hello"}\n']),
+    );
+    const adapter = new OpenAiTranslationAdapter({ generateText, streamText });
+
+    for await (const response of adapter.streamBatch({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      traceContext: {
+        taskId: "task-1",
+        batchId: "batch-1",
+        stage: "page",
+        providerType: "openai-compatible",
+      },
+      segments: [segment("segment-1", "Private source")],
+    })) {
+      void response;
+      // Consume the stream.
+    }
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.response.parsed",
+      expect.objectContaining({
+        stream: true,
+        durationMs: 5,
+      }),
+    );
   });
 
   it("rejects non-OpenAI-compatible profiles for batch translation", async () => {
