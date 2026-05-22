@@ -220,7 +220,7 @@ describe("popup app", () => {
     );
     expect(screen.getByText("翻译当前页面")).toBeVisible();
     expect(screen.getByText("设置")).toBeVisible();
-    expect(screen.getByText("0.1.0")).toBeVisible();
+    expect(screen.getByText("0.2.0")).toBeVisible();
     expect(screen.getByText("更多")).toBeVisible();
 
     await waitFor(() => {

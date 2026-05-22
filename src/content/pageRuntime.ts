@@ -67,6 +67,7 @@ let mutationRescanTimer:
   | ReturnType<typeof globalThis.setTimeout>
   | undefined;
 let dirtyMutationRoots = new Set<Element>();
+let pendingDisconnectedSegmentIds = new Set<string>();
 let collectionGeneration = 0;
 
 export async function estimatePage(): Promise<PageTranslationEstimate> {
@@ -151,6 +152,7 @@ function stopMutationObserver(): void {
   }
 
   dirtyMutationRoots = new Set();
+  pendingDisconnectedSegmentIds = new Set();
 }
 
 function dropRuntimeSegment(
@@ -170,6 +172,7 @@ function dropRuntimeSegment(
   }
   reportedLazySegmentIds.delete(segmentId);
   failedLazySegmentIds.delete(segmentId);
+  pendingDisconnectedSegmentIds.delete(segmentId);
 }
 
 function findOwningAnchorElement(element: Element): Element {
@@ -192,7 +195,7 @@ function scheduleMutationRescanForElement(element: Element): void {
   scheduleMutationRescan(findOwningAnchorElement(element));
 }
 
-function dropDisconnectedAnchorsForNode(node: Node): void {
+function markDisconnectedAnchorsForNode(node: Node): void {
   if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.TEXT_NODE) {
     return;
   }
@@ -210,7 +213,7 @@ function dropDisconnectedAnchorsForNode(node: Node): void {
 
   for (const anchor of currentAnchors.listByTask(taskId)) {
     if (!anchor.sourceNode.isConnected || element.contains(anchor.sourceNode)) {
-      dropRuntimeSegment(anchor.segmentId, { reportFailed: true });
+      pendingDisconnectedSegmentIds.add(anchor.segmentId);
     }
   }
 }
@@ -226,8 +229,12 @@ function dropMissingSegmentsInRoot(
 
   for (const anchor of currentAnchors.listByTask(taskId)) {
     if (!anchor.sourceNode.isConnected) {
+      if (pendingDisconnectedSegmentIds.has(anchor.segmentId)) {
+        dropRuntimeSegment(anchor.segmentId, { reportFailed: true });
+      }
       continue;
     }
+    pendingDisconnectedSegmentIds.delete(anchor.segmentId);
     if (anchor.sourceNode !== root && !root.contains(anchor.sourceNode)) {
       continue;
     }
@@ -522,7 +529,7 @@ function startMutationObserver(): void {
         if (mutation.target instanceof Element) {
           scheduleMutationRescanForElement(mutation.target);
         }
-        dropDisconnectedAnchorsForNode(node);
+        markDisconnectedAnchorsForNode(node);
       }
     }
   });
