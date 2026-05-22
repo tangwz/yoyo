@@ -70,6 +70,10 @@ const providerPresetOptions = computed(() =>
     label: getPresetLabel(preset.id, preset.name),
   })),
 );
+const selectedPreset = computed(() =>
+  providerPresets.find((preset) => preset.id === selectedPresetId.value),
+);
+const textModelOptions = computed(() => selectedPreset.value?.textModelOptions ?? []);
 
 const targetLanguageOptions = computed(() => [
   { value: "zh-CN", label: t("targetLanguage.zhCN") },
@@ -192,7 +196,7 @@ function getProviderTestErrorMessageKey(error: unknown): OptionsMessageKey {
 }
 
 function applySelectedPreset() {
-  const preset = providerPresets.find((item) => item.id === selectedPresetId.value);
+  const preset = selectedPreset.value;
 
   if (!preset) {
     return;
@@ -518,8 +522,19 @@ async function testConnection() {
               <input
                 v-model="textModel"
                 type="text"
+                :list="textModelOptions.length > 0 ? 'text-model-options' : undefined"
                 autocomplete="off"
               >
+              <datalist
+                v-if="textModelOptions.length > 0"
+                id="text-model-options"
+              >
+                <option
+                  v-for="modelOption in textModelOptions"
+                  :key="modelOption"
+                  :value="modelOption"
+                />
+              </datalist>
             </label>
 
             <label class="field">

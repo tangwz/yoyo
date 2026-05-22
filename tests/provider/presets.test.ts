@@ -14,7 +14,8 @@ describe("provider presets", () => {
       name: "OpenAI",
       type: "openai-compatible",
       defaultBaseUrl: "https://api.openai.com/v1",
-      defaultTextModel: "gpt-4.1-mini",
+      defaultTextModel: "gpt-5-mini",
+      textModelOptions: ["gpt-5-mini", "gpt-5", "gpt-5.2"],
     });
   });
 
@@ -26,7 +27,16 @@ describe("provider presets", () => {
           name: "Kimi",
           type: "openai-compatible",
           defaultBaseUrl: "https://api.moonshot.ai/v1",
-          defaultTextModel: "moonshot-v1-8k",
+          defaultTextModel: "kimi-k2.6",
+          textModelOptions: ["kimi-k2.6", "kimi-k2.5"],
+        },
+        {
+          id: "deepseek",
+          name: "DeepSeek",
+          type: "openai-compatible",
+          defaultBaseUrl: "https://api.deepseek.com/v1",
+          defaultTextModel: "deepseek-v4-flash",
+          textModelOptions: ["deepseek-v4-flash", "deepseek-v4-pro"],
         },
         {
           id: "glm",
@@ -47,7 +57,8 @@ describe("provider presets", () => {
           name: "Xiaomi MiMo",
           type: "openai-compatible",
           defaultBaseUrl: "https://api.xiaomimimo.com/v1",
-          defaultTextModel: "mimo-v2-flash",
+          defaultTextModel: "MiMo-V2.5",
+          textModelOptions: ["MiMo-V2.5", "MiMo-V2.5-Pro"],
         },
       ]),
     );

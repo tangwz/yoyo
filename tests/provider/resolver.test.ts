@@ -17,7 +17,7 @@ describe("TranslationProviderResolver", () => {
         type: "openai-compatible",
         baseURL: "https://api.example.test",
         apiKey: "secret",
-        textModel: "gpt-4.1-mini",
+        textModel: "gpt-5-mini",
       }),
     ).toBeInstanceOf(OpenAiTranslationAdapter);
   });
@@ -57,7 +57,7 @@ describe("TranslationProviderResolver", () => {
       type: "openai-compatible",
       baseURL: "https://api.example.test",
       apiKey: "secret",
-      textModel: "gpt-4.1-mini",
+      textModel: "gpt-5-mini",
     });
 
     expect(provider.streamBatch).toBeDefined();
@@ -73,7 +73,7 @@ describe("TranslationProviderResolver", () => {
         type: "openai-compatible",
         baseURL: "https://api.example.test",
         apiKey: "secret",
-        textModel: "gpt-4.1-mini",
+        textModel: "gpt-5-mini",
       },
       sourceLanguage: "fr",
       targetLanguage: "en",

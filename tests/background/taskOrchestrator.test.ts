@@ -25,7 +25,7 @@ function providerProfile(
     type: "openai-compatible",
     baseURL: "https://provider.example.test",
     apiKey: "secret",
-    textModel: "gpt-4.1-mini",
+    textModel: "gpt-5-mini",
     ...overrides,
   };
 }
@@ -328,7 +328,7 @@ describe("TranslationTaskOrchestrator", () => {
       deferLazyCollection: false,
       targetLanguage: "zh-CN",
       providerId: "profile-1",
-      textModel: "gpt-4.1-mini",
+      textModel: "gpt-5-mini",
     });
     expect(translateBatch).toHaveBeenCalledTimes(1);
     expect(translateBatch.mock.calls[0]?.[0]).toMatchObject({
@@ -1309,7 +1309,7 @@ describe("TranslationTaskOrchestrator", () => {
       text: JSON.stringify({
         items: [{ id: "dynamic-1", text: "动态文本。" }],
       }),
-      model: "gpt-4.1-mini",
+      model: "gpt-5-mini",
     });
 
     const initialProgress = await orchestrator.translatePage({
@@ -1492,7 +1492,7 @@ describe("TranslationTaskOrchestrator", () => {
         text: JSON.stringify({
           items: ids.map((id) => ({ id, text: `Translated ${id}` })),
         }),
-        model: "gpt-4.1-mini",
+        model: "gpt-5-mini",
       };
     });
 
@@ -1549,7 +1549,7 @@ describe("TranslationTaskOrchestrator", () => {
             text: `Translated ${item.id}`,
           })),
         }),
-        model: "gpt-4.1-mini",
+        model: "gpt-5-mini",
       };
     });
 
@@ -1784,7 +1784,7 @@ describe("TranslationTaskOrchestrator", () => {
             text: `Translated ${item.id}`,
           })),
         }),
-        model: "gpt-4.1-mini",
+        model: "gpt-5-mini",
       };
     });
 
@@ -1896,7 +1896,7 @@ describe("TranslationTaskOrchestrator", () => {
               text: `Translated ${item.id}`,
             })),
           }),
-          model: "gpt-4.1-mini",
+          model: "gpt-5-mini",
         };
       });
 
@@ -1949,7 +1949,7 @@ describe("TranslationTaskOrchestrator", () => {
       text: JSON.stringify({
         items: [{ id: "runtime-1", text: "Translated runtime-1" }],
       }),
-      model: "gpt-4.1-mini",
+      model: "gpt-5-mini",
     });
     await expect(Promise.all([firstBatch, secondBatch])).resolves.toEqual([
       {
@@ -2100,7 +2100,7 @@ describe("TranslationTaskOrchestrator", () => {
       text: JSON.stringify({
         items: [{ id: "stale-dynamic", text: "Stale translation." }],
       }),
-      model: "gpt-4.1-mini",
+      model: "gpt-5-mini",
     });
 
     orchestrator.startTranslatePage({
@@ -2186,7 +2186,7 @@ describe("TranslationTaskOrchestrator", () => {
             text: `Translated ${item.id}`,
           })),
         }),
-        model: "gpt-4.1-mini",
+        model: "gpt-5-mini",
       };
     });
 
@@ -2252,7 +2252,7 @@ describe("TranslationTaskOrchestrator", () => {
             text: `Translated ${item.id}`,
           })),
         }),
-        model: "gpt-4.1-mini",
+        model: "gpt-5-mini",
       };
     });
 
@@ -2342,7 +2342,7 @@ describe("TranslationTaskOrchestrator", () => {
         text: JSON.stringify({
           items: ids.map((id) => ({ id, text: `Translated ${id}` })),
         }),
-        model: "gpt-4.1-mini",
+        model: "gpt-5-mini",
       };
     });
 
@@ -2443,7 +2443,7 @@ describe("TranslationTaskOrchestrator", () => {
             text: `Translated ${item.id}`,
           })),
         }),
-        model: "gpt-4.1-mini",
+        model: "gpt-5-mini",
       };
     });
 
@@ -2558,7 +2558,7 @@ describe("TranslationTaskOrchestrator", () => {
             text: `Translated ${item.id}`,
           })),
         }),
-        model: "gpt-4.1-mini",
+        model: "gpt-5-mini",
       };
     });
 
@@ -2703,7 +2703,7 @@ describe("TranslationTaskOrchestrator", () => {
       text: JSON.stringify({
         items: [{ id: "runtime-1", text: "Translated runtime." }],
       }),
-      model: "gpt-4.1-mini",
+      model: "gpt-5-mini",
     });
     await expect(runtimeBatch).resolves.toMatchObject({
       taskId: "task-1",
@@ -2867,7 +2867,7 @@ describe("TranslationTaskOrchestrator", () => {
             text: `Translated ${item.id}`,
           })),
         }),
-        model: "gpt-4.1-mini",
+        model: "gpt-5-mini",
       };
     });
 
@@ -2960,7 +2960,7 @@ describe("TranslationTaskOrchestrator", () => {
             text: `Translated ${item.id}`,
           })),
         }),
-        model: "gpt-4.1-mini",
+        model: "gpt-5-mini",
       };
     });
 
@@ -3027,7 +3027,7 @@ describe("TranslationTaskOrchestrator", () => {
       text: JSON.stringify({
         items: [{ id: "runtime-1", text: "Translated runtime." }],
       }),
-      model: "gpt-4.1-mini",
+      model: "gpt-5-mini",
     });
 
     const running = orchestrator.translatePage({
@@ -3089,7 +3089,7 @@ describe("TranslationTaskOrchestrator", () => {
       text: JSON.stringify({
         items: [{ id: "runtime-1", text: "Translated runtime." }],
       }),
-      model: "gpt-4.1-mini",
+      model: "gpt-5-mini",
     });
 
     const running = orchestrator.translatePage({
@@ -3645,7 +3645,7 @@ describe("TranslationTaskOrchestrator", () => {
       text: JSON.stringify({
         items: [{ id: "segment-3", text: "Translated later." }],
       }),
-      model: "gpt-4.1-mini",
+      model: "gpt-5-mini",
     });
 
     const progress = await orchestrator.enqueueTranslationBatch({

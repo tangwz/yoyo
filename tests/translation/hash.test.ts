@@ -24,7 +24,7 @@ describe("translation hash helpers", () => {
       sourceLanguage: "en",
       targetLanguage: "zh-CN",
       providerId: "openai-compatible",
-      textModel: "gpt-4.1-mini",
+      textModel: "gpt-5-mini",
       translationStyle: "concise",
       promptVersion: "v1",
     });
@@ -34,7 +34,7 @@ describe("translation hash helpers", () => {
       sourceLanguage: "en",
       targetLanguage: "zh-CN",
       providerId: "openai-compatible",
-      textModel: "gpt-4.1-mini",
+      textModel: "gpt-5-mini",
       translationStyle: "concise",
       promptVersion: "v1",
     });
@@ -48,7 +48,7 @@ describe("translation hash helpers", () => {
       sourceText: "Hello",
       targetLanguage: "zh-CN",
       providerId: "openai-compatible",
-      textModel: "gpt-4.1-mini",
+      textModel: "gpt-5-mini",
       translationStyle: "concise",
       promptVersion: "v1",
     };

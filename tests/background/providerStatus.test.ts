@@ -19,7 +19,7 @@ function profile(
     type: "openai-compatible",
     baseURL: "https://api.example.com/v1",
     apiKey: "secret-key",
-    textModel: "gpt-4.1-mini",
+    textModel: "gpt-5-mini",
     ...overrides,
   };
 }

@@ -18,7 +18,7 @@ describe("messaging contracts", () => {
       sourceLanguage: "auto",
       targetLanguage: "zh-CN",
       providerId: "profile-1",
-      textModel: "gpt-4.1-mini",
+      textModel: "gpt-5-mini",
     } satisfies ContentRequest;
 
     expect(request).toEqual({
@@ -28,7 +28,7 @@ describe("messaging contracts", () => {
       sourceLanguage: "auto",
       targetLanguage: "zh-CN",
       providerId: "profile-1",
-      textModel: "gpt-4.1-mini",
+      textModel: "gpt-5-mini",
     });
   });
 
@@ -42,7 +42,7 @@ describe("messaging contracts", () => {
         sourceLanguage: "auto",
         targetLanguage: "zh-CN",
         providerId: "profile-1",
-        textModel: "gpt-4.1-mini",
+        textModel: "gpt-5-mini",
       },
       { type: "applyTranslations", taskId: "task-1", items: [] },
       {
@@ -114,7 +114,7 @@ describe("messaging contracts", () => {
         targetLanguage: "zh-CN",
         translationMode: "lazyViewport",
         providerId: "profile-1",
-        textModel: "gpt-4.1-mini",
+        textModel: "gpt-5-mini",
         segments: [],
         processedSegmentIds: [],
         failedSegmentIds: ["seg_4"],
@@ -131,7 +131,7 @@ describe("messaging contracts", () => {
         targetLanguage: "zh-CN",
         translationMode: "lazyViewport",
         providerId: "profile-1",
-        textModel: "gpt-4.1-mini",
+        textModel: "gpt-5-mini",
         segments: [],
         processedSegmentIds: [],
         failedSegmentIds: ["seg_4"],

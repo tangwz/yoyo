@@ -23,7 +23,7 @@ const openAiProfile = {
   type: "openai-compatible",
   baseURL: "https://api.example.com/v1",
   apiKey: "sk-test",
-  textModel: "gpt-4.1-mini",
+  textModel: "gpt-5-mini",
 } satisfies ProviderProfile;
 
 const chromeBuiltInProfile = {

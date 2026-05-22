@@ -21,7 +21,7 @@ function openAiProfile(): OpenAiCompatibleProviderProfile {
     type: "openai-compatible",
     baseURL: "https://api.example.test",
     apiKey: "secret",
-    textModel: "gpt-4.1-mini",
+    textModel: "gpt-5-mini",
   };
 }
 

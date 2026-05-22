@@ -15,6 +15,7 @@ export type ProviderPreset = {
   type: "openai-compatible";
   defaultBaseUrl: string;
   defaultTextModel?: string;
+  textModelOptions?: string[];
   defaultVisionModel?: string;
 };
 
