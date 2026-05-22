@@ -107,6 +107,7 @@ type TranslationBatchResult = {
 };
 
 type ApplyTranslationsOptions = {
+  batchId?: string;
   countFailures?: boolean;
 };
 
@@ -1109,14 +1110,6 @@ export class TranslationTaskOrchestrator {
       }
 
       if (!sawValidItem) {
-        tracePerf("translation.batch.done", {
-          ...traceContext,
-          attempt: attempt + 1,
-          returnedCount: 0,
-          missingCount: input.segments.length,
-          durationMs: elapsedMs(startedAt),
-          success: true,
-        });
         return undefined;
       }
 
@@ -1201,6 +1194,10 @@ export class TranslationTaskOrchestrator {
         abortSignal: input.task.controller.signal,
       });
     } catch (error) {
+      if (this.isTaskStopped(input.task)) {
+        return { missingSegments: [] };
+      }
+
       tracePerf("translation.batch.done", {
         ...traceContext,
         attempt: attempt + 1,
@@ -1223,7 +1220,9 @@ export class TranslationTaskOrchestrator {
       const fanOutItems = validItems.flatMap((item) =>
         this.fanOutTranslationItem(item, input.fanOutGroups),
       );
-      const appliedItems = await this.applyTranslations(input.task, fanOutItems);
+      const appliedItems = await this.applyTranslations(input.task, fanOutItems, {
+        batchId: input.batchId,
+      });
 
       if (this.isTaskStopped(input.task)) {
         return { missingSegments: [] };
@@ -1265,6 +1264,7 @@ export class TranslationTaskOrchestrator {
     const group = input.fanOutGroups.get(item.segmentId) ?? [];
     const fanOutItems = this.fanOutTranslationItem(item, input.fanOutGroups);
     const appliedItems = await this.applyTranslations(input.task, fanOutItems, {
+      batchId: input.batchId,
       countFailures: false,
     });
     if (appliedItems.length === 0 || this.isTaskStopped(input.task)) {
@@ -1402,6 +1402,7 @@ export class TranslationTaskOrchestrator {
         });
         tracePerf("translation.batch.apply.done", {
           taskId: task.progress.taskId,
+          batchId: options.batchId,
           itemCount: items.length,
           appliedCount: appliedItems.length,
           failedCount,
@@ -1416,6 +1417,7 @@ export class TranslationTaskOrchestrator {
       }
       tracePerf("translation.batch.apply.done", {
         taskId: task.progress.taskId,
+        batchId: options.batchId,
         itemCount: items.length,
         appliedCount: 0,
         failedCount: items.length,
@@ -1433,6 +1435,7 @@ export class TranslationTaskOrchestrator {
       }
       tracePerf("translation.batch.apply.done", {
         taskId: task.progress.taskId,
+        batchId: options.batchId,
         itemCount: items.length,
         appliedCount: 0,
         failedCount: items.length,
