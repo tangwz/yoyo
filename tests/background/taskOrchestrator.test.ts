@@ -4380,10 +4380,13 @@ describe("TranslationTaskOrchestrator", () => {
     >(async () => ({
       items: [{ segmentId: "segment-1", translatedText: "Private buffered translation." }],
     }));
-    const streamBatch = vi.fn(async function* (
-      _request: TranslateBatchRequest,
-    ): AsyncGenerator<{ items: Array<{ segmentId: string; translatedText: string }> }> {
-      await Promise.resolve();
+    const streamBatch = vi.fn<
+      (
+        request: TranslateBatchRequest,
+      ) => AsyncGenerator<{ items: Array<{ segmentId: string; translatedText: string }> }>
+    >((request) => {
+      void request;
+      return streamBatchResponses([]);
     });
     const { orchestrator, sendToContent } = createOrchestrator({
       getTranslationProvider: () => ({
@@ -4463,10 +4466,13 @@ describe("TranslationTaskOrchestrator", () => {
       .mockResolvedValueOnce({
         items: [{ segmentId: "segment-2", translatedText: "Private second translation." }],
       });
-    const streamBatch = vi.fn(async function* (
-      _request: TranslateBatchRequest,
-    ): AsyncGenerator<{ items: Array<{ segmentId: string; translatedText: string }> }> {
-      await Promise.resolve();
+    const streamBatch = vi.fn<
+      (
+        request: TranslateBatchRequest,
+      ) => AsyncGenerator<{ items: Array<{ segmentId: string; translatedText: string }> }>
+    >((request) => {
+      void request;
+      return streamBatchResponses([]);
     });
     const { orchestrator, sendToContent } = createOrchestrator({
       getTranslationProvider: () => ({
