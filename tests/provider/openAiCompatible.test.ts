@@ -294,13 +294,85 @@ describe("OpenAiCompatibleProvider", () => {
     });
 
     expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.request.error",
+      expect.objectContaining({
+        model: "Model-A",
+        stream: false,
+        candidateIndex: 0,
+        status: 404,
+        errorCode: "invalidRequest",
+        durationMs: expect.any(Number),
+      }),
+    );
+    expect(infoSpy).toHaveBeenCalledWith(
       "[yoyo:perf] llm.retry.modelCandidate",
       expect.objectContaining({
         candidateIndex: 0,
         nextCandidateIndex: 1,
         status: 404,
+        errorCode: "invalidRequest",
       }),
     );
+  });
+
+  it("traces streaming model candidate retries for retryable invalid requests", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            [
+              'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+              "",
+              "data: [DONE]",
+              "",
+            ].join("\n"),
+          ),
+        );
+        controller.close();
+      },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("model not found", { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    const chunks: string[] = [];
+    for await (const chunk of provider.streamText({
+      profile: { ...profile, textModel: "Model-A" },
+      prompt: "Private prompt",
+    })) {
+      chunks.push(chunk.text);
+    }
+
+    expect(chunks).toEqual(["Hello"]);
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.request.error",
+      expect.objectContaining({
+        model: "Model-A",
+        stream: true,
+        candidateIndex: 0,
+        status: 404,
+        errorCode: "invalidRequest",
+        durationMs: expect.any(Number),
+      }),
+    );
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.retry.modelCandidate",
+      expect.objectContaining({
+        candidateIndex: 0,
+        nextCandidateIndex: 1,
+        status: 404,
+        errorCode: "invalidRequest",
+      }),
+    );
+    expect(JSON.stringify(infoSpy.mock.calls)).not.toContain("Private prompt");
   });
 
   it("uses the preset canonical model candidate after the original model during translation", async () => {

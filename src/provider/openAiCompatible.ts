@@ -156,7 +156,6 @@ export class OpenAiCompatibleProvider {
             request,
             model,
             index,
-            index + 1 >= modelCandidates.length,
             timeoutController.signal,
           );
         } catch (error) {
@@ -238,7 +237,6 @@ export class OpenAiCompatibleProvider {
             request,
             model,
             index,
-            index + 1 >= modelCandidates.length,
             timeoutController.signal,
           );
           return;
@@ -292,7 +290,6 @@ export class OpenAiCompatibleProvider {
     request: GenerateTextRequest,
     model: string,
     candidateIndex: number,
-    traceRequestError: boolean,
     signal: AbortSignal,
   ): Promise<GenerateTextResponse> {
     const startedAt = nowMs();
@@ -352,17 +349,11 @@ export class OpenAiCompatibleProvider {
         model: payload.model ?? model,
       };
     } catch (error) {
-      if (
-        traceRequestError ||
-        !(error instanceof ProviderError) ||
-        !canRetryWithNextModelCandidate(error)
-      ) {
-        tracePerf("llm.request.error", {
-          ...metadata,
-          durationMs: elapsedMs(startedAt),
-          ...metadataForError(error),
-        });
-      }
+      tracePerf("llm.request.error", {
+        ...metadata,
+        durationMs: elapsedMs(startedAt),
+        ...metadataForError(error),
+      });
       throw error;
     }
   }
@@ -371,7 +362,6 @@ export class OpenAiCompatibleProvider {
     request: StreamTextRequest,
     model: string,
     candidateIndex: number,
-    traceRequestError: boolean,
     signal: AbortSignal,
   ): AsyncGenerator<StreamTextChunk> {
     const startedAt = nowMs();
@@ -493,17 +483,11 @@ export class OpenAiCompatibleProvider {
         reader.releaseLock();
       }
     } catch (error) {
-      if (
-        traceRequestError ||
-        !(error instanceof ProviderError) ||
-        !canRetryWithNextModelCandidate(error)
-      ) {
-        tracePerf("llm.request.error", {
-          ...metadata,
-          durationMs: elapsedMs(startedAt),
-          ...metadataForError(error),
-        });
-      }
+      tracePerf("llm.request.error", {
+        ...metadata,
+        durationMs: elapsedMs(startedAt),
+        ...metadataForError(error),
+      });
       throw error;
     }
   }
