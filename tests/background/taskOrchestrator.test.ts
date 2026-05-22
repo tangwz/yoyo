@@ -147,6 +147,16 @@ async function* streamBatchResponses(
   }
 }
 
+function renderedConsoleOutput(calls: unknown[][]): string {
+  return calls
+    .map((call) =>
+      call
+        .map((value) => (typeof value === "string" ? value : JSON.stringify(value)))
+        .join(" "),
+    )
+    .join("\n");
+}
+
 describe("TranslationTaskOrchestrator", () => {
   it("traces page translation batches without logging segment text", async () => {
     vi.stubEnv("DEV", true);
@@ -202,13 +212,7 @@ describe("TranslationTaskOrchestrator", () => {
         }),
       );
 
-      const output = infoSpy.mock.calls
-        .map((call) =>
-          call
-            .map((value) => (typeof value === "string" ? value : JSON.stringify(value)))
-            .join(" "),
-        )
-        .join("\n");
+      const output = renderedConsoleOutput(infoSpy.mock.calls);
 
       expect(output).toContain("translation.task.start");
       expect(output).toContain("translation.collect.done");
@@ -663,47 +667,85 @@ describe("TranslationTaskOrchestrator", () => {
   });
 
   it("retries missing segment translations before marking them failed", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const { orchestrator, translateBatch, sendToContent } = createOrchestrator();
+    const firstSourceText = "Private missing source one.";
+    const secondSourceText = "Private missing source two.";
+    const firstTranslatedText = "Private translated one.";
+    const secondTranslatedText = "Private translated two.";
 
-    sendToContent.mockResolvedValueOnce({
-      type: "collectSegmentsResult",
-      taskId: "task-1",
-      segments: [
-        segment({ id: "segment-1", sourceText: "Hello world." }),
-        segment({
-          id: "segment-2",
-          order: 2,
-          sourceText: "Good morning.",
-          textHash: "hash-2",
-        }),
-      ],
-    });
-    sendToContent.mockResolvedValue({ type: "contentActionResult", success: true });
-    translateBatch
-      .mockResolvedValueOnce({
-        items: [{ segmentId: "segment-1", translatedText: "你好，世界。" }],
-      })
-      .mockResolvedValueOnce({
-        items: [{ segmentId: "segment-2", translatedText: "早上好。" }],
+    try {
+      sendToContent.mockResolvedValueOnce({
+        type: "collectSegmentsResult",
+        taskId: "task-1",
+        segments: [
+          segment({ id: "segment-1", sourceText: firstSourceText }),
+          segment({
+            id: "segment-2",
+            order: 2,
+            sourceText: secondSourceText,
+            textHash: "hash-2",
+          }),
+        ],
+      });
+      sendToContent.mockResolvedValue({ type: "contentActionResult", success: true });
+      translateBatch
+        .mockResolvedValueOnce({
+          items: [{ segmentId: "segment-1", translatedText: firstTranslatedText }],
+        })
+        .mockResolvedValueOnce({
+          items: [{ segmentId: "segment-2", translatedText: secondTranslatedText }],
+        });
+
+      const progress = await orchestrator.translatePage({
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
       });
 
-    const progress = await orchestrator.translatePage({
-      tabId: 7,
-      sourceLanguage: "en",
-      targetLanguage: "zh-CN",
-    });
-
-    expect(translateBatch).toHaveBeenCalledTimes(2);
-    expect(translateBatch.mock.calls[1]?.[0].segments).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: "segment-2" })]),
-    );
-    expect(progress).toEqual({
-      taskId: "task-1",
-      state: "completed",
-      total: 2,
-      translated: 2,
-      failed: 0,
-    });
+      expect(translateBatch).toHaveBeenCalledTimes(2);
+      expect(translateBatch.mock.calls[1]?.[0].segments).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "segment-2" })]),
+      );
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[yoyo:perf] translation.batch.missing",
+        expect.objectContaining({
+          taskId: "task-1",
+          batchId: expect.stringMatching(/^batch-/),
+          attempt: 1,
+          providerType: "openai-compatible",
+          segmentCount: 2,
+          missingCount: 1,
+        }),
+      );
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[yoyo:perf] translation.batch.retry",
+        expect.objectContaining({
+          taskId: "task-1",
+          batchId: expect.stringMatching(/^batch-/),
+          attempt: 1,
+          providerType: "openai-compatible",
+          reason: "retry",
+          segmentCount: 1,
+        }),
+      );
+      const output = renderedConsoleOutput(infoSpy.mock.calls);
+      expect(output).not.toContain(firstSourceText);
+      expect(output).not.toContain(secondSourceText);
+      expect(output).not.toContain(firstTranslatedText);
+      expect(output).not.toContain(secondTranslatedText);
+      expect(progress).toEqual({
+        taskId: "task-1",
+        state: "completed",
+        total: 2,
+        translated: 2,
+        failed: 0,
+      });
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("translates page content in priority ordered batches and applies each batch", async () => {
@@ -4191,16 +4233,17 @@ describe("TranslationTaskOrchestrator", () => {
       }),
     });
     const applyEvents: string[] = [];
+    const collectedSegments = [
+      segment({ id: "segment-1", sourceText: "One." }),
+      segment({ id: "segment-2", order: 2, sourceText: "Two.", textHash: "hash-2" }),
+    ];
 
     sendToContent.mockImplementation(async (_tabId, message) => {
       if (message.type === "collectSegments") {
         return {
           type: "collectSegmentsResult",
           taskId: message.taskId,
-          segments: [
-            segment({ id: "segment-1", sourceText: "One." }),
-            segment({ id: "segment-2", order: 2, sourceText: "Two.", textHash: "hash-2" }),
-          ],
+          segments: collectedSegments,
         };
       }
 
@@ -4219,6 +4262,21 @@ describe("TranslationTaskOrchestrator", () => {
     });
 
     expect(streamBatch).toHaveBeenCalledTimes(1);
+    expect(streamBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceContext: expect.objectContaining({
+          taskId: "task-1",
+          batchId: expect.stringMatching(/^batch-/),
+          stage: "lazy",
+          providerType: "openai-compatible",
+          segmentCount: 2,
+          sourceCharCount: collectedSegments.reduce(
+            (total, currentSegment) => total + currentSegment.sourceText.length,
+            0,
+          ),
+        }),
+      }),
+    );
     expect(translateBatch).not.toHaveBeenCalled();
     expect(applyEvents).toEqual(["segment-1", "segment-2"]);
     expect(progress).toMatchObject({
@@ -4283,6 +4341,8 @@ describe("TranslationTaskOrchestrator", () => {
   });
 
   it("waits for the second active request before draining more batches after rate limiting", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     vi.useFakeTimers();
     const translateBatch = vi.fn<
       (request: TranslateBatchRequest) => Promise<{ items: Array<{ segmentId: string; translatedText: string }> }>
@@ -4291,67 +4351,103 @@ describe("TranslationTaskOrchestrator", () => {
       getTranslationProvider: () => ({ translateText: vi.fn(), translateBatch }),
     });
     let releaseSecondRequest: (() => void) | undefined;
+    const privateSourceText = "Private rate limited source.";
+    const privateTranslatedText = "Private rate limited translation.";
 
-    sendToContent.mockImplementation(async (_tabId, message) => {
-      if (message.type === "collectSegments") {
-        return {
-          type: "collectSegmentsResult",
-          taskId: message.taskId,
-          segments: Array.from({ length: 21 }, (_value, index) =>
-            segment({
-              id: `segment-${index + 1}`,
-              order: index + 1,
-              sourceText: `Paragraph ${index + 1}.`,
-              textHash: `hash-${index + 1}`,
+    try {
+      sendToContent.mockImplementation(async (_tabId, message) => {
+        if (message.type === "collectSegments") {
+          return {
+            type: "collectSegmentsResult",
+            taskId: message.taskId,
+            segments: Array.from({ length: 21 }, (_value, index) =>
+              segment({
+                id: `segment-${index + 1}`,
+                order: index + 1,
+                sourceText:
+                  index === 0 ? privateSourceText : `Paragraph ${index + 1}.`,
+                textHash: `hash-${index + 1}`,
+              }),
+            ),
+          };
+        }
+
+        return { type: "contentActionResult", success: true };
+      });
+      translateBatch
+        .mockRejectedValueOnce(
+          new ProviderError("rateLimited", "Provider rate limit exceeded.", 429),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              releaseSecondRequest = () =>
+                resolve({
+                  items: Array.from({ length: 10 }, (_value, index) => ({
+                    segmentId: `segment-${index + 11}`,
+                    translatedText:
+                      index === 0 ? privateTranslatedText : `Translated ${index + 11}`,
+                  })),
+                });
             }),
-          ),
-        };
-      }
+        )
+        .mockImplementation(async (request) => {
+          const ids = Array.from({ length: 21 }, (_value, index) => `segment-${index + 1}`)
+            .filter((id) => request.segments.some((segment) => segment.id === id));
+          return {
+            items: ids.map((id) => ({
+              segmentId: id,
+              translatedText: id === "segment-1" ? privateTranslatedText : `Translated ${id}`,
+            })),
+          };
+        });
 
-      return { type: "contentActionResult", success: true };
-    });
-    translateBatch
-      .mockRejectedValueOnce(new ProviderError("rateLimited", "Provider rate limit exceeded.", 429))
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            releaseSecondRequest = () =>
-              resolve({
-                items: Array.from({ length: 10 }, (_value, index) => ({
-                  segmentId: `segment-${index + 11}`,
-                  translatedText: `Translated ${index + 11}`,
-                })),
-              });
-          }),
-      )
-      .mockImplementation(async (request) => {
-        const ids = Array.from({ length: 21 }, (_value, index) => `segment-${index + 1}`)
-          .filter((id) => request.segments.some((segment) => segment.id === id));
-        return {
-          items: ids.map((id) => ({ segmentId: id, translatedText: `Translated ${id}` })),
-        };
+      const running = orchestrator.translatePage({
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "fullPage",
       });
 
-    const running = orchestrator.translatePage({
-      tabId: 7,
-      sourceLanguage: "en",
-      targetLanguage: "zh-CN",
-      translationMode: "fullPage",
-    });
-
-    await vi.waitFor(() => {
+      await vi.waitFor(() => {
+        expect(translateBatch).toHaveBeenCalledTimes(2);
+      });
+      await vi.advanceTimersByTimeAsync(300);
       expect(translateBatch).toHaveBeenCalledTimes(2);
-    });
-    await vi.advanceTimersByTimeAsync(300);
-    expect(translateBatch).toHaveBeenCalledTimes(2);
 
-    releaseSecondRequest?.();
-    await vi.runAllTimersAsync();
+      releaseSecondRequest?.();
+      await vi.runAllTimersAsync();
 
-    await expect(running).resolves.toMatchObject({
-      state: "completed",
-      translated: 21,
-      failed: 0,
-    });
+      await expect(running).resolves.toMatchObject({
+        state: "completed",
+        translated: 21,
+        failed: 0,
+      });
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[yoyo:perf] translation.concurrency.changed",
+        expect.objectContaining({
+          taskId: "task-1",
+          previousConcurrency: 2,
+          nextConcurrency: 1,
+          reason: "rateLimited",
+        }),
+      );
+      expect(infoSpy).toHaveBeenCalledWith(
+        "[yoyo:perf] translation.concurrency.changed",
+        expect.objectContaining({
+          taskId: "task-1",
+          previousConcurrency: 1,
+          nextConcurrency: 2,
+          reason: "successfulBatches",
+        }),
+      );
+      const output = renderedConsoleOutput(infoSpy.mock.calls);
+      expect(output).not.toContain(privateSourceText);
+      expect(output).not.toContain(privateTranslatedText);
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllEnvs();
+      vi.useRealTimers();
+    }
   });
 });
