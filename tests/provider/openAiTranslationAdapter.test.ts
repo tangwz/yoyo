@@ -284,6 +284,59 @@ describe("OpenAiTranslationAdapter", () => {
     expect(generateText).not.toHaveBeenCalled();
   });
 
+  it("traces parsed streaming batch results without logging private content", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const privateChunk = '{"id":"segment-1","text":"Private translated stream"}\n';
+    const generateText = vi.fn();
+    const streamText = vi.fn<(request: StreamTextRequest) => AsyncGenerator<{ text: string }>>(
+      () => streamTextChunks([privateChunk]),
+    );
+    const adapter = new OpenAiTranslationAdapter({ generateText, streamText });
+    const responses = [];
+
+    for await (const response of adapter.streamBatch({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      traceContext: {
+        taskId: "task-1",
+        batchId: "batch-1",
+        stage: "page",
+        providerType: "openai-compatible",
+      },
+      segments: [
+        segment("segment-1", "Private source one"),
+        segment("segment-2", "Private source two"),
+      ],
+    })) {
+      responses.push(response);
+    }
+
+    expect(responses).toEqual([
+      { items: [{ segmentId: "segment-1", translatedText: "Private translated stream" }] },
+    ]);
+    expect(infoSpy).toHaveBeenCalledWith(
+      "[yoyo:perf] llm.response.parsed",
+      expect.objectContaining({
+        taskId: "task-1",
+        batchId: "batch-1",
+        providerType: "openai-compatible",
+        segmentCount: 2,
+        sourceCharCount: 36,
+        returnedCount: 1,
+        missingCount: 1,
+        durationMs: expect.any(Number),
+      }),
+    );
+
+    const serializedCalls = JSON.stringify(infoSpy.mock.calls);
+    expect(serializedCalls).not.toContain("Private source one");
+    expect(serializedCalls).not.toContain("Private source two");
+    expect(serializedCalls).not.toContain(privateChunk);
+    expect(serializedCalls).not.toContain("Private translated stream");
+  });
+
   it("rejects non-OpenAI-compatible profiles for batch translation", async () => {
     const generateText = vi.fn();
     const adapter = new OpenAiTranslationAdapter({ generateText });

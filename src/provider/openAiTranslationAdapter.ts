@@ -120,9 +120,10 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
       return;
     }
 
-    const parser = createStreamingTranslationResultParser(
-      request.segments.map((segment) => segment.id),
-    );
+    const expectedSegmentIds = request.segments.map((segment) => segment.id);
+    const parser = createStreamingTranslationResultParser(expectedSegmentIds);
+    const parseStartedAt = nowMs();
+    let returnedCount = 0;
 
     for await (const chunk of this.provider.streamText({
       profile: request.profile,
@@ -138,12 +139,24 @@ export class OpenAiTranslationAdapter implements TranslationProvider {
       abortSignal: request.abortSignal,
     })) {
       const items = parser.push(chunk.text);
+      returnedCount += items.length;
       if (items.length > 0) {
         yield { items };
       }
     }
 
     const remainingItems = parser.finish().items;
+    returnedCount += remainingItems.length;
+    tracePerf("llm.response.parsed", {
+      ...buildOpenAiTraceContext(
+        request.traceContext,
+        request.segments.map((segment) => segment.sourceText),
+      ),
+      returnedCount,
+      missingCount: expectedSegmentIds.length - returnedCount,
+      durationMs: elapsedMs(parseStartedAt),
+    });
+
     if (remainingItems.length > 0) {
       yield { items: remainingItems };
     }
