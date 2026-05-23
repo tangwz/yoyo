@@ -13,17 +13,20 @@ describe("buildArticleSummaryPrompt", () => {
     expect(prompt).toContain("Write the entire summary only in the target language.");
   });
 
-  it("includes title and article sections with provided content", () => {
+  it("includes title and article as JSON input", () => {
     const prompt = buildArticleSummaryPrompt({
       targetLanguage: "ja",
-      title: "How Search Works",
-      sourceText: "Search systems rank documents by relevance.",
+      title: "Browser AI",
+      sourceText: "Chrome is adding local AI capabilities.",
     });
 
-    expect(prompt).toContain("Title:");
-    expect(prompt).toContain("How Search Works");
-    expect(prompt).toContain("Article:");
-    expect(prompt).toContain("Search systems rank documents by relevance.");
+    expect(prompt).toContain("Input:");
+    expect(prompt).toContain(
+      JSON.stringify({
+        title: "Browser AI",
+        article: "Chrome is adding local AI capabilities.",
+      }),
+    );
   });
 
   it("guards against prompt injection inside article text", () => {
