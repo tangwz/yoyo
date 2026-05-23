@@ -22,7 +22,11 @@ import {
   isOpenAiCompatibleProviderProfile,
   type ProviderProfile,
 } from "@/provider/types";
-import { defaultUiPreferences, type UiPreferences } from "@/storage/defaults";
+import {
+  defaultTranslationPreferences,
+  defaultUiPreferences,
+  type UiPreferences,
+} from "@/storage/defaults";
 import { createStorageRepositories } from "@/storage/repositories";
 import type { TranslationMode } from "@/translation/types";
 
@@ -39,8 +43,8 @@ const baseUrl = ref(defaultProviderPreset.defaultBaseUrl);
 const apiKey = ref("");
 const textModel = ref(defaultProviderPreset.defaultTextModel ?? "");
 const visionModel = ref("");
-const targetLanguage = ref("zh-CN");
-const translationMode = ref<TranslationMode>("lazyViewport");
+const targetLanguage = ref(defaultTranslationPreferences.targetLanguage);
+const translationMode = ref<TranslationMode>(defaultTranslationPreferences.mode);
 const isUiPreferencesLoaded = ref(false);
 const uiTheme = ref<UiPreferences["theme"]>(defaultUiPreferences.theme);
 const uiLanguage = ref(defaultUiPreferences.uiLanguage);
@@ -276,8 +280,10 @@ async function loadTranslationPreferences() {
     const storage = createStorageRepositories();
     const preferences = await storage.translationPreferences.get();
     translationMode.value = preferences.mode;
+    targetLanguage.value = preferences.targetLanguage;
   } catch {
-    translationMode.value = "lazyViewport";
+    translationMode.value = defaultTranslationPreferences.mode;
+    targetLanguage.value = defaultTranslationPreferences.targetLanguage;
   }
 }
 
@@ -329,6 +335,18 @@ async function saveTranslationMode() {
     });
   } catch {
     // Translation mode is non-critical; keep the selected value visible.
+  }
+}
+
+async function saveTargetLanguage() {
+  try {
+    const storage = createStorageRepositories();
+    await storage.translationPreferences.save({
+      mode: translationMode.value,
+      targetLanguage: targetLanguage.value,
+    });
+  } catch {
+    // Target language is non-critical; keep the selected value visible.
   }
 }
 
@@ -628,7 +646,10 @@ async function testConnection() {
           <div class="settings-grid">
             <label class="field">
               <span>{{ t("field.targetLanguage") }}</span>
-              <select v-model="targetLanguage">
+              <select
+                v-model="targetLanguage"
+                @change="saveTargetLanguage"
+              >
                 <option
                   v-for="option in targetLanguageOptions"
                   :key="option.value"

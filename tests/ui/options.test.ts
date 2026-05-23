@@ -304,7 +304,39 @@ describe("options app", () => {
     expect(screen.getByRole("button", { name: "Test connection" })).toBeVisible();
   });
 
-  it("loads and saves translation preferences without changing target language", async () => {
+  it("loads the stored target language", async () => {
+    getTranslationPreferences.mockResolvedValue({
+      mode: "fullPage",
+      targetLanguage: "en",
+    });
+
+    await renderReady();
+
+    const targetSelect = await screen.findByRole("combobox", { name: "目标语言" });
+    await waitFor(() => {
+      expect(targetSelect).toHaveValue("en");
+    });
+    expect(targetSelect).toHaveDisplayValue("英语");
+  });
+
+  it("saves target language changes without changing translation mode", async () => {
+    getTranslationPreferences.mockResolvedValue({
+      mode: "fullPage",
+      targetLanguage: "en",
+    });
+
+    await renderReady();
+
+    const targetSelect = await screen.findByRole("combobox", { name: "目标语言" });
+    await fireEvent.update(targetSelect, "ja");
+
+    expect(saveTranslationPreferences).toHaveBeenCalledWith({
+      mode: "fullPage",
+      targetLanguage: "ja",
+    });
+  });
+
+  it("saves translation mode changes without changing target language", async () => {
     getTranslationPreferences.mockResolvedValue({
       mode: "fullPage",
       targetLanguage: "en",
