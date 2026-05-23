@@ -135,9 +135,11 @@ describe("context menu background actions", () => {
 
   it("uses the stored target language for page summary", async () => {
     const summarizePage = vi.fn(async () => undefined);
+    const notifyPageCannotSummarize = vi.fn(async () => undefined);
 
     await handleSummarizePageMenuClick(42, {
       getStoredTargetLanguage: async () => "en",
+      notifyPageCannotSummarize,
       summarizePage,
     });
 
@@ -145,6 +147,7 @@ describe("context menu background actions", () => {
       tabId: 42,
       targetLanguage: "en",
     });
+    expect(notifyPageCannotSummarize).not.toHaveBeenCalled();
   });
 
   it("falls back to the default target language when summary language lookup fails", async () => {
@@ -154,6 +157,7 @@ describe("context menu background actions", () => {
       getStoredTargetLanguage: async () => {
         throw new Error("Storage unavailable.");
       },
+      notifyPageCannotSummarize: vi.fn(async () => undefined),
       summarizePage,
     });
 
@@ -161,5 +165,24 @@ describe("context menu background actions", () => {
       tabId: 42,
       targetLanguage: "zh-CN",
     });
+  });
+
+  it("notifies when page summary fails from the context menu", async () => {
+    const error = new Error("Cannot summarize this page.");
+    const notifyPageCannotSummarize = vi.fn(async () => undefined);
+
+    await expect(
+      handleSummarizePageMenuClick(42, {
+        getStoredTargetLanguage: async () => "en",
+        notifyPageCannotSummarize,
+        summarizePage: async () => {
+          throw error;
+        },
+      }),
+    ).rejects.toThrow("Cannot summarize this page.");
+
+    expect(notifyPageCannotSummarize).toHaveBeenCalledWith(
+      "Cannot summarize this page.",
+    );
   });
 });

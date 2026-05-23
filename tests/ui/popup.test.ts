@@ -25,6 +25,11 @@ function createDeferred<T>(): {
   return { promise, resolve, reject };
 }
 
+async function flushPromises() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 const browserMock = vi.hoisted(() => ({
   localStorageGet: vi.fn(),
   localStorageRemove: vi.fn(),
@@ -394,6 +399,48 @@ describe("popup app", () => {
       tabId: 123,
       targetLanguage: "zh-TW",
     });
+  });
+
+  it("does not overwrite target language edits when popup preferences load late", async () => {
+    const translationPreferences = createDeferred<Record<string, unknown>>();
+    browserMock.syncStorageGet.mockImplementation(async (keys) => {
+      if (
+        keys &&
+        typeof keys === "object" &&
+        !Array.isArray(keys) &&
+        "yoyo.translationPreferences" in keys
+      ) {
+        return translationPreferences.promise;
+      }
+
+      if (
+        keys &&
+        typeof keys === "object" &&
+        !Array.isArray(keys) &&
+        "yoyo.uiPreferences" in keys
+      ) {
+        return {
+          "yoyo.uiPreferences": { theme: "light", uiLanguage: "zh-CN" },
+        };
+      }
+
+      return {};
+    });
+
+    render(PopupApp);
+
+    const targetSelect = screen.getByRole("combobox", { name: "Target language" });
+    await fireEvent.update(targetSelect, "ja");
+
+    translationPreferences.resolve({
+      "yoyo.translationPreferences": { mode: "fullPage", targetLanguage: "en" },
+    });
+    await flushPromises();
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+    expect(targetSelect).toHaveValue("ja");
   });
 
   it("saves target language preferences while preserving translation mode", async () => {

@@ -44,6 +44,7 @@ export type TranslateSelectionMenuClickDependencies = {
 
 export type SummarizePageMenuClickDependencies = {
   getStoredTargetLanguage: () => Promise<string>;
+  notifyPageCannotSummarize: (message: string) => Promise<void>;
   summarizePage: (input: SummarizePageMenuInput) => Promise<void>;
 };
 
@@ -104,10 +105,17 @@ export async function handleSummarizePageMenuClick(
   tabId: number,
   dependencies: SummarizePageMenuClickDependencies,
 ): Promise<void> {
-  await dependencies.summarizePage({
-    tabId,
-    targetLanguage: await getStoredTargetLanguageOrDefault(
-      dependencies.getStoredTargetLanguage,
-    ),
-  });
+  try {
+    await dependencies.summarizePage({
+      tabId,
+      targetLanguage: await getStoredTargetLanguageOrDefault(
+        dependencies.getStoredTargetLanguage,
+      ),
+    });
+  } catch (error: unknown) {
+    await dependencies.notifyPageCannotSummarize(
+      error instanceof Error ? error.message : "The page could not be summarized.",
+    );
+    throw error;
+  }
 }

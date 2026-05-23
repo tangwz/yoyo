@@ -186,6 +186,7 @@ export default defineBackground(() => {
     async (tabId) => {
       await handleSummarizePageMenuClick(tabId, {
         getStoredTargetLanguage,
+        notifyPageCannotSummarize: notifyPageCannotTranslate,
         summarizePage: (input) =>
           summarizePage(input, {
             getActiveProfile,

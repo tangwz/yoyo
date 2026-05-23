@@ -45,6 +45,8 @@ const textModel = ref(defaultProviderPreset.defaultTextModel ?? "");
 const visionModel = ref("");
 const targetLanguage = ref(defaultTranslationPreferences.targetLanguage);
 const translationMode = ref<TranslationMode>(defaultTranslationPreferences.mode);
+const hasUserEditedTargetLanguage = ref(false);
+const hasUserEditedTranslationMode = ref(false);
 const isUiPreferencesLoaded = ref(false);
 const uiTheme = ref<UiPreferences["theme"]>(defaultUiPreferences.theme);
 const uiLanguage = ref(defaultUiPreferences.uiLanguage);
@@ -280,11 +282,19 @@ async function loadTranslationPreferences() {
   try {
     const storage = createStorageRepositories();
     const preferences = await storage.translationPreferences.get();
-    translationMode.value = preferences.mode;
-    targetLanguage.value = preferences.targetLanguage;
+    if (!hasUserEditedTranslationMode.value) {
+      translationMode.value = preferences.mode;
+    }
+    if (!hasUserEditedTargetLanguage.value) {
+      targetLanguage.value = preferences.targetLanguage;
+    }
   } catch {
-    translationMode.value = defaultTranslationPreferences.mode;
-    targetLanguage.value = defaultTranslationPreferences.targetLanguage;
+    if (!hasUserEditedTranslationMode.value) {
+      translationMode.value = defaultTranslationPreferences.mode;
+    }
+    if (!hasUserEditedTargetLanguage.value) {
+      targetLanguage.value = defaultTranslationPreferences.targetLanguage;
+    }
   }
 }
 
@@ -345,6 +355,7 @@ function queueTranslationPreferencesSave(
 }
 
 async function saveTranslationMode() {
+  hasUserEditedTranslationMode.value = true;
   try {
     await queueTranslationPreferencesSave((preferences) => ({
       ...preferences,
@@ -356,6 +367,7 @@ async function saveTranslationMode() {
 }
 
 async function saveTargetLanguage() {
+  hasUserEditedTargetLanguage.value = true;
   try {
     await queueTranslationPreferencesSave((preferences) => ({
       ...preferences,

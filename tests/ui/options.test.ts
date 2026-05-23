@@ -31,6 +31,11 @@ function createDeferred<T>() {
   return { promise, reject, resolve };
 }
 
+async function flushPromises() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 function mockStorageRepositories() {
   vi.mocked(createStorageRepositories).mockReturnValue({
     providers: {
@@ -317,6 +322,43 @@ describe("options app", () => {
       expect(targetSelect).toHaveValue("en");
     });
     expect(targetSelect).toHaveDisplayValue("英语");
+  });
+
+  it("does not overwrite target language edits when stored translation preferences load late", async () => {
+    const translationPreferences = createDeferred<{
+      mode: "fullPage";
+      targetLanguage: "en";
+    }>();
+    getTranslationPreferences.mockReturnValueOnce(translationPreferences.promise);
+
+    await renderReady();
+
+    const targetSelect = await screen.findByRole("combobox", { name: "目标语言" });
+    await fireEvent.update(targetSelect, "ja");
+
+    translationPreferences.resolve({ mode: "fullPage", targetLanguage: "en" });
+    await flushPromises();
+
+    expect(targetSelect).toHaveValue("ja");
+  });
+
+  it("does not overwrite translation mode edits when stored translation preferences load late", async () => {
+    const translationPreferences = createDeferred<{
+      mode: "fullPage";
+      targetLanguage: "en";
+    }>();
+    getTranslationPreferences.mockReturnValueOnce(translationPreferences.promise);
+
+    await renderReady();
+
+    const modeSelect = await screen.findByRole("combobox", { name: "翻译模式" });
+    await fireEvent.update(modeSelect, "fullPage");
+    await fireEvent.update(modeSelect, "lazyViewport");
+
+    translationPreferences.resolve({ mode: "fullPage", targetLanguage: "en" });
+    await flushPromises();
+
+    expect(modeSelect).toHaveValue("lazyViewport");
   });
 
   it("saves target language changes without changing translation mode", async () => {

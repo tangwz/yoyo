@@ -45,6 +45,7 @@ type PopupState =
 
 const sourceLanguage = ref("auto");
 const targetLanguage = ref<TargetLanguage>(defaultTranslationPreferences.targetLanguage);
+const hasUserEditedTargetLanguage = ref(false);
 const uiLanguage = ref(defaultUiPreferences.uiLanguage);
 const isApplyingStoredPreferences = ref(false);
 const providerLabel = ref("正在读取翻译服务...");
@@ -364,12 +365,16 @@ async function loadPopupPreferences(): Promise<void> {
     ]);
 
     uiLanguage.value = storedUiPreferences.uiLanguage;
-    isApplyingStoredPreferences.value = true;
-    targetLanguage.value = storedTranslationPreferences.targetLanguage;
-    await Promise.resolve();
+    if (!hasUserEditedTargetLanguage.value) {
+      isApplyingStoredPreferences.value = true;
+      targetLanguage.value = storedTranslationPreferences.targetLanguage;
+      await Promise.resolve();
+    }
   } catch {
     uiLanguage.value = defaultUiPreferences.uiLanguage;
-    targetLanguage.value = defaultTranslationPreferences.targetLanguage;
+    if (!hasUserEditedTargetLanguage.value) {
+      targetLanguage.value = defaultTranslationPreferences.targetLanguage;
+    }
   } finally {
     isApplyingStoredPreferences.value = false;
   }
@@ -401,6 +406,7 @@ watch(targetLanguage, async (nextTargetLanguage) => {
     return;
   }
 
+  hasUserEditedTargetLanguage.value = true;
   try {
     await queueTargetLanguageSave(nextTargetLanguage);
   } catch (error: unknown) {
