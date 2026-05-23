@@ -59,6 +59,7 @@ describe("messaging contracts", () => {
       { type: "showTranslations", taskId: "task-1" },
       { type: "removeTranslations", taskId: "task-1" },
       { type: "getPageRuntimeState" },
+      { type: "collectSummarySource" },
       {
         type: "showSelectionTranslation",
         sourceText: "Hello",
@@ -68,6 +69,16 @@ describe("messaging contracts", () => {
         type: "showSelectionTranslation",
         sourceText: "Hello",
         errorMessage: "Selection translation failed.",
+      },
+      {
+        type: "showPageSummary",
+        targetLanguage: "zh-CN",
+        summaryText: "This page explains the product architecture.",
+      },
+      {
+        type: "showPageSummary",
+        targetLanguage: "zh-CN",
+        errorMessage: "Summary failed.",
       },
     ] satisfies ContentRequest[];
 
@@ -80,8 +91,11 @@ describe("messaging contracts", () => {
       "showTranslations",
       "removeTranslations",
       "getPageRuntimeState",
+      "collectSummarySource",
       "showSelectionTranslation",
       "showSelectionTranslation",
+      "showPageSummary",
+      "showPageSummary",
     ]);
   });
 
@@ -99,6 +113,20 @@ describe("messaging contracts", () => {
       tabId: 42,
       text: "Hello",
       sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+    });
+  });
+
+  it("supports page summary requests to the background", () => {
+    const request = {
+      type: "summarizePage",
+      tabId: 123,
+      targetLanguage: "zh-CN",
+    } satisfies BackgroundRequest;
+
+    expect(request).toEqual({
+      type: "summarizePage",
+      tabId: 123,
       targetLanguage: "zh-CN",
     });
   });
@@ -206,6 +234,19 @@ describe("messaging contracts", () => {
 
     expectTypeOf(response).toMatchTypeOf<ContentResponse>();
     expect(response.message).toBe("Failed to handle message.");
+  });
+
+  it("supports summary source results from content scripts", () => {
+    const response = {
+      type: "summarySourceResult",
+      title: "Article title",
+      sourceText: "Article body.",
+      sourceCharCount: 13,
+      segmentCount: 2,
+    } satisfies ContentResponse;
+
+    expectTypeOf(response).toMatchTypeOf<ContentResponse>();
+    expect(response.type).toBe("summarySourceResult");
   });
 
   it("supports querying provider configuration state from the popup", () => {
