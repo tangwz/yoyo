@@ -5,6 +5,7 @@ import {
   translationPreferenceRepository,
   uiPreferenceRepository,
 } from "@/storage/repositories";
+import { isTargetLanguage } from "@/translation/types";
 
 describe("storage repositories", () => {
   beforeEach(() => {
@@ -123,6 +124,16 @@ describe("storage repositories", () => {
         mode: "lazyViewport",
         targetLanguage: "zh-CN",
       });
+    }
+  });
+
+  it("identifies supported target language values", () => {
+    for (const targetLanguage of ["zh-CN", "zh-TW", "en", "ja", "ko"]) {
+      expect(isTargetLanguage(targetLanguage)).toBe(true);
+    }
+
+    for (const targetLanguage of ["", "fr", 1, true, null, ["zh-CN"]]) {
+      expect(isTargetLanguage(targetLanguage)).toBe(false);
     }
   });
 

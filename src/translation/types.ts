@@ -17,6 +17,12 @@ export type CancelReason =
 export type PageSegmentKind = "paragraph" | "heading" | "listItem";
 export type SegmentPriority = "viewport" | "nearViewport" | "normal";
 export type TranslationMode = "lazyViewport" | "fullPage";
+export const supportedTargetLanguages = ["zh-CN", "zh-TW", "en", "ja", "ko"] as const;
+export type TargetLanguage = (typeof supportedTargetLanguages)[number];
+
+export function isTargetLanguage(value: unknown): value is TargetLanguage {
+  return supportedTargetLanguages.some((language) => language === value);
+}
 
 export type PageSegment = {
   id: string;
@@ -30,7 +36,7 @@ export type PageSegment = {
 
 export type TranslationPreferences = {
   mode: TranslationMode;
-  targetLanguage: string;
+  targetLanguage: TargetLanguage;
 };
 
 export type TranslationResultItem = {

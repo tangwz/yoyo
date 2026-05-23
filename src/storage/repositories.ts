@@ -5,7 +5,12 @@ import {
   type UiPreferences,
 } from "@/storage/defaults";
 import { storageKeys } from "@/storage/storageKeys";
-import type { TranslationMode, TranslationPreferences } from "@/translation/types";
+import {
+  isTargetLanguage,
+  type TargetLanguage,
+  type TranslationMode,
+  type TranslationPreferences,
+} from "@/translation/types";
 
 type StorageGetKeys = string | string[] | Record<string, unknown> | null;
 
@@ -25,11 +30,6 @@ type UiPreferenceRepositoryDependencies = {
 
 type TranslationPreferenceRepositoryDependencies = {
   syncedStorage: StorageArea;
-};
-
-type TranslationPreferencesInput = {
-  mode: unknown;
-  targetLanguage?: unknown;
 };
 
 type ExtensionStorageRuntime = {
@@ -89,14 +89,8 @@ function normalizeTranslationMode(value: unknown): TranslationMode {
     : defaultTranslationPreferences.mode;
 }
 
-function normalizeTargetLanguage(value: unknown): string {
-  return value === "zh-CN" ||
-    value === "zh-TW" ||
-    value === "en" ||
-    value === "ja" ||
-    value === "ko"
-    ? value
-    : defaultTranslationPreferences.targetLanguage;
+function normalizeTargetLanguage(value: unknown): TargetLanguage {
+  return isTargetLanguage(value) ? value : defaultTranslationPreferences.targetLanguage;
 }
 
 export function createInMemoryStorageArea(): StorageArea {
@@ -223,13 +217,8 @@ export function translationPreferenceRepository({
       : defaultTranslationPreferences;
   }
 
-  async function save(preferences: TranslationPreferencesInput): Promise<void> {
-    await syncedStorage.set({
-      [storageKeys.translationPreferences]: {
-        mode: normalizeTranslationMode(preferences.mode),
-        targetLanguage: normalizeTargetLanguage(preferences.targetLanguage),
-      },
-    });
+  async function save(preferences: TranslationPreferences): Promise<void> {
+    await syncedStorage.set({ [storageKeys.translationPreferences]: preferences });
   }
 
   return { get, save };

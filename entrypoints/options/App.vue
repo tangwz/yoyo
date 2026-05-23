@@ -322,7 +322,11 @@ async function saveProviderProfile() {
 async function saveTranslationMode() {
   try {
     const storage = createStorageRepositories();
-    await storage.translationPreferences.save({ mode: translationMode.value });
+    const preferences = await storage.translationPreferences.get();
+    await storage.translationPreferences.save({
+      ...preferences,
+      mode: translationMode.value,
+    });
   } catch {
     // Translation mode is non-critical; keep the selected value visible.
   }
