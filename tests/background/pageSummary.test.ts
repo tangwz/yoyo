@@ -128,6 +128,12 @@ describe("summarizePage", () => {
 
     expect(getSummaryProvider).not.toHaveBeenCalled();
     expect(summarizeArticle).not.toHaveBeenCalled();
+    expect(sendToContent).toHaveBeenCalledTimes(1);
+    expect(sendToContent).toHaveBeenCalledWith(42, {
+      type: "showPageSummary",
+      targetLanguage: "zh-CN",
+      errorMessage: "No active provider profile.",
+    });
   });
 
   it("rejects content extraction errors and sends the error to content", async () => {
@@ -151,6 +157,57 @@ describe("summarizePage", () => {
       type: "showPageSummary",
       targetLanguage: "zh-CN",
       errorMessage: "Cannot extract article content.",
+    });
+  });
+
+  it("rejects provider failures with the original error and sends the error to content", async () => {
+    const providerError = new Error("Provider failed.");
+    summarizeArticle.mockRejectedValue(providerError);
+
+    await expect(
+      summarizePage(
+        {
+          tabId: 42,
+          targetLanguage: "zh-CN",
+        },
+        dependencies(),
+      ),
+    ).rejects.toBe(providerError);
+
+    expect(sendToContent).toHaveBeenNthCalledWith(2, 42, {
+      type: "showPageSummary",
+      targetLanguage: "zh-CN",
+      errorMessage: "Provider failed.",
+    });
+  });
+
+  it("does not mask the original error when showing the error panel fails", async () => {
+    const originalError = new Error("Provider failed.");
+    const panelError = new Error("Panel delivery failed.");
+    summarizeArticle.mockRejectedValue(originalError);
+    sendToContent.mockResolvedValueOnce({
+      type: "summarySourceResult",
+      title: "Architecture notes",
+      sourceText: "This is a long source article.",
+      sourceCharCount: 30,
+      segmentCount: 3,
+    });
+    sendToContent.mockRejectedValueOnce(panelError);
+
+    await expect(
+      summarizePage(
+        {
+          tabId: 42,
+          targetLanguage: "zh-CN",
+        },
+        dependencies(),
+      ),
+    ).rejects.toBe(originalError);
+
+    expect(sendToContent).toHaveBeenNthCalledWith(2, 42, {
+      type: "showPageSummary",
+      targetLanguage: "zh-CN",
+      errorMessage: "Provider failed.",
     });
   });
 });
