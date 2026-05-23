@@ -1,6 +1,7 @@
 import {
   applyTranslationResults,
   collectSegments,
+  collectSummarySource,
   estimatePage,
   getPageRuntimeState,
   handleTaskProgress,
@@ -10,6 +11,7 @@ import {
   finalizeLazyRecoverySourceLanguage,
 } from "@/content/pageRuntime";
 import { showSelectionTranslation } from "@/content/selectionPanel";
+import { showPageSummary } from "@/content/summaryPanel";
 import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
 import { addRuntimeMessageListener } from "@/messaging/runtime";
 
@@ -115,6 +117,11 @@ export default defineContentScript({
               type: "pageRuntimeState",
               ...getPageRuntimeState(),
             };
+          case "collectSummarySource":
+            return {
+              type: "summarySourceResult",
+              ...(await collectSummarySource()),
+            };
           case "taskProgress": {
             const request = message as Extract<
               ContentRequest,
@@ -129,6 +136,14 @@ export default defineContentScript({
               { type: "showSelectionTranslation" }
             >;
             showSelectionTranslation(request);
+            return { type: "contentActionResult", success: true };
+          }
+          case "showPageSummary": {
+            const request = message as Extract<
+              ContentRequest,
+              { type: "showPageSummary" }
+            >;
+            showPageSummary(request);
             return { type: "contentActionResult", success: true };
           }
           default:

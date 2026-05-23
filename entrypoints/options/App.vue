@@ -22,9 +22,13 @@ import {
   isOpenAiCompatibleProviderProfile,
   type ProviderProfile,
 } from "@/provider/types";
-import { defaultUiPreferences, type UiPreferences } from "@/storage/defaults";
+import {
+  defaultTranslationPreferences,
+  defaultUiPreferences,
+  type UiPreferences,
+} from "@/storage/defaults";
 import { createStorageRepositories } from "@/storage/repositories";
-import type { TranslationMode } from "@/translation/types";
+import type { TranslationMode, TranslationPreferences } from "@/translation/types";
 
 function getDefaultProviderType(): ProviderProfile["type"] {
   return getChromeBuiltInAiBrowserSupport().supported
@@ -39,8 +43,10 @@ const baseUrl = ref(defaultProviderPreset.defaultBaseUrl);
 const apiKey = ref("");
 const textModel = ref(defaultProviderPreset.defaultTextModel ?? "");
 const visionModel = ref("");
-const targetLanguage = ref("zh-CN");
-const translationMode = ref<TranslationMode>("lazyViewport");
+const targetLanguage = ref(defaultTranslationPreferences.targetLanguage);
+const translationMode = ref<TranslationMode>(defaultTranslationPreferences.mode);
+const hasUserEditedTargetLanguage = ref(false);
+const hasUserEditedTranslationMode = ref(false);
 const isUiPreferencesLoaded = ref(false);
 const uiTheme = ref<UiPreferences["theme"]>(defaultUiPreferences.theme);
 const uiLanguage = ref(defaultUiPreferences.uiLanguage);
@@ -59,6 +65,7 @@ const routeParams = new URLSearchParams(globalThis.location.search);
 const shouldLandOnProvider = routeParams.get("section") === "provider";
 const isFirstRunProviderLanding =
   shouldLandOnProvider && routeParams.get("source") === "first-run";
+let translationPreferencesSaveQueue: Promise<void> = Promise.resolve();
 
 const messages = computed(() => optionsMessages[uiLanguage.value]);
 const chromeBuiltInAiSupport = computed(() => getChromeBuiltInAiBrowserSupport());
@@ -275,9 +282,19 @@ async function loadTranslationPreferences() {
   try {
     const storage = createStorageRepositories();
     const preferences = await storage.translationPreferences.get();
-    translationMode.value = preferences.mode;
+    if (!hasUserEditedTranslationMode.value) {
+      translationMode.value = preferences.mode;
+    }
+    if (!hasUserEditedTargetLanguage.value) {
+      targetLanguage.value = preferences.targetLanguage;
+    }
   } catch {
-    translationMode.value = "lazyViewport";
+    if (!hasUserEditedTranslationMode.value) {
+      translationMode.value = defaultTranslationPreferences.mode;
+    }
+    if (!hasUserEditedTargetLanguage.value) {
+      targetLanguage.value = defaultTranslationPreferences.targetLanguage;
+    }
   }
 }
 
@@ -319,12 +336,45 @@ async function saveProviderProfile() {
   }
 }
 
+function queueTranslationPreferencesSave(
+  buildPreferences: (preferences: TranslationPreferences) => TranslationPreferences,
+): Promise<void> {
+  const nextSave = translationPreferencesSaveQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const storage = createStorageRepositories();
+      const preferences = await storage.translationPreferences
+        .get()
+        .catch(() => defaultTranslationPreferences);
+
+      await storage.translationPreferences.save(buildPreferences(preferences));
+    });
+
+  translationPreferencesSaveQueue = nextSave;
+  return nextSave;
+}
+
 async function saveTranslationMode() {
+  hasUserEditedTranslationMode.value = true;
   try {
-    const storage = createStorageRepositories();
-    await storage.translationPreferences.save({ mode: translationMode.value });
+    await queueTranslationPreferencesSave((preferences) => ({
+      ...preferences,
+      mode: translationMode.value,
+    }));
   } catch {
     // Translation mode is non-critical; keep the selected value visible.
+  }
+}
+
+async function saveTargetLanguage() {
+  hasUserEditedTargetLanguage.value = true;
+  try {
+    await queueTranslationPreferencesSave((preferences) => ({
+      ...preferences,
+      targetLanguage: targetLanguage.value,
+    }));
+  } catch {
+    // Target language is non-critical; keep the selected value visible.
   }
 }
 
@@ -624,7 +674,10 @@ async function testConnection() {
           <div class="settings-grid">
             <label class="field">
               <span>{{ t("field.targetLanguage") }}</span>
-              <select v-model="targetLanguage">
+              <select
+                v-model="targetLanguage"
+                @change="saveTargetLanguage"
+              >
                 <option
                   v-for="option in targetLanguageOptions"
                   :key="option.value"

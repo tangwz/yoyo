@@ -5,6 +5,7 @@ import {
   translationPreferenceRepository,
   uiPreferenceRepository,
 } from "@/storage/repositories";
+import { isTargetLanguage } from "@/translation/types";
 
 describe("storage repositories", () => {
   beforeEach(() => {
@@ -66,19 +67,50 @@ describe("storage repositories", () => {
     expect(await local.get("yoyo.uiPreferences")).toEqual({});
   });
 
-  it("defaults translation preferences to lazy viewport mode and stores them in sync storage", async () => {
+  it("defaults translation preferences to lazy viewport mode and simplified Chinese target language", async () => {
     const local = createInMemoryStorageArea();
     const sync = createInMemoryStorageArea();
     const repository = translationPreferenceRepository({ syncedStorage: sync });
 
-    await expect(repository.get()).resolves.toEqual({ mode: "lazyViewport" });
+    await expect(repository.get()).resolves.toEqual({
+      mode: "lazyViewport",
+      targetLanguage: "zh-CN",
+    });
 
-    await repository.save({ mode: "fullPage" });
+    await repository.save({ mode: "fullPage", targetLanguage: "en" });
 
     expect(await sync.get("yoyo.translationPreferences")).toEqual({
-      "yoyo.translationPreferences": { mode: "fullPage" },
+      "yoyo.translationPreferences": { mode: "fullPage", targetLanguage: "en" },
     });
     expect(await local.get("yoyo.translationPreferences")).toEqual({});
+  });
+
+  it("migrates legacy translation preferences without a target language", async () => {
+    const sync = createInMemoryStorageArea();
+    const repository = translationPreferenceRepository({ syncedStorage: sync });
+
+    await sync.set({ "yoyo.translationPreferences": { mode: "fullPage" } });
+
+    await expect(repository.get()).resolves.toEqual({
+      mode: "fullPage",
+      targetLanguage: "zh-CN",
+    });
+  });
+
+  it("falls back to the default target language for unsupported target language values", async () => {
+    const sync = createInMemoryStorageArea();
+    const repository = translationPreferenceRepository({ syncedStorage: sync });
+
+    for (const targetLanguage of ["", "fr", 1, true, null, ["zh-CN"]]) {
+      await sync.set({
+        "yoyo.translationPreferences": { mode: "fullPage", targetLanguage },
+      });
+
+      await expect(repository.get()).resolves.toEqual({
+        mode: "fullPage",
+        targetLanguage: "zh-CN",
+      });
+    }
   });
 
   it("falls back to default translation preferences for corrupt sync storage data", async () => {
@@ -88,7 +120,20 @@ describe("storage repositories", () => {
     for (const storedValue of [null, "fullPage", 1, true, ["fullPage"], { mode: "unknown" }]) {
       await sync.set({ "yoyo.translationPreferences": storedValue });
 
-      await expect(repository.get()).resolves.toEqual({ mode: "lazyViewport" });
+      await expect(repository.get()).resolves.toEqual({
+        mode: "lazyViewport",
+        targetLanguage: "zh-CN",
+      });
+    }
+  });
+
+  it("identifies supported target language values", () => {
+    for (const targetLanguage of ["zh-CN", "zh-TW", "en", "ja", "ko"]) {
+      expect(isTargetLanguage(targetLanguage)).toBe(true);
+    }
+
+    for (const targetLanguage of ["", "fr", 1, true, null, ["zh-CN"]]) {
+      expect(isTargetLanguage(targetLanguage)).toBe(false);
     }
   });
 

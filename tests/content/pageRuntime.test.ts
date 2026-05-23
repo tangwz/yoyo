@@ -12,6 +12,7 @@ vi.mock("@/messaging/runtime", () => ({
 
 import {
   applyTranslationResults,
+  collectSummarySource,
   collectSegments,
   estimatePage,
   finalizeLazyRecoverySourceLanguage,
@@ -126,6 +127,7 @@ describe("page runtime", () => {
   beforeEach(() => {
     removePageTranslations();
     document.body.innerHTML = "";
+    document.title = "";
     setUrl("https://example.com/article");
     MockIntersectionObserver.instances = [];
     MockMutationObserver.instances = [];
@@ -151,6 +153,7 @@ describe("page runtime", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     document.body.innerHTML = "";
+    document.title = "";
     setUrl("https://example.com/article");
   });
 
@@ -165,6 +168,63 @@ describe("page runtime", () => {
       estimatedChars: 0,
       reason: "Unsupported page URL.",
     });
+  });
+
+  it("collects summary source without inserting translation nodes", async () => {
+    document.title = "Fallback document title";
+    document.body.innerHTML = `
+      <article>
+        <h1>Readable article title</h1>
+        <p>First readable paragraph.</p>
+        <p>Second readable paragraph.</p>
+      </article>
+    `;
+
+    const result = await collectSummarySource();
+
+    const expectedSourceText = [
+      "Readable article title",
+      "First readable paragraph.",
+      "Second readable paragraph.",
+    ].join("\n\n");
+    expect(result).toEqual({
+      title: "Readable article title",
+      sourceText: expectedSourceText,
+      sourceCharCount: expectedSourceText.length,
+      segmentCount: 3,
+    });
+    expect(document.querySelector("[data-yoyo-translation]")).toBeNull();
+  });
+
+  it("limits summary source length and reports the truncated character count", async () => {
+    const firstParagraph = "A".repeat(16_000);
+    const secondParagraph = "B".repeat(10_000);
+    document.body.innerHTML = `
+      <article>
+        <p>${firstParagraph}</p>
+        <p>${secondParagraph}</p>
+      </article>
+    `;
+
+    const result = await collectSummarySource();
+    const expectedSourceText = `${firstParagraph}\n\n${"B".repeat(7_998)}`;
+
+    expect(result.sourceText).toBe(expectedSourceText);
+    expect(result.sourceText.length).toBe(24_000);
+    expect(result.sourceCharCount).toBe(24_000);
+    expect(result.segmentCount).toBe(2);
+  });
+
+  it("rejects pages without readable summary content", async () => {
+    document.body.innerHTML = `
+      <main>
+        <button>Save</button>
+      </main>
+    `;
+
+    await expect(collectSummarySource()).rejects.toThrow(
+      "No readable article content found.",
+    );
   });
 
   it("inserts pending indicators for collected segments", async () => {

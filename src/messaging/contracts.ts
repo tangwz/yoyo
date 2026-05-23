@@ -6,6 +6,7 @@ import type {
   TranslationMode,
 } from "@/translation/types";
 import type { ProviderReadiness } from "@/provider/readiness";
+import type { SummarySourceResult } from "@/summary/types";
 
 export type OptionsSection = "provider";
 
@@ -55,6 +56,19 @@ export type ContentRequest =
   | { type: "showTranslations"; taskId?: string }
   | { type: "removeTranslations"; taskId?: string }
   | { type: "getPageRuntimeState" }
+  | { type: "collectSummarySource" }
+  | {
+      type: "showPageSummary";
+      targetLanguage: string;
+      summaryText: string;
+      errorMessage?: never;
+    }
+  | {
+      type: "showPageSummary";
+      targetLanguage: string;
+      errorMessage: string;
+      summaryText?: never;
+    }
   | {
       type: "showSelectionTranslation";
       sourceText: string;
@@ -89,6 +103,7 @@ export type ContentResponse =
       taskId?: string;
       visibility?: "visible" | "hidden";
     }
+  | ({ type: "summarySourceResult" } & SummarySourceResult)
   | { type: "contentError"; message: string };
 
 export type BackgroundRequest =
@@ -104,6 +119,11 @@ export type BackgroundRequest =
       tabId: number;
       text: string;
       sourceLanguage: string;
+      targetLanguage: string;
+    }
+  | {
+      type: "summarizePage";
+      tabId: number;
       targetLanguage: string;
     }
   | { type: "getTaskForTab"; tabId: number }

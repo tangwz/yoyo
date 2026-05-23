@@ -5,7 +5,12 @@ import {
   type UiPreferences,
 } from "@/storage/defaults";
 import { storageKeys } from "@/storage/storageKeys";
-import type { TranslationPreferences } from "@/translation/types";
+import {
+  isTargetLanguage,
+  type TargetLanguage,
+  type TranslationMode,
+  type TranslationPreferences,
+} from "@/translation/types";
 
 type StorageGetKeys = string | string[] | Record<string, unknown> | null;
 
@@ -76,6 +81,16 @@ function normalizeProviderProfile(value: unknown): ProviderProfile | undefined {
     visionModel: typeof value.visionModel === "string" ? value.visionModel : undefined,
     requestParams: isRecord(value.requestParams) ? value.requestParams : undefined,
   };
+}
+
+function normalizeTranslationMode(value: unknown): TranslationMode {
+  return value === "fullPage" || value === "lazyViewport"
+    ? value
+    : defaultTranslationPreferences.mode;
+}
+
+function normalizeTargetLanguage(value: unknown): TargetLanguage {
+  return isTargetLanguage(value) ? value : defaultTranslationPreferences.targetLanguage;
 }
 
 export function createInMemoryStorageArea(): StorageArea {
@@ -194,9 +209,11 @@ export function translationPreferenceRepository({
     });
     const preferences = result[storageKeys.translationPreferences];
 
-    return isRecord(preferences) &&
-      (preferences.mode === "fullPage" || preferences.mode === "lazyViewport")
-      ? { mode: preferences.mode }
+    return isRecord(preferences)
+      ? {
+          mode: normalizeTranslationMode(preferences.mode),
+          targetLanguage: normalizeTargetLanguage(preferences.targetLanguage),
+        }
       : defaultTranslationPreferences;
   }
 

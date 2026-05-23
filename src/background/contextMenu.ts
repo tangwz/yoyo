@@ -2,6 +2,7 @@ import { browser } from "wxt/browser";
 
 export const translatePageMenuId = "yoyo.translatePage";
 export const translateSelectionMenuId = "yoyo.translateSelection";
+export const summarizePageMenuId = "yoyo.summarizePage";
 
 export type TranslateSelectionMenuClick = {
   tabId: number;
@@ -19,6 +20,11 @@ export function registerContextMenus(): void {
       id: translateSelectionMenuId,
       title: "Translate selection",
       contexts: ["selection"],
+    });
+    browser.contextMenus.create({
+      id: summarizePageMenuId,
+      title: "Summarize this page",
+      contexts: ["page"],
     });
   });
 }
@@ -71,6 +77,28 @@ export function onTranslateSelectionMenuClick(
 
     void handler(input).catch((error: unknown) => {
       onError(error, input);
+    });
+  });
+}
+
+export function onSummarizePageMenuClick(
+  handler: (tabId: number) => Promise<void>,
+  onError: (error: unknown, tabId: number) => void = (error, tabId) => {
+    console.error("[yoyo] failed to handle summarize page menu click", {
+      tabId,
+      error,
+    });
+  },
+): void {
+  browser.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId !== summarizePageMenuId || tab?.id === undefined) {
+      return;
+    }
+
+    const tabId = tab.id;
+
+    void handler(tabId).catch((error: unknown) => {
+      onError(error, tabId);
     });
   });
 }

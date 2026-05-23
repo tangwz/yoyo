@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  onSummarizePageMenuClick,
   onTranslatePageMenuClick,
   onTranslateSelectionMenuClick,
   registerContextMenus,
+  summarizePageMenuId,
   translatePageMenuId,
   translateSelectionMenuId,
 } from "@/background/contextMenu";
@@ -32,11 +34,11 @@ describe("context menu registration", () => {
     removeAll.mockClear();
   });
 
-  it("registers page and selection translation menu items", () => {
+  it("registers page translation, selection translation, and page summary menu items", () => {
     registerContextMenus();
 
     expect(removeAll).toHaveBeenCalledTimes(1);
-    expect(create).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledTimes(3);
     expect(create).toHaveBeenCalledWith({
       id: translatePageMenuId,
       title: "Translate this page",
@@ -46,6 +48,11 @@ describe("context menu registration", () => {
       id: translateSelectionMenuId,
       title: "Translate selection",
       contexts: ["selection"],
+    });
+    expect(create).toHaveBeenCalledWith({
+      id: summarizePageMenuId,
+      title: "Summarize this page",
+      contexts: ["page"],
     });
   });
 
@@ -122,6 +129,36 @@ describe("context menu registration", () => {
 
     await vi.waitFor(() => {
       expect(onError).toHaveBeenCalledWith(error, { tabId: 42, text: "Hello" });
+    });
+  });
+
+  it("routes summary page clicks with tab id", () => {
+    const handler = vi.fn(async () => undefined);
+
+    onSummarizePageMenuClick(handler);
+
+    const listener = addListener.mock.calls[0]?.[0];
+    listener({ menuItemId: summarizePageMenuId }, { id: 42 });
+
+    expect(handler).toHaveBeenCalledWith(42);
+  });
+
+  it("routes summary handler failures to the error callback", async () => {
+    const error = new Error("summary failed");
+    const onError = vi.fn();
+
+    onSummarizePageMenuClick(
+      async () => {
+        throw error;
+      },
+      onError,
+    );
+
+    const listener = addListener.mock.calls[0]?.[0];
+    listener({ menuItemId: summarizePageMenuId }, { id: 42 });
+
+    await vi.waitFor(() => {
+      expect(onError).toHaveBeenCalledWith(error, 42);
     });
   });
 });
