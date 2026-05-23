@@ -89,7 +89,7 @@ build/chrome-mv3
 pnpm zip
 ```
 
-压缩包会由 WXT 输出到 `build` 目录中，文件名包含 package name、扩展版本和目标浏览器，例如 `build/yoyo-reading-assistant-0.2.0-chrome.zip`。该产物可用于手动分发、提交审核或归档发布。
+压缩包会由 WXT 输出到 `build` 目录中，文件名包含 package name、扩展版本和目标浏览器，例如 `build/yoyo-reading-assistant-0.3.0-chrome.zip`。该产物可用于手动分发、提交审核或归档发布。
 
 ## 验证
 

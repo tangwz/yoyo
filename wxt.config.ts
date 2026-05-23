@@ -9,7 +9,7 @@ export default defineConfig({
   manifest: {
     name: "悠悠阅读助手",
     description: "A privacy-conscious LLM reading and translation assistant.",
-    version: "0.2.0",
+    version: "0.3.0",
     permissions: ["storage", "contextMenus", "notifications", "offscreen"],
     host_permissions: ["<all_urls>"],
     action: {
