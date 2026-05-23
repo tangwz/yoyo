@@ -10,7 +10,7 @@
 
 本次覆盖：
 
-- popup 增加“一键总结”入口。
+- popup 增加支持 i18n 的“一键总结”入口。
 - 右键菜单增加 “Summarize this page” 入口。
 - options 中的目标语言选择真正持久化。
 - popup 初始化和目标语言切换读取并保存同一份翻译偏好。
@@ -91,7 +91,7 @@ background context menu：
 
 ### 5.1 Popup Entry
 
-popup 增加一个次级按钮，按钮文案固定为“一键总结”。点击后：
+popup 增加一个次级按钮，按钮文案通过 i18n message key 渲染。中文界面文案为“一键总结”；英文界面文案为 “Summarize”。点击后：
 
 1. 检查 provider 状态。
 2. 获取 active tab id。
@@ -110,6 +110,23 @@ popup 增加一个次级按钮，按钮文案固定为“一键总结”。点�
 2. 从 `translationPreferences` 读取 `targetLanguage`。
 3. 调用同一个 `summarizePage` 后台函数。
 4. 失败时使用现有 notification 机制或 console error，并尽量在页面总结面板中展示错误。
+
+### 5.3 UI Copy and I18N
+
+summary 入口文案不能硬编码在 Vue template 中。实现时需要为 popup 增加或复用轻量 i18n message 表，至少包含：
+
+```ts
+const popupMessages = {
+  "zh-CN": {
+    "button.summarizePage": "一键总结",
+  },
+  "en-US": {
+    "button.summarizePage": "Summarize",
+  },
+};
+```
+
+popup 继续使用 `uiPreferences.uiLanguage` 决定界面语言。summary button、summary loading/error copy 和 summary panel title 后续新增文案都应走同一套 message key，不能新增中文硬编码。
 
 ## 6. Messaging Contracts
 
@@ -337,7 +354,8 @@ README 和隐私说明后续需要补充 summary 的手动触发边界，但本�
 - `ui/popup.test.ts`
   - 初始化读取 stored target language。
   - 切换 target language 保存偏好。
-  - “一键总结”按钮发送 `summarizePage`。
+  - 中文界面显示“一键总结”，英文界面显示 “Summarize”。
+  - summary 按钮发送 `summarizePage`。
   - 页面翻译主按钮既有行为保持不变。
 
 验证命令：
