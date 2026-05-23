@@ -5,7 +5,7 @@ import {
   type UiPreferences,
 } from "@/storage/defaults";
 import { storageKeys } from "@/storage/storageKeys";
-import type { TranslationPreferences } from "@/translation/types";
+import type { TranslationMode, TranslationPreferences } from "@/translation/types";
 
 type StorageGetKeys = string | string[] | Record<string, unknown> | null;
 
@@ -25,6 +25,11 @@ type UiPreferenceRepositoryDependencies = {
 
 type TranslationPreferenceRepositoryDependencies = {
   syncedStorage: StorageArea;
+};
+
+type TranslationPreferencesInput = {
+  mode: unknown;
+  targetLanguage?: unknown;
 };
 
 type ExtensionStorageRuntime = {
@@ -76,6 +81,22 @@ function normalizeProviderProfile(value: unknown): ProviderProfile | undefined {
     visionModel: typeof value.visionModel === "string" ? value.visionModel : undefined,
     requestParams: isRecord(value.requestParams) ? value.requestParams : undefined,
   };
+}
+
+function normalizeTranslationMode(value: unknown): TranslationMode {
+  return value === "fullPage" || value === "lazyViewport"
+    ? value
+    : defaultTranslationPreferences.mode;
+}
+
+function normalizeTargetLanguage(value: unknown): string {
+  return value === "zh-CN" ||
+    value === "zh-TW" ||
+    value === "en" ||
+    value === "ja" ||
+    value === "ko"
+    ? value
+    : defaultTranslationPreferences.targetLanguage;
 }
 
 export function createInMemoryStorageArea(): StorageArea {
@@ -194,14 +215,21 @@ export function translationPreferenceRepository({
     });
     const preferences = result[storageKeys.translationPreferences];
 
-    return isRecord(preferences) &&
-      (preferences.mode === "fullPage" || preferences.mode === "lazyViewport")
-      ? { mode: preferences.mode }
+    return isRecord(preferences)
+      ? {
+          mode: normalizeTranslationMode(preferences.mode),
+          targetLanguage: normalizeTargetLanguage(preferences.targetLanguage),
+        }
       : defaultTranslationPreferences;
   }
 
-  async function save(preferences: TranslationPreferences): Promise<void> {
-    await syncedStorage.set({ [storageKeys.translationPreferences]: preferences });
+  async function save(preferences: TranslationPreferencesInput): Promise<void> {
+    await syncedStorage.set({
+      [storageKeys.translationPreferences]: {
+        mode: normalizeTranslationMode(preferences.mode),
+        targetLanguage: normalizeTargetLanguage(preferences.targetLanguage),
+      },
+    });
   }
 
   return { get, save };

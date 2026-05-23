@@ -30,6 +30,7 @@ export type PageSegment = {
 
 export type TranslationPreferences = {
   mode: TranslationMode;
+  targetLanguage: string;
 };
 
 export type TranslationResultItem = {

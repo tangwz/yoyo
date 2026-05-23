@@ -20,4 +20,5 @@ export const defaultExperimentalFlags: ExperimentalFlags = {
 
 export const defaultTranslationPreferences: TranslationPreferences = {
   mode: "lazyViewport",
+  targetLanguage: "zh-CN",
 };
