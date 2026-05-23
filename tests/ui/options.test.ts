@@ -70,7 +70,10 @@ describe("options app", () => {
     getActiveProviderId.mockResolvedValue(undefined);
     getUiPreferences.mockResolvedValue({ theme: "light", uiLanguage: "zh-CN" });
     saveUiPreferences.mockResolvedValue(undefined);
-    getTranslationPreferences.mockResolvedValue({ mode: "lazyViewport" });
+    getTranslationPreferences.mockResolvedValue({
+      mode: "lazyViewport",
+      targetLanguage: "zh-CN",
+    });
     saveTranslationPreferences.mockResolvedValue(undefined);
     mockStorageRepositories();
   });
@@ -301,8 +304,11 @@ describe("options app", () => {
     expect(screen.getByRole("button", { name: "Test connection" })).toBeVisible();
   });
 
-  it("loads and saves translation preferences", async () => {
-    getTranslationPreferences.mockResolvedValue({ mode: "fullPage" });
+  it("loads and saves translation preferences without changing target language", async () => {
+    getTranslationPreferences.mockResolvedValue({
+      mode: "fullPage",
+      targetLanguage: "en",
+    });
 
     await renderReady();
 
@@ -313,7 +319,10 @@ describe("options app", () => {
 
     await fireEvent.update(modeSelect, "lazyViewport");
 
-    expect(saveTranslationPreferences).toHaveBeenCalledWith({ mode: "lazyViewport" });
+    expect(saveTranslationPreferences).toHaveBeenCalledWith({
+      mode: "lazyViewport",
+      targetLanguage: "en",
+    });
   });
 
   it("lands on the provider section from first-run options routing", async () => {
