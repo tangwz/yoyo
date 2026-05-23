@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { browser } from "wxt/browser";
 
 import {
@@ -19,6 +19,16 @@ import type {
   TranslatorInstance,
 } from "@/provider/chromeBuiltInAi";
 import { sendRuntimeMessage, sendTabMessage } from "@/messaging/runtime";
+import {
+  popupMessages,
+  type PopupMessageKey,
+} from "@/popup/messages";
+import {
+  defaultTranslationPreferences,
+  defaultUiPreferences,
+} from "@/storage/defaults";
+import { createStorageRepositories } from "@/storage/repositories";
+import type { TargetLanguage, TranslationMode } from "@/translation/types";
 import ErrorSummary from "@/ui/components/ErrorSummary.vue";
 import LanguageSelector from "@/ui/components/LanguageSelector.vue";
 import PopupFooter from "@/ui/components/PopupFooter.vue";
@@ -34,13 +44,17 @@ type PopupState =
   | "error";
 
 const sourceLanguage = ref("auto");
-const targetLanguage = ref("zh-CN");
+const targetLanguage = ref<TargetLanguage>(defaultTranslationPreferences.targetLanguage);
+const translationMode = ref<TranslationMode>(defaultTranslationPreferences.mode);
+const uiLanguage = ref(defaultUiPreferences.uiLanguage);
+const isApplyingStoredPreferences = ref(false);
 const providerLabel = ref("正在读取翻译服务...");
 const providerMode = ref<"remote" | "local-only">("remote");
 const isProviderConfigured = ref(true);
 const hasProviderStatusIssue = ref(false);
 const tabId = ref<number>();
 const isInitializing = ref(true);
+const isSummarizing = ref(false);
 const canTranslate = ref(true);
 const state = ref<PopupState>("idle");
 const currentTaskId = ref("");
@@ -89,6 +103,19 @@ const isPrimaryDisabled = computed(
 const shouldShowProviderCard = computed(
   () => !isProviderConfigured.value || hasProviderStatusIssue.value,
 );
+const messages = computed(() => popupMessages[uiLanguage.value] ?? popupMessages["zh-CN"]);
+const isSummaryDisabled = computed(
+  () =>
+    isInitializing.value ||
+    isSummarizing.value ||
+    !isProviderConfigured.value ||
+    hasProviderStatusIssue.value ||
+    tabId.value === undefined,
+);
+
+function t(key: PopupMessageKey): string {
+  return messages.value[key];
+}
 
 function isRuntimeResponse(message: unknown): message is BackgroundResponse {
   return typeof message === "object" && message !== null && "type" in message;
@@ -326,6 +353,37 @@ async function clearProviderOnboardingAutoOpened(): Promise<void> {
   await getSessionStorage()?.remove(providerOnboardingAutoOpenKey);
 }
 
+async function loadPopupPreferences(): Promise<void> {
+  const storage = createStorageRepositories();
+  const [storedUiPreferences, storedTranslationPreferences] = await Promise.all([
+    storage.uiPreferences.get(),
+    storage.translationPreferences.get(),
+  ]);
+
+  uiLanguage.value = storedUiPreferences.uiLanguage;
+  translationMode.value = storedTranslationPreferences.mode;
+  isApplyingStoredPreferences.value = true;
+  targetLanguage.value = storedTranslationPreferences.targetLanguage;
+  await Promise.resolve();
+  isApplyingStoredPreferences.value = false;
+}
+
+watch(targetLanguage, async (nextTargetLanguage) => {
+  if (isApplyingStoredPreferences.value) {
+    return;
+  }
+
+  try {
+    await createStorageRepositories().translationPreferences.save({
+      mode: translationMode.value,
+      targetLanguage: nextTargetLanguage,
+    });
+  } catch (error: unknown) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "无法保存目标语言偏好。";
+  }
+});
+
 async function maybeOpenProviderOnboardingSettings(): Promise<void> {
   if (await hasAutoOpenedProviderOnboarding()) {
     return;
@@ -361,6 +419,8 @@ onMounted(async () => {
   browser.runtime.onMessage.addListener(handleRuntimeMessage);
 
   try {
+    await loadPopupPreferences();
+
     const providerStatus = await sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
       type: "getProviderStatus",
     });
@@ -531,6 +591,33 @@ async function onPrimaryAction(): Promise<void> {
   }
 }
 
+async function onSummaryAction(): Promise<void> {
+  if (isSummaryDisabled.value || tabId.value === undefined) {
+    return;
+  }
+
+  isSummarizing.value = true;
+  errorMessage.value = "";
+
+  try {
+    const response = await sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
+      type: "summarizePage",
+      tabId: tabId.value,
+      targetLanguage: targetLanguage.value,
+    });
+
+    if (response.type === "backgroundError") {
+      state.value = "error";
+      errorMessage.value = response.message;
+    }
+  } catch (error: unknown) {
+    state.value = "error";
+    errorMessage.value = error instanceof Error ? error.message : "总结请求失败。";
+  } finally {
+    isSummarizing.value = false;
+  }
+}
+
 async function onOpenSettings(): Promise<void> {
   try {
     await openSettings();
@@ -632,6 +719,15 @@ async function onRemoveTranslations(): Promise<void> {
         @click="onPrimaryAction"
       >
         {{ primaryLabel }}
+      </button>
+
+      <button
+        class="secondary-action summary-action"
+        type="button"
+        :disabled="isSummaryDisabled"
+        @click="onSummaryAction"
+      >
+        {{ isSummarizing ? t("button.summarizingPage") : t("button.summarizePage") }}
       </button>
 
       <TaskProgress

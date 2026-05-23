@@ -26,12 +26,18 @@ function createDeferred<T>(): {
 }
 
 const browserMock = vi.hoisted(() => ({
+  localStorageGet: vi.fn(),
+  localStorageRemove: vi.fn(),
+  localStorageSet: vi.fn(),
   runtimeListeners: new Set<(message: unknown) => void>(),
   runtimeOpenOptionsPage: vi.fn(),
   runtimeSendMessage: vi.fn(),
   sessionStorageGet: vi.fn(),
   sessionStorageRemove: vi.fn(),
   sessionStorageSet: vi.fn(),
+  syncStorageGet: vi.fn(),
+  syncStorageRemove: vi.fn(),
+  syncStorageSet: vi.fn(),
   tabsDetectLanguage: vi.fn(),
   tabsQuery: vi.fn(),
   tabsSendMessage: vi.fn(),
@@ -75,10 +81,20 @@ vi.mock("wxt/browser", () => ({
       },
     },
     storage: {
+      local: {
+        get: browserMock.localStorageGet,
+        remove: browserMock.localStorageRemove,
+        set: browserMock.localStorageSet,
+      },
       session: {
         get: browserMock.sessionStorageGet,
         remove: browserMock.sessionStorageRemove,
         set: browserMock.sessionStorageSet,
+      },
+      sync: {
+        get: browserMock.syncStorageGet,
+        remove: browserMock.syncStorageRemove,
+        set: browserMock.syncStorageSet,
       },
     },
     tabs: {
@@ -92,14 +108,88 @@ vi.mock("wxt/browser", () => ({
 describe("popup app", () => {
   beforeEach(() => {
     browserMock.runtimeListeners.clear();
+    browserMock.localStorageGet.mockReset();
+    browserMock.localStorageRemove.mockReset();
+    browserMock.localStorageSet.mockReset();
     browserMock.runtimeOpenOptionsPage.mockReset();
     browserMock.runtimeSendMessage.mockReset();
     browserMock.sessionStorageGet.mockReset();
     browserMock.sessionStorageRemove.mockReset();
     browserMock.sessionStorageSet.mockReset();
+    browserMock.syncStorageGet.mockReset();
+    browserMock.syncStorageRemove.mockReset();
+    browserMock.syncStorageSet.mockReset();
     browserMock.tabsDetectLanguage.mockReset();
     browserMock.tabsQuery.mockReset();
     browserMock.tabsSendMessage.mockReset();
+
+    const createStorageAreaMock = (
+      getMock: typeof browserMock.syncStorageGet,
+      setMock: typeof browserMock.syncStorageSet,
+      removeMock: typeof browserMock.syncStorageRemove,
+    ) => {
+      const values = new Map<string, unknown>();
+
+      getMock.mockImplementation(async (keys?: string | string[] | Record<string, unknown> | null) => {
+        if (typeof keys === "string") {
+          return values.has(keys) ? { [keys]: values.get(keys) } : {};
+        }
+
+        if (Array.isArray(keys)) {
+          return Object.fromEntries(
+            keys.filter((key) => values.has(key)).map((key) => [key, values.get(key)]),
+          );
+        }
+
+        if (keys && typeof keys === "object") {
+          return Object.fromEntries(
+            Object.entries(keys).map(([key, fallback]) => [
+              key,
+              values.has(key) ? values.get(key) : fallback,
+            ]),
+          );
+        }
+
+        return Object.fromEntries(values.entries());
+      });
+      setMock.mockImplementation(async (items: Record<string, unknown>) => {
+        for (const [key, value] of Object.entries(items)) {
+          values.set(key, value);
+        }
+      });
+      removeMock.mockImplementation(async (keys: string | string[]) => {
+        for (const key of Array.isArray(keys) ? keys : [keys]) {
+          values.delete(key);
+        }
+      });
+
+      return values;
+    };
+
+    createStorageAreaMock(
+      browserMock.localStorageGet,
+      browserMock.localStorageSet,
+      browserMock.localStorageRemove,
+    );
+    createStorageAreaMock(
+      browserMock.syncStorageGet,
+      browserMock.syncStorageSet,
+      browserMock.syncStorageRemove,
+    );
+    vi.stubGlobal("chrome", {
+      storage: {
+        local: {
+          get: browserMock.localStorageGet,
+          remove: browserMock.localStorageRemove,
+          set: browserMock.localStorageSet,
+        },
+        sync: {
+          get: browserMock.syncStorageGet,
+          remove: browserMock.syncStorageRemove,
+          set: browserMock.syncStorageSet,
+        },
+      },
+    });
 
     const sessionValues = new Map<string, unknown>();
     browserMock.sessionStorageGet.mockImplementation(async (key: string) =>
@@ -178,6 +268,10 @@ describe("popup app", () => {
         };
       }
 
+      if (message.type === "summarizePage") {
+        return { type: "backgroundActionResult", success: true };
+      }
+
       throw new Error(`Unexpected runtime message: ${message.type}`);
     });
   });
@@ -219,6 +313,7 @@ describe("popup app", () => {
       "简体中文",
     );
     expect(screen.getByText("翻译当前页面")).toBeVisible();
+    expect(screen.getByRole("button", { name: "一键总结" })).toBeVisible();
     expect(screen.getByText("设置")).toBeVisible();
     expect(screen.getByText("0.2.0")).toBeVisible();
     expect(screen.getByText("更多")).toBeVisible();
@@ -228,6 +323,60 @@ describe("popup app", () => {
     });
     expect(screen.queryByLabelText("Translation provider")).not.toBeInTheDocument();
     expect(screen.queryByText("OpenAI / api.openai.com")).not.toBeInTheDocument();
+  });
+
+  it("renders the default Chinese summary button", async () => {
+    render(PopupApp);
+
+    expect(await screen.findByRole("button", { name: "一键总结" })).toBeVisible();
+  });
+
+  it("renders the English summary button when UI preference is English", async () => {
+    await browserMock.syncStorageSet({
+      "yoyo.uiPreferences": { theme: "light", uiLanguage: "en-US" },
+    });
+
+    render(PopupApp);
+
+    expect(await screen.findByRole("button", { name: "Summarize" })).toBeVisible();
+  });
+
+  it("requests page summary for the active tab and selected target language", async () => {
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+    await fireEvent.update(screen.getByRole("combobox", { name: "Target language" }), "ja");
+    await fireEvent.click(screen.getByRole("button", { name: "一键总结" }));
+
+    expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
+      type: "summarizePage",
+      tabId: 123,
+      targetLanguage: "ja",
+    });
+  });
+
+  it("saves target language preferences while preserving translation mode", async () => {
+    await browserMock.syncStorageSet({
+      "yoyo.translationPreferences": { mode: "fullPage", targetLanguage: "ja" },
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Target language" })).toHaveDisplayValue(
+        "日本語",
+      );
+    });
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "Target language" }), "ko");
+
+    await waitFor(() => {
+      expect(browserMock.syncStorageSet).toHaveBeenCalledWith({
+        "yoyo.translationPreferences": { mode: "fullPage", targetLanguage: "ko" },
+      });
+    });
   });
 
   it("disables translation while resolving the active tab", async () => {
@@ -835,6 +984,24 @@ describe("popup app", () => {
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getAllByText("32")).toHaveLength(2);
     expect(screen.getByText("0")).toBeVisible();
+  });
+
+  it("requests page translation with explicit source and target languages", async () => {
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+    await fireEvent.update(screen.getByRole("combobox", { name: "Source language" }), "en");
+    await fireEvent.update(screen.getByRole("combobox", { name: "Target language" }), "ja");
+    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+
+    expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
+      type: "translatePage",
+      tabId: 123,
+      sourceLanguage: "en",
+      targetLanguage: "ja",
+    });
   });
 
   it("prepares Chrome Built-in AI from the popup click before translating", async () => {
