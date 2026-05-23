@@ -521,9 +521,11 @@ onMounted(async () => {
     }
 
     if (response.type === "contentError") {
+      canTranslate.value = false;
       errorMessage.value = response.message;
     }
   } catch (error: unknown) {
+    canTranslate.value = false;
     errorMessage.value = error instanceof Error ? error.message : "无法读取当前页面。";
   } finally {
     isInitializing.value = false;

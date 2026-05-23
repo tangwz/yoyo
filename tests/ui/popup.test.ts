@@ -1424,6 +1424,36 @@ describe("popup app", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Unsupported page URL.");
   });
 
+  it("disables translation and summary when page estimate fails", async () => {
+    browserMock.tabsSendMessage.mockImplementation(
+      async (_tabId: number, message: { type: string }) => {
+        if (message.type === "getPageRuntimeState") {
+          return {
+            type: "pageRuntimeState",
+            hasTranslations: false,
+          };
+        }
+
+        if (message.type === "estimatePage") {
+          throw new Error("Could not establish connection.");
+        }
+
+        throw new Error(`Unexpected tab message: ${message.type}`);
+      },
+    );
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+      expect(screen.getByRole("button", { name: "翻译当前页面" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "一键总结" })).toBeDisabled();
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not establish connection.",
+    );
+  });
+
   it("shows completed UI with failed count for completedWithErrors progress", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
       if (message.type === "getProviderStatus") {
