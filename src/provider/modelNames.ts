@@ -50,6 +50,11 @@ export function normalizeModelNameForProfile(
   return trimmed;
 }
 
+function isXiaomiMimoProfile(context: ProviderModelContext): boolean {
+  const profileId = (context.presetId ?? context.id).toLowerCase();
+  return profileId === "xiaomi-mimo";
+}
+
 export function createTextModelCandidates(
   profile: OpenAiCompatibleProviderProfile,
   options: ModelCandidateOptions = {},
@@ -57,8 +62,9 @@ export function createTextModelCandidates(
   const candidates: string[] = [];
   const normalizedModel = normalizeModelNameForProfile(profile, profile.textModel);
   const lowerCaseModel = profile.textModel.toLowerCase();
+  const prioritizeLowerCase = options.preferLowerCase || isXiaomiMimoProfile(profile);
 
-  if (options.preferLowerCase) {
+  if (prioritizeLowerCase) {
     appendUniqueModelName(candidates, lowerCaseModel);
     appendUniqueModelName(candidates, normalizedModel);
     appendUniqueModelName(candidates, profile.textModel);

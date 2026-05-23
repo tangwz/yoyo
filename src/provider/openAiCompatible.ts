@@ -78,6 +78,10 @@ function isKimiK2Model(model: string): boolean {
   return /^kimi-k2\./i.test(model);
 }
 
+function isXiaomiMiMoModel(model: string): boolean {
+  return /^mimo-v2\.5/i.test(model);
+}
+
 function isExpectedProviderTestResponse(text: string): boolean {
   return /^ok[.!?]*$/i.test(text.trim());
 }
@@ -97,9 +101,11 @@ function buildChatCompletionRequestBody(
     body.stream = true;
   }
 
-  if (isKimiK2Model(model)) {
+  if (request.traceContext?.stage !== "summary") {
     body.thinking = { type: "disabled" };
-  } else {
+  }
+
+  if (!isKimiK2Model(model) && !isXiaomiMiMoModel(model)) {
     body.temperature = request.profile.requestParams?.temperature ?? 0.2;
   }
 

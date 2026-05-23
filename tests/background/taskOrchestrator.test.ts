@@ -349,6 +349,71 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("uses single-segment batches for Xiaomi MiMo to improve per-line latency", async () => {
+    const collectedSegments = [
+      segment({ id: "segment-1", sourceText: "Hello world." }),
+      segment({
+        id: "segment-2",
+        order: 2,
+        sourceText: "Good morning.",
+        textHash: "hash-2",
+      }),
+    ];
+    const { orchestrator, translateBatch, sendToContent } = createOrchestrator({
+      getActiveProfile: vi.fn(async () =>
+        providerProfile({
+          id: "xiaomi-mimo",
+          presetId: "xiaomi-mimo",
+          baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
+          textModel: "mimo-v2.5",
+        }),
+      ),
+    });
+
+    sendToContent.mockImplementation(async (tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: collectedSegments,
+        };
+      }
+
+      if (message.type === "applyTranslations") {
+        return { type: "contentActionResult", success: true };
+      }
+
+      throw new Error(`Unexpected content message: ${message.type}`);
+    });
+
+    translateBatch.mockImplementation(async (request) => ({
+      items: request.segments.map((segment) => ({
+        segmentId: segment.id,
+        translatedText: `translated-${segment.id}`,
+      })),
+    }));
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "fullPage",
+    });
+
+    expect(translateBatch).toHaveBeenCalledTimes(2);
+    const requestSegments = translateBatch.mock.calls.map((call) =>
+      call[0].segments.map((segment) => segment.id),
+    );
+    expect(requestSegments).toEqual([["segment-1"], ["segment-2"]]);
+    expect(progress).toEqual({
+      taskId: "task-1",
+      state: "completed",
+      total: 2,
+      translated: 2,
+      failed: 0,
+    });
+  });
+
   it("cancels a task as superseded", async () => {
     const { orchestrator, sendToContent, translateBatch } = createOrchestrator();
     let resolveProvider: ((value: { items: Array<{ segmentId: string; translatedText: string }> }) => void) | undefined;

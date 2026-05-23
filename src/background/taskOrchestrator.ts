@@ -26,11 +26,48 @@ import type {
 
 const maxCharsPerBatch = 3500;
 const maxSegmentsPerBatch = 10;
+const xiaomiMimoMaxSegmentsPerBatch = 1;
 const maxBatchAttempts = 2;
 const defaultConcurrency = 2;
 const minConcurrency = 1;
 const translationStyle = "default";
 const rateLimitBackoffMs = 250;
+
+type BatchConfig = {
+  maxCharsPerBatch: number;
+  maxSegmentsPerBatch: number;
+};
+
+const defaultBatchConfig: BatchConfig = {
+  maxCharsPerBatch,
+  maxSegmentsPerBatch,
+};
+
+const xiaomiMimoBatchConfig: BatchConfig = {
+  maxCharsPerBatch: 1800,
+  maxSegmentsPerBatch: xiaomiMimoMaxSegmentsPerBatch,
+};
+
+function isXiaomiMimoProfile(profile: ProviderProfile): boolean {
+  if (profile.type !== "openai-compatible") {
+    return false;
+  }
+
+  const lowerBaseURL = profile.baseURL.toLowerCase();
+  const isXiaomiBaseURL = lowerBaseURL.includes("xiaomimimo.com");
+  const isXiaomiModel = /^mimo-v2\.5/i.test(profile.textModel);
+
+  return (
+    profile.id === "xiaomi-mimo" ||
+    profile.presetId === "xiaomi-mimo" ||
+    isXiaomiBaseURL ||
+    isXiaomiModel
+  );
+}
+
+function batchConfigForProfile(profile: ProviderProfile): BatchConfig {
+  return isXiaomiMimoProfile(profile) ? xiaomiMimoBatchConfig : defaultBatchConfig;
+}
 
 export type TranslationTaskOrchestratorDependencies = {
   getActiveProfile: () => Promise<ProviderProfile | undefined>;
@@ -995,9 +1032,10 @@ export class TranslationTaskOrchestrator {
       ]),
     );
 
+    const batchConfig = batchConfigForProfile(input.profile);
     const batches = splitSegmentsIntoBatches(uncachedRepresentatives, {
-      maxCharsPerBatch,
-      maxSegmentsPerBatch,
+      maxCharsPerBatch: batchConfig.maxCharsPerBatch,
+      maxSegmentsPerBatch: batchConfig.maxSegmentsPerBatch,
     });
 
     await this.runBatchesWithConcurrency(input.task, batches, (batch) =>

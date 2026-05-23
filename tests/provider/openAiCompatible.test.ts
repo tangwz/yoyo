@@ -51,6 +51,7 @@ describe("OpenAiCompatibleProvider", () => {
       messages: [{ role: "user", content: "Translate me" }],
       temperature: 0.2,
       max_tokens: 1200,
+      thinking: { type: "disabled" },
     });
   });
 
@@ -129,6 +130,7 @@ describe("OpenAiCompatibleProvider", () => {
       messages: [{ role: "user", content: "Translate me" }],
       temperature: 0.2,
       max_tokens: 1200,
+      thinking: { type: "disabled" },
       stream: true,
     });
   });
@@ -507,7 +509,81 @@ describe("OpenAiCompatibleProvider", () => {
       messages: [{ role: "user", content: "Reply with exactly: ok" }],
       temperature: 0,
       max_tokens: 32,
+      thinking: { type: "disabled" },
     });
+  });
+
+  it("does not disable thinking for summary requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "Summary done." } }],
+          model: "model-a",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    await provider.generateText({
+      profile,
+      prompt: "Summarize",
+      traceContext: {
+        stage: "summary",
+        taskId: "summary-task",
+        batchId: "batch-summary",
+      },
+    });
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(requestBody).toEqual(
+      expect.objectContaining({
+        model: "model-a",
+        messages: [{ role: "user", content: "Summarize" }],
+        temperature: 0.2,
+        max_tokens: 1200,
+      }),
+    );
+    expect(requestBody).not.toHaveProperty("thinking");
+  });
+
+  it("does not disable thinking for summary requests with Xiaomi MiMo model", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "Summary done." } }],
+          model: "mimo-v2.5",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    await provider.generateText({
+      profile: {
+        ...profile,
+        id: "xiaomi-mimo",
+        presetId: "xiaomi-mimo",
+        baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
+        textModel: "MiMo-V2.5",
+      },
+      prompt: "Summarize",
+      traceContext: {
+        stage: "summary",
+        taskId: "summary-task",
+      },
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual(
+      expect.objectContaining({
+        model: "mimo-v2.5",
+        messages: [{ role: "user", content: "Summarize" }],
+        max_tokens: 1200,
+      }),
+    );
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).not.toHaveProperty("thinking");
   });
 
   it("omits temperature and disables thinking for Kimi K2 requests", async () => {
@@ -537,6 +613,39 @@ describe("OpenAiCompatibleProvider", () => {
 
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
       model: "kimi-k2.6",
+      messages: [{ role: "user", content: "Translate me" }],
+      max_tokens: 2048,
+      thinking: { type: "disabled" },
+    });
+  });
+
+  it("disables thinking for Xiaomi MiMo requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "translated text" } }],
+          model: "mimo-v2.5",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    await provider.generateText({
+      profile: {
+        ...profile,
+        id: "xiaomi-mimo",
+        presetId: "xiaomi-mimo",
+        baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
+        textModel: "MiMo-V2.5",
+        requestParams: { temperature: 0.7, maxTokens: 2048, timeoutMs: 1000 },
+      },
+      prompt: "Translate me",
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      model: "mimo-v2.5",
       messages: [{ role: "user", content: "Translate me" }],
       max_tokens: 2048,
       thinking: { type: "disabled" },
@@ -647,6 +756,34 @@ describe("OpenAiCompatibleProvider", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("custom-model");
     expect(JSON.parse(fetchMock.mock.calls[1][1].body as string).model).toBe("Custom-Model");
+  });
+
+  it("uses a lower-case Xiaomi MiMo model candidate first without retry", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "translated text" } }],
+          model: "mimo-v2.5",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAiCompatibleProvider();
+    await provider.generateText({
+      profile: {
+        ...profile,
+        id: "xiaomi-mimo",
+        presetId: "xiaomi-mimo",
+        baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
+        textModel: "MiMo-V2.5",
+      },
+      prompt: "Translate me",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string).model).toBe("mimo-v2.5");
   });
 
   it("rejects provider connection tests that do not return ok", async () => {

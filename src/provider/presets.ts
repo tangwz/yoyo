@@ -54,7 +54,7 @@ export const providerPresets: ProviderPreset[] = [
     id: "xiaomi-mimo",
     name: "Xiaomi MiMo",
     type: "openai-compatible",
-    defaultBaseUrl: "https://api.xiaomimimo.com/v1",
+    defaultBaseUrl: "https://token-plan-cn.xiaomimimo.com/v1",
     defaultTextModel: "MiMo-V2.5",
     textModelOptions: ["MiMo-V2.5", "MiMo-V2.5-Pro"],
   },

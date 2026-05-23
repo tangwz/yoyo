@@ -42,4 +42,18 @@ describe("provider model names", () => {
       "MiMo-V2.5-Pro",
     ]);
   });
+
+  it("prioritizes lower-case Xiaomi MiMo model candidates by default", () => {
+    const profile: OpenAiCompatibleProviderProfile = {
+      id: "xiaomi-mimo",
+      displayName: "Xiaomi MiMo",
+      presetId: "xiaomi-mimo",
+      type: "openai-compatible",
+      baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
+      apiKey: "secret",
+      textModel: "MiMo-V2.5",
+    };
+
+    expect(createTextModelCandidates(profile)).toEqual(["mimo-v2.5", "MiMo-V2.5"]);
+  });
 });
