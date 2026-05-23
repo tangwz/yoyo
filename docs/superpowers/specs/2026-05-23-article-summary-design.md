@@ -10,7 +10,7 @@
 
 本次覆盖：
 
-- popup 增加“总结当前页面”入口。
+- popup 增加“一键总结”入口。
 - 右键菜单增加 “Summarize this page” 入口。
 - options 中的目标语言选择真正持久化。
 - popup 初始化和目标语言切换读取并保存同一份翻译偏好。
@@ -91,7 +91,7 @@ background context menu：
 
 ### 5.1 Popup Entry
 
-popup 增加一个次级按钮“总结当前页面”。点击后：
+popup 增加一个次级按钮，按钮文案固定为“一键总结”。点击后：
 
 1. 检查 provider 状态。
 2. 获取 active tab id。
@@ -280,7 +280,21 @@ context menu 对失败应尽量调用 `showPageSummary` 展示错误；如果 co
 
 README 和隐私说明后续需要补充 summary 的手动触发边界，但本设计不要求同步完成发布文案。
 
-## 13. Testing Strategy
+## 13. Non-Regression Constraints
+
+实现总结功能时必须保持现有能力不退化：
+
+- 页面翻译主按钮、进度展示、取消、重新翻译、隐藏译文、显示译文、移除译文行为保持不变。
+- lazy viewport 翻译、runtime batch enqueue、mutation rescan 和 lazy recovery 不因 summary extraction 产生额外状态变更。
+- 划词翻译右键菜单和 selection panel 行为保持不变。
+- 现有 `Translate this page` 右键菜单仍可用，只是目标语言从 storage 读取，不再硬编码。
+- provider onboarding、provider status、Chrome Built-in AI local-only 翻译路径保持不变。
+- storage 迁移必须向后兼容旧 `translationPreferences`，不能导致旧用户丢失翻译模式设置。
+- summary content extraction 必须是只读路径，不能调用 translation injection、queue、observer 或 task reset 相关逻辑。
+
+实现完成前，至少运行现有全量单元测试，并补充 summary 相关测试。任何需要调整既有测试断言的地方，都必须能对应到明确的目标语言持久化变化或新增 summary 入口，不能为了通过测试而放宽现有翻译行为约束。
+
+## 14. Testing Strategy
 
 单元测试：
 
@@ -323,7 +337,8 @@ README 和隐私说明后续需要补充 summary 的手动触发边界，但本�
 - `ui/popup.test.ts`
   - 初始化读取 stored target language。
   - 切换 target language 保存偏好。
-  - 点击 summary 发送 `summarizePage`。
+  - “一键总结”按钮发送 `summarizePage`。
+  - 页面翻译主按钮既有行为保持不变。
 
 验证命令：
 
@@ -333,7 +348,7 @@ pnpm typecheck
 pnpm lint
 ```
 
-## 14. Implementation Order
+## 15. Implementation Order
 
 建议按以下顺序实现：
 
