@@ -24,6 +24,7 @@ import type {
   PageTranslationEstimate,
 } from "@/messaging/contracts";
 import { sendRuntimeMessage } from "@/messaging/runtime";
+import type { SummarySourceResult } from "@/summary/types";
 import {
   isTerminalTaskState,
   type PageSegment,
@@ -69,6 +70,24 @@ let mutationRescanTimer:
 let dirtyMutationRoots = new Set<Element>();
 let pendingDisconnectedSegmentIds = new Set<string>();
 let collectionGeneration = 0;
+const maxSummarySourceChars = 24_000;
+
+function joinSummarySourceText(segments: PageSegment[]): string {
+  let sourceText = "";
+
+  for (const segment of segments) {
+    const separator = sourceText.length > 0 ? "\n\n" : "";
+    const nextText = `${separator}${segment.sourceText}`;
+    const remainingChars = maxSummarySourceChars - sourceText.length;
+    if (remainingChars <= 0) {
+      break;
+    }
+
+    sourceText += nextText.slice(0, remainingChars);
+  }
+
+  return sourceText.trim();
+}
 
 export async function estimatePage(): Promise<PageTranslationEstimate> {
   if (!isPageUrlSupported(location.href)) {
@@ -89,6 +108,30 @@ export async function estimatePage(): Promise<PageTranslationEstimate> {
       (total, segment) => total + segment.sourceText.length,
       0,
     ),
+  };
+}
+
+export async function collectSummarySource(): Promise<SummarySourceResult> {
+  if (!isPageUrlSupported(location.href)) {
+    throw new Error("Unsupported page URL.");
+  }
+
+  const { segments } = await collectPageSegments("summary");
+  const sourceText = joinSummarySourceText(segments);
+  if (!sourceText) {
+    throw new Error("No readable article content found.");
+  }
+
+  const headingTitle = segments.find((segment) => segment.kind === "heading")
+    ?.sourceText;
+  const documentTitle = document.title.trim();
+  const title = headingTitle || documentTitle || undefined;
+
+  return {
+    title,
+    sourceText,
+    sourceCharCount: sourceText.length,
+    segmentCount: segments.length,
   };
 }
 
