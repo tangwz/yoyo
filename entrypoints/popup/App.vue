@@ -374,13 +374,9 @@ async function loadPopupPreferences(): Promise<void> {
 
 async function saveTargetLanguage(nextTargetLanguage: TargetLanguage): Promise<void> {
   const storage = createStorageRepositories();
-  let latestPreferences = defaultTranslationPreferences;
-
-  try {
-    latestPreferences = await storage.translationPreferences.get();
-  } catch {
-    latestPreferences = defaultTranslationPreferences;
-  }
+  const latestPreferences = await storage.translationPreferences
+    .get()
+    .catch(() => defaultTranslationPreferences);
 
   await storage.translationPreferences.save({
     ...latestPreferences,
