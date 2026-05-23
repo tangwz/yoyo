@@ -127,6 +127,7 @@ describe("page runtime", () => {
   beforeEach(() => {
     removePageTranslations();
     document.body.innerHTML = "";
+    document.title = "";
     setUrl("https://example.com/article");
     MockIntersectionObserver.instances = [];
     MockMutationObserver.instances = [];
@@ -152,6 +153,7 @@ describe("page runtime", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     document.body.innerHTML = "";
+    document.title = "";
     setUrl("https://example.com/article");
   });
 
@@ -196,7 +198,7 @@ describe("page runtime", () => {
 
   it("limits summary source length and reports the truncated character count", async () => {
     const firstParagraph = "A".repeat(16_000);
-    const secondParagraph = "B".repeat(16_000);
+    const secondParagraph = "B".repeat(10_000);
     document.body.innerHTML = `
       <article>
         <p>${firstParagraph}</p>
@@ -205,10 +207,11 @@ describe("page runtime", () => {
     `;
 
     const result = await collectSummarySource();
+    const expectedSourceText = `${firstParagraph}\n\n${"B".repeat(7_998)}`;
 
-    expect(result.sourceText.length).toBeLessThanOrEqual(24_000);
+    expect(result.sourceText).toBe(expectedSourceText);
     expect(result.sourceText.length).toBe(24_000);
-    expect(result.sourceCharCount).toBe(result.sourceText.length);
+    expect(result.sourceCharCount).toBe(24_000);
     expect(result.segmentCount).toBe(2);
   });
 
