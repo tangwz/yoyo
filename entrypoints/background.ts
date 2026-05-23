@@ -1,9 +1,11 @@
 import {
+  onSummarizePageMenuClick,
   onTranslatePageMenuClick,
   onTranslateSelectionMenuClick,
   registerContextMenus,
 } from "@/background/contextMenu";
 import { notifyPageCannotTranslate, notifyProviderMissing } from "@/background/notifications";
+import { summarizePage } from "@/background/pageSummary";
 import {
   buildProviderStatusResponse,
   getStoredProviderState,
@@ -22,6 +24,7 @@ import { addRuntimeMessageListener, sendTabMessage } from "@/messaging/runtime";
 import { ChromeBuiltInTranslatorProvider } from "@/provider/chromeBuiltInAi";
 import { ChromeBuiltInAiOffscreenClient } from "@/provider/chromeBuiltInAiOffscreenClient";
 import { OpenAiCompatibleProvider } from "@/provider/openAiCompatible";
+import { OpenAiSummaryAdapter } from "@/provider/openAiSummaryAdapter";
 import { TranslationProviderResolver } from "@/provider/resolver";
 import type { ProviderProfile } from "@/provider/types";
 import { createStorageRepositories } from "@/storage/repositories";
@@ -40,6 +43,7 @@ function createErrorResponse(error: unknown): BackgroundResponse {
 export default defineBackground(() => {
   const storage = createStorageRepositories();
   const provider = new OpenAiCompatibleProvider();
+  const summaryProvider = new OpenAiSummaryAdapter(provider);
   let chromeBuiltInAiOffscreenClient: ChromeBuiltInAiOffscreenClient | undefined;
   const translationProviderResolver = new TranslationProviderResolver({
     openAiProvider: provider,
@@ -71,6 +75,10 @@ export default defineBackground(() => {
     const { activeProviderId, profiles } = await loadStoredProviderState();
 
     return selectReadyProviderProfile(profiles, activeProviderId);
+  }
+
+  async function getStoredTargetLanguage(): Promise<string> {
+    return (await storage.translationPreferences.get()).targetLanguage;
   }
 
   async function getProviderProfile(providerId: string): Promise<ProviderProfile | undefined> {
@@ -128,7 +136,7 @@ export default defineBackground(() => {
       const progress = await orchestrator.translatePage({
         tabId,
         sourceLanguage: "auto",
-        targetLanguage: "zh-CN",
+        targetLanguage: await getStoredTargetLanguage(),
         translationMode: (await storage.translationPreferences.get()).mode,
       });
 
@@ -158,7 +166,7 @@ export default defineBackground(() => {
           tabId,
           text,
           sourceLanguage: "auto",
-          targetLanguage: "zh-CN",
+          targetLanguage: await getStoredTargetLanguage(),
         },
         {
           getActiveProfile: async () => activeProfile,
@@ -174,6 +182,29 @@ export default defineBackground(() => {
     },
     (error, tabId) => {
       console.error("[yoyo] failed to handle translate selection menu click", {
+        tabId,
+        error,
+      });
+    },
+  );
+
+  onSummarizePageMenuClick(
+    async (tabId) => {
+      await summarizePage(
+        {
+          tabId,
+          targetLanguage: await getStoredTargetLanguage(),
+        },
+        {
+          getActiveProfile,
+          getSummaryProvider: () => summaryProvider,
+          sendToContent: (targetTabId, message) =>
+            sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
+        },
+      );
+    },
+    (error, tabId) => {
+      console.error("[yoyo] failed to handle summarize page menu click", {
         tabId,
         error,
       });
@@ -258,6 +289,14 @@ export default defineBackground(() => {
             detectSourceLanguage: (sourceText) =>
               getChromeBuiltInAiOffscreenClient().detectLanguage(sourceText),
             prepareChromeBuiltInAi,
+            sendToContent: (targetTabId, message) =>
+              sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
+          });
+          return { type: "backgroundActionResult", success: true };
+        case "summarizePage":
+          await summarizePage(request, {
+            getActiveProfile,
+            getSummaryProvider: () => summaryProvider,
             sendToContent: (targetTabId, message) =>
               sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
           });
