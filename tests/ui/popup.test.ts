@@ -373,6 +373,29 @@ describe("popup app", () => {
     });
   });
 
+  it("uses stored Traditional Chinese target language for page summary", async () => {
+    await browserMock.syncStorageSet({
+      "yoyo.translationPreferences": { mode: "lazyViewport", targetLanguage: "zh-TW" },
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Target language" })).toHaveDisplayValue(
+        "繁體中文",
+      );
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "一键总结" }));
+
+    expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
+      type: "summarizePage",
+      tabId: 123,
+      targetLanguage: "zh-TW",
+    });
+  });
+
   it("saves target language preferences while preserving translation mode", async () => {
     await browserMock.syncStorageSet({
       "yoyo.translationPreferences": { mode: "fullPage", targetLanguage: "ja" },

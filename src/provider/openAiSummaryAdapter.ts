@@ -26,7 +26,7 @@ export class OpenAiSummaryAdapter implements SummaryProvider {
         ...request.traceContext,
         stage: "summary",
         providerType: "openai-compatible",
-        segmentCount: 1,
+        segmentCount: request.traceContext?.segmentCount ?? 1,
         sourceCharCount: request.sourceText.length,
       },
     });

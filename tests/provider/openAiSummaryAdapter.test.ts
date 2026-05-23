@@ -68,6 +68,35 @@ describe("OpenAiSummaryAdapter", () => {
     );
   });
 
+  it("preserves upstream trace segment count", async () => {
+    const generateText = vi.fn().mockResolvedValue({
+      text: "This is the summary.",
+      model: "gpt-5-mini",
+    });
+    const adapter = new OpenAiSummaryAdapter({ generateText });
+
+    await adapter.summarizeArticle({
+      profile: profile(),
+      targetLanguage: "en",
+      sourceText: "This is a source article.",
+      traceContext: {
+        taskId: "task-1",
+        batchId: "batch-1",
+        stage: "page",
+        providerType: "openai-compatible",
+        segmentCount: 7,
+      },
+    });
+
+    expect(generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        traceContext: expect.objectContaining({
+          segmentCount: 7,
+        }),
+      }),
+    );
+  });
+
   it("rejects empty summary output", async () => {
     const generateText = vi.fn().mockResolvedValue({
       text: "   ",
