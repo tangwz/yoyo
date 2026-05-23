@@ -107,8 +107,10 @@ const isSummaryDisabled = computed(
   () =>
     isInitializing.value ||
     isSummarizing.value ||
+    !canTranslate.value ||
     !isProviderConfigured.value ||
     hasProviderStatusIssue.value ||
+    providerMode.value === "local-only" ||
     tabId.value === undefined,
 );
 

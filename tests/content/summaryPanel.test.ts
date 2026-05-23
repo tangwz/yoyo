@@ -19,6 +19,15 @@ describe("summary panel", () => {
     );
   });
 
+  it("marks the panel as extension-owned content", () => {
+    showPageSummary({
+      targetLanguage: "en",
+      summaryText: "This article explains local browser AI.",
+    });
+
+    expect(screenPanel().getAttribute("data-yoyo-extension")).toBe("summary-panel");
+  });
+
   it("renders error text", () => {
     showPageSummary({
       targetLanguage: "en",

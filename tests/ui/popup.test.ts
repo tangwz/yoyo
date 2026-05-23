@@ -555,6 +555,33 @@ describe("popup app", () => {
     });
   });
 
+  it("disables summary for a configured local-only provider", async () => {
+    browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
+      if (message.type === "getProviderStatus") {
+        return {
+          type: "providerStatus",
+          configured: true,
+          readiness: "ready",
+          providerLabel: "Chrome Built-in AI / Local only",
+          providerMode: "local-only",
+        };
+      }
+
+      if (message.type === "getTaskForTab") {
+        return idleTaskProgress();
+      }
+
+      throw new Error(`Unexpected runtime message: ${message.type}`);
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+      expect(screen.getByRole("button", { name: "一键总结" })).toBeDisabled();
+    });
+  });
+
   it("shows unsupported local provider errors without opening Provider settings", async () => {
     browserMock.runtimeSendMessage.mockImplementation(async (message: { type: string }) => {
       if (message.type === "getProviderStatus") {
@@ -1309,6 +1336,7 @@ describe("popup app", () => {
     await waitFor(() => {
       expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
       expect(screen.getByRole("button", { name: "翻译当前页面" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "一键总结" })).toBeDisabled();
     });
     expect(await screen.findByRole("alert")).toHaveTextContent("Unsupported page URL.");
   });

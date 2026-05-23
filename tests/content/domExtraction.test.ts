@@ -400,6 +400,7 @@ describe("collectPageSegments", () => {
         <p style="visibility: hidden;">Visibility hidden text</p>
         <p contenteditable="true">Editable text</p>
         <div data-yoyo-translation>Injected text</div>
+        <aside data-yoyo-extension="summary-panel">Summary panel text</aside>
       </article>
     `;
 
@@ -607,6 +608,7 @@ describe("collectPageSegments", () => {
           ${visibleText}
           <span hidden>${skippedLongText}</span>
           <span data-yoyo-translation>${skippedLongText}</span>
+          <span data-yoyo-extension="summary-panel">${skippedLongText}</span>
         </section>
       </article>
     `;

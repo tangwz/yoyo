@@ -50,6 +50,7 @@ export function showPageSummary(input: PageSummaryPanelInput): void {
   panel.id = panelId;
   panel.setAttribute("role", input.errorMessage !== undefined ? "alert" : "status");
   panel.setAttribute("aria-live", "polite");
+  panel.setAttribute("data-yoyo-extension", "summary-panel");
   panel.dataset.yoyoSummaryLanguage = input.targetLanguage;
   applyPanelStyle(panel);
 
