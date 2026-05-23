@@ -28,7 +28,7 @@ import {
   defaultUiPreferences,
 } from "@/storage/defaults";
 import { createStorageRepositories } from "@/storage/repositories";
-import type { TargetLanguage, TranslationMode } from "@/translation/types";
+import type { TargetLanguage } from "@/translation/types";
 import ErrorSummary from "@/ui/components/ErrorSummary.vue";
 import LanguageSelector from "@/ui/components/LanguageSelector.vue";
 import PopupFooter from "@/ui/components/PopupFooter.vue";
@@ -45,7 +45,6 @@ type PopupState =
 
 const sourceLanguage = ref("auto");
 const targetLanguage = ref<TargetLanguage>(defaultTranslationPreferences.targetLanguage);
-const translationMode = ref<TranslationMode>(defaultTranslationPreferences.mode);
 const uiLanguage = ref(defaultUiPreferences.uiLanguage);
 const isApplyingStoredPreferences = ref(false);
 const providerLabel = ref("正在读取翻译服务...");
@@ -354,18 +353,39 @@ async function clearProviderOnboardingAutoOpened(): Promise<void> {
 }
 
 async function loadPopupPreferences(): Promise<void> {
-  const storage = createStorageRepositories();
-  const [storedUiPreferences, storedTranslationPreferences] = await Promise.all([
-    storage.uiPreferences.get(),
-    storage.translationPreferences.get(),
-  ]);
+  try {
+    const storage = createStorageRepositories();
+    const [storedUiPreferences, storedTranslationPreferences] = await Promise.all([
+      storage.uiPreferences.get(),
+      storage.translationPreferences.get(),
+    ]);
 
-  uiLanguage.value = storedUiPreferences.uiLanguage;
-  translationMode.value = storedTranslationPreferences.mode;
-  isApplyingStoredPreferences.value = true;
-  targetLanguage.value = storedTranslationPreferences.targetLanguage;
-  await Promise.resolve();
-  isApplyingStoredPreferences.value = false;
+    uiLanguage.value = storedUiPreferences.uiLanguage;
+    isApplyingStoredPreferences.value = true;
+    targetLanguage.value = storedTranslationPreferences.targetLanguage;
+    await Promise.resolve();
+  } catch {
+    uiLanguage.value = defaultUiPreferences.uiLanguage;
+    targetLanguage.value = defaultTranslationPreferences.targetLanguage;
+  } finally {
+    isApplyingStoredPreferences.value = false;
+  }
+}
+
+async function saveTargetLanguage(nextTargetLanguage: TargetLanguage): Promise<void> {
+  const storage = createStorageRepositories();
+  let latestPreferences = defaultTranslationPreferences;
+
+  try {
+    latestPreferences = await storage.translationPreferences.get();
+  } catch {
+    latestPreferences = defaultTranslationPreferences;
+  }
+
+  await storage.translationPreferences.save({
+    ...latestPreferences,
+    targetLanguage: nextTargetLanguage,
+  });
 }
 
 watch(targetLanguage, async (nextTargetLanguage) => {
@@ -374,10 +394,7 @@ watch(targetLanguage, async (nextTargetLanguage) => {
   }
 
   try {
-    await createStorageRepositories().translationPreferences.save({
-      mode: translationMode.value,
-      targetLanguage: nextTargetLanguage,
-    });
+    await saveTargetLanguage(nextTargetLanguage);
   } catch (error: unknown) {
     errorMessage.value =
       error instanceof Error ? error.message : "无法保存目标语言偏好。";

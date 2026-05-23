@@ -341,6 +341,22 @@ describe("popup app", () => {
     expect(await screen.findByRole("button", { name: "Summarize" })).toBeVisible();
   });
 
+  it("continues initialization when preference storage fails", async () => {
+    browserMock.syncStorageGet.mockRejectedValue(new Error("Sync storage unavailable."));
+
+    render(PopupApp);
+
+    expect(await screen.findByRole("button", { name: "翻译当前页面" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "一键总结" })).toBeVisible();
+    await waitFor(() => {
+      expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
+        type: "getProviderStatus",
+      });
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("requests page summary for the active tab and selected target language", async () => {
     render(PopupApp);
 
@@ -375,6 +391,31 @@ describe("popup app", () => {
     await waitFor(() => {
       expect(browserMock.syncStorageSet).toHaveBeenCalledWith({
         "yoyo.translationPreferences": { mode: "fullPage", targetLanguage: "ko" },
+      });
+    });
+  });
+
+  it("saves target language with the latest stored translation mode", async () => {
+    await browserMock.syncStorageSet({
+      "yoyo.translationPreferences": { mode: "fullPage", targetLanguage: "zh-CN" },
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+
+    await browserMock.syncStorageSet({
+      "yoyo.translationPreferences": { mode: "lazyViewport", targetLanguage: "zh-CN" },
+    });
+    browserMock.syncStorageSet.mockClear();
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "Target language" }), "en");
+
+    await waitFor(() => {
+      expect(browserMock.syncStorageSet).toHaveBeenCalledWith({
+        "yoyo.translationPreferences": { mode: "lazyViewport", targetLanguage: "en" },
       });
     });
   });
