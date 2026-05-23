@@ -63,6 +63,7 @@ const failed = ref(0);
 const errorMessage = ref("");
 const pageTranslationsVisible = ref(true);
 const providerOnboardingAutoOpenKey = "yoyo.providerOnboardingAutoOpened";
+let targetLanguageSaveQueue: Promise<void> = Promise.resolve();
 
 type SessionStorageArea = {
   get(key: string): Promise<Record<string, unknown>>;
@@ -386,13 +387,22 @@ async function saveTargetLanguage(nextTargetLanguage: TargetLanguage): Promise<v
   });
 }
 
+function queueTargetLanguageSave(nextTargetLanguage: TargetLanguage): Promise<void> {
+  const nextSave = targetLanguageSaveQueue
+    .catch(() => undefined)
+    .then(() => saveTargetLanguage(nextTargetLanguage));
+
+  targetLanguageSaveQueue = nextSave;
+  return nextSave;
+}
+
 watch(targetLanguage, async (nextTargetLanguage) => {
   if (isApplyingStoredPreferences.value) {
     return;
   }
 
   try {
-    await saveTargetLanguage(nextTargetLanguage);
+    await queueTargetLanguageSave(nextTargetLanguage);
   } catch (error: unknown) {
     errorMessage.value =
       error instanceof Error ? error.message : "无法保存目标语言偏好。";

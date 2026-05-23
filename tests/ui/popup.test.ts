@@ -443,6 +443,42 @@ describe("popup app", () => {
     });
   });
 
+  it("serializes target language saves so the last popup selection wins", async () => {
+    const firstSave = createDeferred<void>();
+    await browserMock.syncStorageSet({
+      "yoyo.translationPreferences": { mode: "fullPage", targetLanguage: "zh-CN" },
+    });
+
+    render(PopupApp);
+
+    await waitFor(() => {
+      expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
+    });
+
+    browserMock.syncStorageSet.mockImplementation(async () => {
+      if (browserMock.syncStorageSet.mock.calls.length === 1) {
+        await firstSave.promise;
+      }
+    });
+    browserMock.syncStorageSet.mockClear();
+
+    await fireEvent.update(screen.getByRole("combobox", { name: "Target language" }), "en");
+    await fireEvent.update(screen.getByRole("combobox", { name: "Target language" }), "ja");
+
+    await waitFor(() => {
+      expect(browserMock.syncStorageSet).toHaveBeenCalledTimes(1);
+    });
+
+    firstSave.resolve();
+
+    await waitFor(() => {
+      expect(browserMock.syncStorageSet).toHaveBeenCalledTimes(2);
+    });
+    expect(browserMock.syncStorageSet).toHaveBeenLastCalledWith({
+      "yoyo.translationPreferences": { mode: "fullPage", targetLanguage: "ja" },
+    });
+  });
+
   it("disables translation while resolving the active tab", async () => {
     const activeTabQuery = createDeferred<Array<{ id: number }>>();
     browserMock.tabsQuery.mockReturnValueOnce(activeTabQuery.promise);

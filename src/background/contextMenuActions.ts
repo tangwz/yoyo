@@ -1,4 +1,5 @@
 import type { ProviderProfile } from "@/provider/types";
+import { defaultTranslationPreferences } from "@/storage/defaults";
 import type { TranslationMode, TranslationProgress } from "@/translation/types";
 
 export type TranslatePageMenuInput = {
@@ -46,6 +47,14 @@ export type SummarizePageMenuClickDependencies = {
   summarizePage: (input: SummarizePageMenuInput) => Promise<void>;
 };
 
+async function getStoredTargetLanguageOrDefault(
+  getStoredTargetLanguage: () => Promise<string>,
+): Promise<string> {
+  return getStoredTargetLanguage().catch(
+    () => defaultTranslationPreferences.targetLanguage,
+  );
+}
+
 export async function handleTranslatePageMenuClick(
   tabId: number,
   dependencies: TranslatePageMenuClickDependencies,
@@ -59,7 +68,9 @@ export async function handleTranslatePageMenuClick(
   const progress = await dependencies.translatePage({
     tabId,
     sourceLanguage: "auto",
-    targetLanguage: await dependencies.getStoredTargetLanguage(),
+    targetLanguage: await getStoredTargetLanguageOrDefault(
+      dependencies.getStoredTargetLanguage,
+    ),
     translationMode: await dependencies.getStoredTranslationMode(),
   });
 
@@ -81,7 +92,9 @@ export async function handleTranslateSelectionMenuClick(
       tabId: input.tabId,
       text: input.text,
       sourceLanguage: "auto",
-      targetLanguage: await dependencies.getStoredTargetLanguage(),
+      targetLanguage: await getStoredTargetLanguageOrDefault(
+        dependencies.getStoredTargetLanguage,
+      ),
     },
     activeProfile,
   );
@@ -93,6 +106,8 @@ export async function handleSummarizePageMenuClick(
 ): Promise<void> {
   await dependencies.summarizePage({
     tabId,
-    targetLanguage: await dependencies.getStoredTargetLanguage(),
+    targetLanguage: await getStoredTargetLanguageOrDefault(
+      dependencies.getStoredTargetLanguage,
+    ),
   });
 }

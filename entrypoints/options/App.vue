@@ -28,7 +28,7 @@ import {
   type UiPreferences,
 } from "@/storage/defaults";
 import { createStorageRepositories } from "@/storage/repositories";
-import type { TranslationMode } from "@/translation/types";
+import type { TranslationMode, TranslationPreferences } from "@/translation/types";
 
 function getDefaultProviderType(): ProviderProfile["type"] {
   return getChromeBuiltInAiBrowserSupport().supported
@@ -63,6 +63,7 @@ const routeParams = new URLSearchParams(globalThis.location.search);
 const shouldLandOnProvider = routeParams.get("section") === "provider";
 const isFirstRunProviderLanding =
   shouldLandOnProvider && routeParams.get("source") === "first-run";
+let translationPreferencesSaveQueue: Promise<void> = Promise.resolve();
 
 const messages = computed(() => optionsMessages[uiLanguage.value]);
 const chromeBuiltInAiSupport = computed(() => getChromeBuiltInAiBrowserSupport());
@@ -325,14 +326,30 @@ async function saveProviderProfile() {
   }
 }
 
+function queueTranslationPreferencesSave(
+  buildPreferences: (preferences: TranslationPreferences) => TranslationPreferences,
+): Promise<void> {
+  const nextSave = translationPreferencesSaveQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const storage = createStorageRepositories();
+      const preferences = await storage.translationPreferences
+        .get()
+        .catch(() => defaultTranslationPreferences);
+
+      await storage.translationPreferences.save(buildPreferences(preferences));
+    });
+
+  translationPreferencesSaveQueue = nextSave;
+  return nextSave;
+}
+
 async function saveTranslationMode() {
   try {
-    const storage = createStorageRepositories();
-    const preferences = await storage.translationPreferences.get();
-    await storage.translationPreferences.save({
+    await queueTranslationPreferencesSave((preferences) => ({
       ...preferences,
       mode: translationMode.value,
-    });
+    }));
   } catch {
     // Translation mode is non-critical; keep the selected value visible.
   }
@@ -340,11 +357,10 @@ async function saveTranslationMode() {
 
 async function saveTargetLanguage() {
   try {
-    const storage = createStorageRepositories();
-    await storage.translationPreferences.save({
-      mode: translationMode.value,
+    await queueTranslationPreferencesSave((preferences) => ({
+      ...preferences,
       targetLanguage: targetLanguage.value,
-    });
+    }));
   } catch {
     // Target language is non-critical; keep the selected value visible.
   }
