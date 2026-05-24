@@ -11,6 +11,9 @@ export type PageSummaryPanelInput =
     };
 
 const panelId = "yoyo-page-summary-panel";
+const copyStatusResetDelayMs = 1500;
+const copyButtonDefaultText = "Copy";
+const copyButtonDefaultLabel = "Copy summary";
 
 function removeExistingPanel(): void {
   document.getElementById(panelId)?.remove();
@@ -33,7 +36,7 @@ function applyPanelStyle(panel: HTMLElement): void {
   panel.style.font = "14px/1.5 ui-sans-serif, system-ui, sans-serif";
 }
 
-function applyCloseButtonStyle(button: HTMLButtonElement): void {
+function applyHeaderButtonStyle(button: HTMLButtonElement): void {
   button.style.border = "1px solid rgba(255, 255, 255, 0.24)";
   button.style.borderRadius = "6px";
   button.style.padding = "4px 8px";
@@ -41,6 +44,79 @@ function applyCloseButtonStyle(button: HTMLButtonElement): void {
   button.style.background = "transparent";
   button.style.cursor = "pointer";
   button.style.font = "inherit";
+}
+
+function setButtonState(
+  button: HTMLButtonElement,
+  text: string,
+  ariaLabel: string,
+): void {
+  button.textContent = text;
+  button.setAttribute("aria-label", ariaLabel);
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText !== undefined) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      if (copyTextWithLegacyCommand(text)) {
+        return;
+      }
+
+      throw new Error("Clipboard copy failed.");
+    }
+  }
+
+  if (copyTextWithLegacyCommand(text)) {
+    return;
+  }
+
+  throw new Error("Clipboard copy is unavailable.");
+}
+
+function copyTextWithLegacyCommand(text: string): boolean {
+  if (document.execCommand === undefined) {
+    return false;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-9999px";
+  textarea.style.left = "-9999px";
+  textarea.style.opacity = "0";
+
+  document.body.append(textarea);
+  textarea.select();
+  textarea.setSelectionRange(0, text.length);
+
+  try {
+    return document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+}
+
+async function handleCopySummary(
+  button: HTMLButtonElement,
+  summaryText: string,
+): Promise<void> {
+  button.disabled = true;
+
+  try {
+    await copyTextToClipboard(summaryText);
+    setButtonState(button, "Copied", "Copied summary");
+  } catch {
+    setButtonState(button, "Copy failed", "Copy summary failed");
+  } finally {
+    window.setTimeout(() => {
+      setButtonState(button, copyButtonDefaultText, copyButtonDefaultLabel);
+      button.disabled = false;
+    }, copyStatusResetDelayMs);
+  }
 }
 
 export function showPageSummary(input: PageSummaryPanelInput): void {
@@ -63,18 +139,38 @@ export function showPageSummary(input: PageSummaryPanelInput): void {
   const title = document.createElement("strong");
   title.textContent = "Summary";
 
+  const actions = document.createElement("div");
+  actions.style.display = "flex";
+  actions.style.alignItems = "center";
+  actions.style.gap = "8px";
+
+  if (input.summaryText !== undefined) {
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    setButtonState(copyButton, copyButtonDefaultText, copyButtonDefaultLabel);
+    copyButton.dataset.yoyoSummaryCopyButton = "true";
+    copyButton.addEventListener("click", () => {
+      void handleCopySummary(copyButton, input.summaryText);
+    });
+    applyHeaderButtonStyle(copyButton);
+    actions.append(copyButton);
+  }
+
   const closeButton = document.createElement("button");
   closeButton.type = "button";
   closeButton.textContent = "Close";
+  closeButton.setAttribute("aria-label", "Close summary");
+  closeButton.dataset.yoyoSummaryCloseButton = "true";
   closeButton.addEventListener("click", removeExistingPanel);
-  applyCloseButtonStyle(closeButton);
+  applyHeaderButtonStyle(closeButton);
+  actions.append(closeButton);
 
   const body = document.createElement("p");
   body.textContent = input.errorMessage ?? input.summaryText ?? "";
   body.style.margin = "12px 0 0";
   body.style.whiteSpace = "pre-wrap";
 
-  header.append(title, closeButton);
+  header.append(title, actions);
   panel.append(header, body);
   document.body.append(panel);
 }
