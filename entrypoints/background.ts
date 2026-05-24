@@ -2,6 +2,7 @@ import {
   onSummarizePageMenuClick,
   onTranslatePageMenuClick,
   onTranslateSelectionMenuClick,
+  getContextMenuUiLanguageForPreferenceChange,
   registerContextMenus,
 } from "@/background/contextMenu";
 import {
@@ -19,7 +20,6 @@ import {
 import { translateSelection } from "@/background/selectionTranslation";
 import { TranslationTaskOrchestrator } from "@/background/taskOrchestrator";
 import { openOptionsPage } from "@/browser/browserApi";
-import { isOptionsUiLanguage } from "@/i18n/optionsMessages";
 import type {
   BackgroundRequest,
   BackgroundResponse,
@@ -45,10 +45,6 @@ function createErrorResponse(error: unknown): BackgroundResponse {
     type: "backgroundError",
     message: error instanceof Error ? error.message : "Background action failed.",
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export default defineBackground(() => {
@@ -163,17 +159,15 @@ export default defineBackground(() => {
       return;
     }
 
-    const nextUiPreferences = changes[storageKeys.uiPreferences]?.newValue;
-    if (!isRecord(nextUiPreferences)) {
+    if (!(storageKeys.uiPreferences in changes)) {
       return;
     }
 
-    const nextUiLanguage = nextUiPreferences.uiLanguage;
-    if (!isOptionsUiLanguage(nextUiLanguage)) {
-      return;
-    }
-
-    registerContextMenus(nextUiLanguage);
+    registerContextMenus(
+      getContextMenuUiLanguageForPreferenceChange(
+        changes[storageKeys.uiPreferences]?.newValue,
+      ),
+    );
   });
 
   onTranslatePageMenuClick(

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  getContextMenuUiLanguageForPreferenceChange,
   onSummarizePageMenuClick,
   onTranslatePageMenuClick,
   onTranslateSelectionMenuClick,
@@ -74,6 +75,30 @@ describe("context menu registration", () => {
       title: "Summarize this page",
       contexts: ["page"],
     });
+  });
+
+  it("falls back to the default UI language for invalid preference changes", () => {
+    for (const changedValue of [
+      undefined,
+      null,
+      "en-US",
+      1,
+      true,
+      ["en-US"],
+      { theme: "light" },
+      { theme: "light", uiLanguage: "fr-FR" },
+    ]) {
+      expect(getContextMenuUiLanguageForPreferenceChange(changedValue)).toBe("zh-CN");
+    }
+  });
+
+  it("uses the changed UI language for valid preference changes", () => {
+    expect(
+      getContextMenuUiLanguageForPreferenceChange({
+        theme: "light",
+        uiLanguage: "en-US",
+      }),
+    ).toBe("en-US");
   });
 
   it("routes async handler failures to the error callback", async () => {

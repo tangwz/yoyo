@@ -1,6 +1,10 @@
 import { browser } from "wxt/browser";
 import { getContextMenuMessages } from "@/i18n/contextMenuMessages";
-import type { OptionsUiLanguage } from "@/i18n/optionsMessages";
+import {
+  isOptionsUiLanguage,
+  type OptionsUiLanguage,
+} from "@/i18n/optionsMessages";
+import { defaultUiPreferences } from "@/storage/defaults";
 
 export const translatePageMenuId = "yoyo.translatePage";
 export const translateSelectionMenuId = "yoyo.translateSelection";
@@ -10,6 +14,22 @@ export type TranslateSelectionMenuClick = {
   tabId: number;
   text: string;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function getContextMenuUiLanguageForPreferenceChange(
+  value: unknown,
+): OptionsUiLanguage {
+  if (!isRecord(value)) {
+    return defaultUiPreferences.uiLanguage;
+  }
+
+  return isOptionsUiLanguage(value.uiLanguage)
+    ? value.uiLanguage
+    : defaultUiPreferences.uiLanguage;
+}
 
 export function registerContextMenus(uiLanguage?: OptionsUiLanguage): void {
   const messages = getContextMenuMessages(uiLanguage);
