@@ -1,10 +1,10 @@
 import type { ProviderErrorCode } from "@/provider/errors";
-import type { UiPreferences } from "@/storage/defaults";
+import { isUiLanguage, type UiPreferences } from "@/storage/defaults";
 
 export type OptionsUiLanguage = UiPreferences["uiLanguage"];
 
 export function isOptionsUiLanguage(value: unknown): value is OptionsUiLanguage {
-  return value === "zh-CN" || value === "en-US";
+  return isUiLanguage(value);
 }
 
 export const optionsMessages = {

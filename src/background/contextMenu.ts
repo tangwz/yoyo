@@ -1,4 +1,10 @@
 import { browser } from "wxt/browser";
+import { getContextMenuMessages } from "@/i18n/contextMenuMessages";
+import {
+  isOptionsUiLanguage,
+  type OptionsUiLanguage,
+} from "@/i18n/optionsMessages";
+import { defaultUiPreferences } from "@/storage/defaults";
 
 export const translatePageMenuId = "yoyo.translatePage";
 export const translateSelectionMenuId = "yoyo.translateSelection";
@@ -9,21 +15,39 @@ export type TranslateSelectionMenuClick = {
   text: string;
 };
 
-export function registerContextMenus(): void {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function getContextMenuUiLanguageForPreferenceChange(
+  value: unknown,
+): OptionsUiLanguage {
+  if (!isRecord(value)) {
+    return defaultUiPreferences.uiLanguage;
+  }
+
+  return isOptionsUiLanguage(value.uiLanguage)
+    ? value.uiLanguage
+    : defaultUiPreferences.uiLanguage;
+}
+
+export function registerContextMenus(uiLanguage?: OptionsUiLanguage): void {
+  const messages = getContextMenuMessages(uiLanguage);
+
   browser.contextMenus.removeAll(() => {
     browser.contextMenus.create({
       id: translatePageMenuId,
-      title: "Translate this page",
+      title: messages.translatePage,
       contexts: ["page"],
     });
     browser.contextMenus.create({
       id: translateSelectionMenuId,
-      title: "Translate selection",
+      title: messages.translateSelection,
       contexts: ["selection"],
     });
     browser.contextMenus.create({
       id: summarizePageMenuId,
-      title: "Summarize this page",
+      title: messages.summarizePage,
       contexts: ["page"],
     });
   });

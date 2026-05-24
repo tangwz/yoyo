@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  getContextMenuUiLanguageForPreferenceChange,
   onSummarizePageMenuClick,
   onTranslatePageMenuClick,
   onTranslateSelectionMenuClick,
@@ -34,11 +35,31 @@ describe("context menu registration", () => {
     removeAll.mockClear();
   });
 
-  it("registers page translation, selection translation, and page summary menu items", () => {
+  it("registers localized Chinese page translation, selection translation, and page summary menu items by default", () => {
     registerContextMenus();
 
     expect(removeAll).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenCalledTimes(3);
+    expect(create).toHaveBeenCalledWith({
+      id: translatePageMenuId,
+      title: "翻译此页面",
+      contexts: ["page"],
+    });
+    expect(create).toHaveBeenCalledWith({
+      id: translateSelectionMenuId,
+      title: "翻译选中文本",
+      contexts: ["selection"],
+    });
+    expect(create).toHaveBeenCalledWith({
+      id: summarizePageMenuId,
+      title: "总结此页面",
+      contexts: ["page"],
+    });
+  });
+
+  it("registers English menu titles when the UI language is English", () => {
+    registerContextMenus("en-US");
+
     expect(create).toHaveBeenCalledWith({
       id: translatePageMenuId,
       title: "Translate this page",
@@ -54,6 +75,30 @@ describe("context menu registration", () => {
       title: "Summarize this page",
       contexts: ["page"],
     });
+  });
+
+  it("falls back to the default UI language for invalid preference changes", () => {
+    for (const changedValue of [
+      undefined,
+      null,
+      "en-US",
+      1,
+      true,
+      ["en-US"],
+      { theme: "light" },
+      { theme: "light", uiLanguage: "fr-FR" },
+    ]) {
+      expect(getContextMenuUiLanguageForPreferenceChange(changedValue)).toBe("zh-CN");
+    }
+  });
+
+  it("uses the changed UI language for valid preference changes", () => {
+    expect(
+      getContextMenuUiLanguageForPreferenceChange({
+        theme: "light",
+        uiLanguage: "en-US",
+      }),
+    ).toBe("en-US");
   });
 
   it("routes async handler failures to the error callback", async () => {

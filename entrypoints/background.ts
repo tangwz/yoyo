@@ -2,6 +2,7 @@ import {
   onSummarizePageMenuClick,
   onTranslatePageMenuClick,
   onTranslateSelectionMenuClick,
+  getContextMenuUiLanguageForPreferenceChange,
   registerContextMenus,
 } from "@/background/contextMenu";
 import {
@@ -33,6 +34,7 @@ import { OpenAiSummaryAdapter } from "@/provider/openAiSummaryAdapter";
 import { TranslationProviderResolver } from "@/provider/resolver";
 import type { ProviderProfile } from "@/provider/types";
 import { createStorageRepositories } from "@/storage/repositories";
+import { storageKeys } from "@/storage/storageKeys";
 
 function createTaskId(): string {
   return `task-${Date.now()}-${crypto.randomUUID()}`;
@@ -99,6 +101,20 @@ export default defineBackground(() => {
     return chromeBuiltInAiOffscreenClient;
   }
 
+  function registerStoredContextMenus(): void {
+    void storage.uiPreferences
+      .get()
+      .then((preferences) => {
+        registerContextMenus(preferences.uiLanguage);
+      })
+      .catch((error: unknown) => {
+        console.error("[yoyo] failed to load UI language for context menus", {
+          error,
+        });
+        registerContextMenus();
+      });
+  }
+
   async function prepareChromeBuiltInAi(
     sourceLanguage: string,
     targetLanguage: string,
@@ -131,7 +147,27 @@ export default defineBackground(() => {
   });
 
   browser.runtime.onInstalled.addListener(() => {
-    registerContextMenus();
+    registerStoredContextMenus();
+  });
+
+  browser.runtime.onStartup.addListener(() => {
+    registerStoredContextMenus();
+  });
+
+  browser.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "sync") {
+      return;
+    }
+
+    if (!(storageKeys.uiPreferences in changes)) {
+      return;
+    }
+
+    registerContextMenus(
+      getContextMenuUiLanguageForPreferenceChange(
+        changes[storageKeys.uiPreferences]?.newValue,
+      ),
+    );
   });
 
   onTranslatePageMenuClick(
