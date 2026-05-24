@@ -14,6 +14,10 @@ export const defaultUiPreferences: UiPreferences = {
   uiLanguage: "zh-CN",
 };
 
+export function isUiLanguage(value: unknown): value is UiPreferences["uiLanguage"] {
+  return value === "zh-CN" || value === "en-US";
+}
+
 export const defaultExperimentalFlags: ExperimentalFlags = {
   translateMoreVisibleText: false,
 };

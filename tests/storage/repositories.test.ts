@@ -67,6 +67,36 @@ describe("storage repositories", () => {
     expect(await local.get("yoyo.uiPreferences")).toEqual({});
   });
 
+  it("falls back to default UI preferences for corrupt sync storage data", async () => {
+    const sync = createInMemoryStorageArea();
+    const repository = uiPreferenceRepository({ syncedStorage: sync });
+
+    for (const storedValue of [null, "zh-CN", 1, true, ["zh-CN"], { theme: "dark" }]) {
+      await sync.set({ "yoyo.uiPreferences": storedValue });
+
+      await expect(repository.get()).resolves.toEqual({
+        theme: "light",
+        uiLanguage: "zh-CN",
+      });
+    }
+  });
+
+  it("falls back to the default UI language for unsupported UI language values", async () => {
+    const sync = createInMemoryStorageArea();
+    const repository = uiPreferenceRepository({ syncedStorage: sync });
+
+    for (const uiLanguage of ["", "fr-FR", 1, true, null, ["zh-CN"]]) {
+      await sync.set({
+        "yoyo.uiPreferences": { theme: "light", uiLanguage },
+      });
+
+      await expect(repository.get()).resolves.toEqual({
+        theme: "light",
+        uiLanguage: "zh-CN",
+      });
+    }
+  });
+
   it("defaults translation preferences to lazy viewport mode and simplified Chinese target language", async () => {
     const local = createInMemoryStorageArea();
     const sync = createInMemoryStorageArea();

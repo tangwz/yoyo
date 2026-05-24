@@ -2,6 +2,7 @@ import type { ProviderProfile } from "@/provider/types";
 import {
   defaultTranslationPreferences,
   defaultUiPreferences,
+  isUiLanguage,
   type UiPreferences,
 } from "@/storage/defaults";
 import { storageKeys } from "@/storage/storageKeys";
@@ -91,6 +92,19 @@ function normalizeTranslationMode(value: unknown): TranslationMode {
 
 function normalizeTargetLanguage(value: unknown): TargetLanguage {
   return isTargetLanguage(value) ? value : defaultTranslationPreferences.targetLanguage;
+}
+
+function normalizeUiPreferences(value: unknown): UiPreferences {
+  if (!isRecord(value)) {
+    return defaultUiPreferences;
+  }
+
+  return {
+    theme: value.theme === "light" ? value.theme : defaultUiPreferences.theme,
+    uiLanguage: isUiLanguage(value.uiLanguage)
+      ? value.uiLanguage
+      : defaultUiPreferences.uiLanguage,
+  };
 }
 
 export function createInMemoryStorageArea(): StorageArea {
@@ -190,7 +204,7 @@ export function uiPreferenceRepository({
     const result = await syncedStorage.get({
       [storageKeys.uiPreferences]: defaultUiPreferences,
     });
-    return result[storageKeys.uiPreferences] as UiPreferences;
+    return normalizeUiPreferences(result[storageKeys.uiPreferences]);
   }
 
   async function save(preferences: UiPreferences): Promise<void> {
