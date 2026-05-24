@@ -34,11 +34,31 @@ describe("context menu registration", () => {
     removeAll.mockClear();
   });
 
-  it("registers page translation, selection translation, and page summary menu items", () => {
+  it("registers localized Chinese page translation, selection translation, and page summary menu items by default", () => {
     registerContextMenus();
 
     expect(removeAll).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenCalledTimes(3);
+    expect(create).toHaveBeenCalledWith({
+      id: translatePageMenuId,
+      title: "翻译此页面",
+      contexts: ["page"],
+    });
+    expect(create).toHaveBeenCalledWith({
+      id: translateSelectionMenuId,
+      title: "翻译选中文本",
+      contexts: ["selection"],
+    });
+    expect(create).toHaveBeenCalledWith({
+      id: summarizePageMenuId,
+      title: "总结此页面",
+      contexts: ["page"],
+    });
+  });
+
+  it("registers English menu titles when the UI language is English", () => {
+    registerContextMenus("en-US");
+
     expect(create).toHaveBeenCalledWith({
       id: translatePageMenuId,
       title: "Translate this page",

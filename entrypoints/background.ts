@@ -19,6 +19,7 @@ import {
 import { translateSelection } from "@/background/selectionTranslation";
 import { TranslationTaskOrchestrator } from "@/background/taskOrchestrator";
 import { openOptionsPage } from "@/browser/browserApi";
+import { isOptionsUiLanguage } from "@/i18n/optionsMessages";
 import type {
   BackgroundRequest,
   BackgroundResponse,
@@ -33,6 +34,7 @@ import { OpenAiSummaryAdapter } from "@/provider/openAiSummaryAdapter";
 import { TranslationProviderResolver } from "@/provider/resolver";
 import type { ProviderProfile } from "@/provider/types";
 import { createStorageRepositories } from "@/storage/repositories";
+import { storageKeys } from "@/storage/storageKeys";
 
 function createTaskId(): string {
   return `task-${Date.now()}-${crypto.randomUUID()}`;
@@ -43,6 +45,10 @@ function createErrorResponse(error: unknown): BackgroundResponse {
     type: "backgroundError",
     message: error instanceof Error ? error.message : "Background action failed.",
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export default defineBackground(() => {
@@ -99,6 +105,20 @@ export default defineBackground(() => {
     return chromeBuiltInAiOffscreenClient;
   }
 
+  function registerStoredContextMenus(): void {
+    void storage.uiPreferences
+      .get()
+      .then((preferences) => {
+        registerContextMenus(preferences.uiLanguage);
+      })
+      .catch((error: unknown) => {
+        console.error("[yoyo] failed to load UI language for context menus", {
+          error,
+        });
+        registerContextMenus();
+      });
+  }
+
   async function prepareChromeBuiltInAi(
     sourceLanguage: string,
     targetLanguage: string,
@@ -131,7 +151,29 @@ export default defineBackground(() => {
   });
 
   browser.runtime.onInstalled.addListener(() => {
-    registerContextMenus();
+    registerStoredContextMenus();
+  });
+
+  browser.runtime.onStartup.addListener(() => {
+    registerStoredContextMenus();
+  });
+
+  browser.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "sync") {
+      return;
+    }
+
+    const nextUiPreferences = changes[storageKeys.uiPreferences]?.newValue;
+    if (!isRecord(nextUiPreferences)) {
+      return;
+    }
+
+    const nextUiLanguage = nextUiPreferences.uiLanguage;
+    if (!isOptionsUiLanguage(nextUiLanguage)) {
+      return;
+    }
+
+    registerContextMenus(nextUiLanguage);
   });
 
   onTranslatePageMenuClick(
