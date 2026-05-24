@@ -56,4 +56,18 @@ describe("provider model names", () => {
 
     expect(createTextModelCandidates(profile)).toEqual(["mimo-v2.5", "MiMo-V2.5"]);
   });
+
+  it("prioritizes lower-case Xiaomi MiMo model candidates for custom Xiaomi endpoints", () => {
+    const profile: OpenAiCompatibleProviderProfile = {
+      id: "custom-ai",
+      displayName: "Custom Xiaomi",
+      presetId: "custom",
+      type: "openai-compatible",
+      baseURL: "https://token-plan-cn.xiaomimimo.com/v1",
+      apiKey: "secret",
+      textModel: "MiMo-V2.5",
+    };
+
+    expect(createTextModelCandidates(profile)).toEqual(["mimo-v2.5", "MiMo-V2.5"]);
+  });
 });

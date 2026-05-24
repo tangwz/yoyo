@@ -4,6 +4,8 @@ import type { OpenAiCompatibleProviderProfile } from "@/provider/types";
 type ProviderModelContext = {
   id: string;
   presetId?: string;
+  baseURL?: string;
+  textModel?: string;
 };
 type ModelCandidateOptions = {
   preferLowerCase?: boolean;
@@ -52,7 +54,11 @@ export function normalizeModelNameForProfile(
 
 function isXiaomiMimoProfile(context: ProviderModelContext): boolean {
   const profileId = (context.presetId ?? context.id).toLowerCase();
-  return profileId === "xiaomi-mimo";
+  const isKnownProfile = profileId === "xiaomi-mimo";
+  const isXiaomiEndpoint = (context.baseURL ?? "").toLowerCase().includes("xiaomimimo.com");
+  const isXiaomiModel = /^mimo-v2\.5/i.test(context.textModel ?? "");
+
+  return isKnownProfile || isXiaomiEndpoint || isXiaomiModel;
 }
 
 export function createTextModelCandidates(

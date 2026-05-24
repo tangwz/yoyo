@@ -51,7 +51,6 @@ describe("OpenAiCompatibleProvider", () => {
       messages: [{ role: "user", content: "Translate me" }],
       temperature: 0.2,
       max_tokens: 1200,
-      thinking: { type: "disabled" },
     });
   });
 
@@ -130,7 +129,6 @@ describe("OpenAiCompatibleProvider", () => {
       messages: [{ role: "user", content: "Translate me" }],
       temperature: 0.2,
       max_tokens: 1200,
-      thinking: { type: "disabled" },
       stream: true,
     });
   });
@@ -509,7 +507,6 @@ describe("OpenAiCompatibleProvider", () => {
       messages: [{ role: "user", content: "Reply with exactly: ok" }],
       temperature: 0,
       max_tokens: 32,
-      thinking: { type: "disabled" },
     });
   });
 
@@ -531,6 +528,7 @@ describe("OpenAiCompatibleProvider", () => {
       prompt: "Summarize",
       traceContext: {
         stage: "summary",
+        providerType: "openai-compatible",
         taskId: "summary-task",
         batchId: "batch-summary",
       },
@@ -572,6 +570,7 @@ describe("OpenAiCompatibleProvider", () => {
       prompt: "Summarize",
       traceContext: {
         stage: "summary",
+        providerType: "openai-compatible",
         taskId: "summary-task",
       },
     });

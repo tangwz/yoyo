@@ -82,6 +82,25 @@ function isXiaomiMiMoModel(model: string): boolean {
   return /^mimo-v2\.5/i.test(model);
 }
 
+function isXiaomiMimoProfile(profile: GenerateTextRequest["profile"]): boolean {
+  const profileId = profile.id.toLowerCase();
+  const presetId = profile.presetId?.toLowerCase() ?? "";
+  const baseURL = profile.baseURL.toLowerCase();
+  return (
+    profileId === "xiaomi-mimo" ||
+    presetId === "xiaomi-mimo" ||
+    baseURL.includes("xiaomimimo.com")
+  );
+}
+
+function shouldDisableThinking(request: GenerateTextRequest, model: string): boolean {
+  if (request.traceContext?.stage === "summary") {
+    return false;
+  }
+
+  return isKimiK2Model(model) || isXiaomiMiMoModel(model) || isXiaomiMimoProfile(request.profile);
+}
+
 function isExpectedProviderTestResponse(text: string): boolean {
   return /^ok[.!?]*$/i.test(text.trim());
 }
@@ -101,7 +120,7 @@ function buildChatCompletionRequestBody(
     body.stream = true;
   }
 
-  if (request.traceContext?.stage !== "summary") {
+  if (shouldDisableThinking(request, model)) {
     body.thinking = { type: "disabled" };
   }
 

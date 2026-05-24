@@ -780,7 +780,7 @@ describe("options app", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
       model: "mimo-v2.5",
       messages: [{ role: "user", content: "Reply with exactly: ok" }],
-      temperature: 0,
+      thinking: { type: "disabled" },
       max_tokens: 32,
     });
     expect(getTextModelInput()).toHaveValue("mimo-v2.5");
