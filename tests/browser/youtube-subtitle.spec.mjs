@@ -51,6 +51,8 @@ async function waitForBadgeStatus(page, expectedStatuses, message) {
 
 async function assertOverlayContract(page) {
   const overlay = page.locator(subtitleOverlaySelector);
+  // Task 8 verifies the attached overlay contract. The current runtime mounts
+  // the overlay before subtitle rendering makes it visible.
   await overlay.waitFor({ state: "attached", timeout: 5000 });
 
   const overlayState = await overlay.evaluate((element) => ({
