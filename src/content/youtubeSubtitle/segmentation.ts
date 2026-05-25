@@ -192,7 +192,11 @@ function buildSingleCueSegments(
     Math.ceil(durationMs / safeMaxDurationMs),
     Math.ceil(units.length / safeMaxUnits),
   );
-  const chunkCount = Math.min(requestedChunkCount, Math.max(1, units.length));
+  const chunkCount = Math.min(
+    requestedChunkCount,
+    Math.max(1, units.length),
+    Math.max(1, Math.floor(durationMs)),
+  );
 
   if (chunkCount <= 1) {
     return [buildSegment([cue], characterStrategy)];
