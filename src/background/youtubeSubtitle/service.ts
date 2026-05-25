@@ -120,14 +120,17 @@ class DefaultSubtitleTranslationService implements SubtitleTranslationService {
         return this.cancelledResponse(request);
       }
 
+      const missedById = new Map(
+        missedSegments.map((segment) => [segment.segmentId, segment]),
+      );
       for (const item of response.items) {
-        cachedItems.set(item.segmentId, item.translatedText);
-        const sourceSegment = missedSegments.find(
-          (segment) => segment.segmentId === item.segmentId,
-        );
-        if (sourceSegment) {
-          this.cache.set(this.cacheKey(request, sourceSegment), item.translatedText);
+        const sourceSegment = missedById.get(item.segmentId);
+        if (!sourceSegment) {
+          continue;
         }
+
+        cachedItems.set(item.segmentId, item.translatedText);
+        this.cache.set(this.cacheKey(request, sourceSegment), item.translatedText);
       }
 
       return this.resultResponse(request, this.itemsInRequestOrder(request, cachedItems));

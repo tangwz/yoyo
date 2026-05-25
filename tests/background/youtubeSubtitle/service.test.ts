@@ -186,6 +186,44 @@ describe("createSubtitleTranslationService", () => {
     expect(translateBatch).not.toHaveBeenCalled();
   });
 
+  it("does not let provider results overwrite segments served from cache", async () => {
+    const subtitleService = service();
+    const cachedSegment = subtitleSegment({ segmentId: "cached", textHash: "hash-cached" });
+    const missedSegment = subtitleSegment({ segmentId: "missed", textHash: "hash-missed" });
+
+    translateBatch.mockResolvedValueOnce({
+      items: [{ segmentId: "cached", translatedText: "Cached translation." }],
+    });
+    await subtitleService.translateBatch(request({ segments: [cachedSegment] }));
+    translateBatch.mockResolvedValueOnce({
+      items: [
+        { segmentId: "cached", translatedText: "Provider overwrite." },
+        { segmentId: "missed", translatedText: "Missed translation." },
+      ],
+    });
+
+    const response = await subtitleService.translateBatch(
+      request({ segments: [cachedSegment, missedSegment] }),
+    );
+
+    expect(response).toMatchObject({
+      type: "subtitleTranslateBatchResult",
+      items: [
+        { segmentId: "cached", translatedText: "Cached translation." },
+        { segmentId: "missed", translatedText: "Missed translation." },
+      ],
+    });
+    expect(translateBatch).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        segments: [
+          expect.objectContaining({
+            id: "missed",
+          }),
+        ],
+      }),
+    );
+  });
+
   it("detects unknown source language and falls back to auto when detection fails", async () => {
     detectSourceLanguage.mockRejectedValue(new Error("Language detection failed."));
 
