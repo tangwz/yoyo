@@ -129,6 +129,48 @@ describe("createSubtitleTranslationService", () => {
     });
   });
 
+  it("pins openai-compatible translation to the requested model key", async () => {
+    getProviderProfile.mockResolvedValue({
+      ...profile,
+      textModel: "active-model",
+    });
+
+    await service().translateBatch(request({ modelKey: "requested-model" }));
+
+    expect(translateBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile: expect.objectContaining({
+          textModel: "requested-model",
+        }),
+      }),
+    );
+  });
+
+  it("rejects unsupported model keys for chrome built-in provider profiles", async () => {
+    getProviderProfile.mockResolvedValue({
+      id: "chrome-built-in-ai",
+      displayName: "Chrome Built-in AI",
+      type: "chrome-built-in-ai",
+    });
+
+    const response = await service().translateBatch(
+      request({
+        providerId: "chrome-built-in-ai",
+        modelKey: "unexpected-model",
+      }),
+    );
+
+    expect(response).toEqual({
+      type: "subtitleTranslateBatchError",
+      runtimeSessionId: "runtime-1",
+      configVersion: 2,
+      requestId: "request-1",
+      message: "Requested subtitle translation model is not available for this provider.",
+      retryable: false,
+    });
+    expect(translateBatch).not.toHaveBeenCalled();
+  });
+
   it("returns cached translations without calling the provider again", async () => {
     const subtitleService = service();
 

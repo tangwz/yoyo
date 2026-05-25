@@ -5,7 +5,7 @@ import {
 } from "@/content/youtubeSubtitle/sessionCache";
 import type { BackgroundRequest, BackgroundResponse } from "@/messaging/contracts";
 import type { TranslationProvider } from "@/provider/translationProvider";
-import type { ProviderProfile } from "@/provider/types";
+import type { OpenAiCompatibleProviderProfile, ProviderProfile } from "@/provider/types";
 import type { SubtitleSegment, SubtitleTranslationItem } from "@/subtitle/types";
 import type { PageSegment } from "@/translation/types";
 
@@ -89,9 +89,18 @@ class DefaultSubtitleTranslationService implements SubtitleTranslationService {
         return this.cancelledResponse(request);
       }
 
-      const provider = this.dependencies.getTranslationProvider(profile);
+      const requestProfile = this.profileForRequestedModel(profile, request.modelKey);
+      if (!requestProfile) {
+        return this.errorResponse(
+          request,
+          "Requested subtitle translation model is not available for this provider.",
+          false,
+        );
+      }
+
+      const provider = this.dependencies.getTranslationProvider(requestProfile);
       const response = await provider.translateBatch({
-        profile,
+        profile: requestProfile,
         sourceLanguage,
         targetLanguage: request.targetLanguage,
         segments: missedSegments.map((segment) =>
@@ -101,7 +110,7 @@ class DefaultSubtitleTranslationService implements SubtitleTranslationService {
           taskId: request.runtimeSessionId,
           batchId: request.requestId,
           stage: "subtitle",
-          providerType: profile.type,
+          providerType: requestProfile.type,
           segmentCount: missedSegments.length,
           sourceCharCount: this.sourceCharCount(missedSegments),
         },
@@ -154,6 +163,20 @@ class DefaultSubtitleTranslationService implements SubtitleTranslationService {
     }
 
     return this.dependencies.getActiveProfile?.();
+  }
+
+  private profileForRequestedModel(
+    profile: ProviderProfile,
+    modelKey: string,
+  ): ProviderProfile | undefined {
+    if (profile.type === "openai-compatible") {
+      return {
+        ...profile,
+        textModel: modelKey,
+      } satisfies OpenAiCompatibleProviderProfile;
+    }
+
+    return modelKey === profile.id ? profile : undefined;
   }
 
   private async resolveSourceLanguage(
