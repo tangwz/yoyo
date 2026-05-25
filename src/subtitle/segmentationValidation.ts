@@ -8,7 +8,19 @@ export function validateSubtitleSegments(
   cues: readonly SubtitleCue[],
   segments: readonly SubtitleSegment[],
 ): SubtitleSegmentValidationResult {
+  let expectedCueIndex = 0;
+
   for (const segment of segments) {
+    if (segment.sourceCueStartIndex !== expectedCueIndex) {
+      return {
+        valid: false,
+        reason: "Segments do not continuously cover source cues.",
+      };
+    }
+    if (segment.sourceCueEndIndex < segment.sourceCueStartIndex) {
+      return { valid: false, reason: "Segment range is invalid." };
+    }
+
     const covered = cues.slice(
       segment.sourceCueStartIndex,
       segment.sourceCueEndIndex + 1,
@@ -31,6 +43,16 @@ export function validateSubtitleSegments(
         reason: "Segment timing does not come from source cues.",
       };
     }
+
+    expectedCueIndex = segment.sourceCueEndIndex + 1;
   }
+
+  if (expectedCueIndex !== cues.length) {
+    return {
+      valid: false,
+      reason: "Segments do not cover every source cue.",
+    };
+  }
+
   return { valid: true };
 }
