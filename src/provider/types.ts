@@ -3,7 +3,7 @@ export type ProviderType = "openai-compatible" | "chrome-built-in-ai";
 export type ProviderTraceContext = {
   taskId?: string;
   batchId?: string;
-  stage?: "page" | "lazy" | "selection" | "summary";
+  stage?: "page" | "lazy" | "selection" | "summary" | "subtitle";
   providerType: ProviderType;
   segmentCount?: number;
   sourceCharCount?: number;

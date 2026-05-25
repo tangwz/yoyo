@@ -18,6 +18,7 @@ import {
   selectReadyProviderProfile,
 } from "@/background/providerStatus";
 import { translateSelection } from "@/background/selectionTranslation";
+import { createSubtitleTranslationService } from "@/background/youtubeSubtitle/service";
 import { TranslationTaskOrchestrator } from "@/background/taskOrchestrator";
 import { openOptionsPage } from "@/browser/browserApi";
 import type {
@@ -144,6 +145,14 @@ export default defineBackground(() => {
     },
     now: () => Date.now(),
     createTaskId,
+  });
+  const subtitleTranslationService = createSubtitleTranslationService({
+    getActiveProfile,
+    getProviderProfile,
+    getTranslationProvider: (profile) =>
+      translationProviderResolver.getTranslationProvider(profile),
+    detectSourceLanguage: (text, signal) =>
+      getChromeBuiltInAiOffscreenClient().detectLanguage(text, signal),
   });
 
   browser.runtime.onInstalled.addListener(() => {
@@ -329,6 +338,11 @@ export default defineBackground(() => {
             sendToContent: (targetTabId, message) =>
               sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
           });
+          return { type: "backgroundActionResult", success: true };
+        case "translateSubtitleBatch":
+          return subtitleTranslationService.translateBatch(request);
+        case "cancelSubtitleRequests":
+          subtitleTranslationService.cancel(request.runtimeSessionId);
           return { type: "backgroundActionResult", success: true };
         case "openOptions":
           await openOptionsPage({
