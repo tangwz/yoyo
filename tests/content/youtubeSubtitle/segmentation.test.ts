@@ -276,6 +276,24 @@ describe("segmentSubtitleCues", () => {
     expect(validateSubtitleSegments(cues, segments).valid).toBe(true);
   });
 
+  it("keeps full cue coverage when duration chunks exceed text units", () => {
+    const cues = [cue(0, 0, 6000, "Hi")];
+    const segments = segmentSubtitleCues(cues, {
+      sourceLanguage: { kind: "known", code: "en" },
+      maxDurationMs: 1000,
+      maxWords: 10,
+    });
+
+    expect(segments.map((segment) => segment.sourceText)).toEqual(["Hi"]);
+    expect(segments.map((segment) => [segment.startMs, segment.endMs])).toEqual([
+      [0, 6000],
+    ]);
+    expect(validateSubtitleSegments(cues, segments).valid).toBe(true);
+    expect(
+      validateSubtitleSegments(cues, segments, { maxDurationMs: 1000 }).valid,
+    ).toBe(false);
+  });
+
   it("builds stable hash-based segment ids", () => {
     const cues = [cue(0, 0, 1000, "Hello world.")];
     const first = segmentSubtitleCues(cues, {

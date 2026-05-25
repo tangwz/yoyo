@@ -188,24 +188,19 @@ function buildSingleCueSegments(
   const safeMaxUnits = Math.max(1, maxUnits);
   const units = splitTextIntoUnits(cue.text, characterStrategy);
   const durationMs = cue.endMs - cue.startMs;
-  const chunkCount = Math.max(
+  const requestedChunkCount = Math.max(
     Math.ceil(durationMs / safeMaxDurationMs),
     Math.ceil(units.length / safeMaxUnits),
   );
+  const chunkCount = Math.min(requestedChunkCount, Math.max(1, units.length));
 
   if (chunkCount <= 1) {
     return [buildSegment([cue], characterStrategy)];
   }
 
-  const textChunks =
-    chunkCount <= units.length
-      ? splitUnitsEvenly(units, chunkCount).map((chunk) =>
-          joinUnits(chunk, characterStrategy),
-        )
-      : splitUnitsEvenly(
-          Array.from(cue.text).filter((char) => char.trim()),
-          chunkCount,
-        ).map((chunk) => chunk.join(""));
+  const textChunks = splitUnitsEvenly(units, chunkCount)
+    .map((chunk) => joinUnits(chunk, characterStrategy))
+    .filter(Boolean);
 
   return textChunks
     .map((sourceText, index) => {
