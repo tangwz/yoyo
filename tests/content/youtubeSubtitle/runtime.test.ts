@@ -37,6 +37,9 @@ function createRuntimeHarness(options: {
   preferences?: SubtitlePreferences;
   currentUrl?: string;
   loadPreferences?: () => Promise<SubtitlePreferences>;
+  sendBackgroundMessage?: (
+    message: BackgroundRequest,
+  ) => Promise<BackgroundResponse>;
 } = {}): {
   runtime: TestRuntime;
   preferences: SubtitlePreferences;
@@ -59,6 +62,9 @@ function createRuntimeHarness(options: {
     },
     sendBackgroundMessage: vi.fn(async (message) => {
       sentMessages.push(message);
+      if (options.sendBackgroundMessage) {
+        return options.sendBackgroundMessage(message);
+      }
       return { type: "backgroundActionResult", success: true };
     }) as (message: BackgroundRequest) => Promise<BackgroundResponse>,
     getCurrentUrl: () => currentUrl,
@@ -201,13 +207,22 @@ describe("createYouTubeSubtitleRuntime", () => {
     await runtime.destroy();
     await runtime.destroy();
 
-    expect(sentMessages.at(-1)).toEqual({
-      type: "cancelSubtitleRequests",
-      runtimeSessionId: "youtube-subtitle-session-2",
-      reason: "pageUnloaded",
-    });
+    expect(sentMessages).toHaveLength(1);
     expect(mountedOverlay()).toBeNull();
     expect(mountedButtons()).toHaveLength(0);
+  });
+
+  it("ignores repeated stop calls after the active session is already cancelled", async () => {
+    createPlayerDom();
+    const { runtime, sentMessages } = createRuntimeHarness();
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await runtime.stop("configChanged");
+    await runtime.stop("configChanged");
+
+    expect(sentMessages).toHaveLength(1);
+    expect(runtime.getState().runtimeSessionId).toBe("youtube-subtitle-session-2");
   });
 
   it("remounts after YouTube recreates player controls", async () => {
@@ -247,6 +262,66 @@ describe("createYouTubeSubtitleRuntime", () => {
     expect(runtime.getState().runtimeSessionId).toBe("youtube-subtitle-session-2");
     expect(buttonStatus()).toBe("enabled");
     expect(mountedOverlay()).not.toBeNull();
+  });
+
+  it("keeps local disable state when background cancel rejects", async () => {
+    createPlayerDom();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { runtime, savedPreferences } = createRuntimeHarness({
+      sendBackgroundMessage: async () => {
+        throw new Error("Cancel failed.");
+      },
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    mountedButton().click();
+    await flushRuntime();
+
+    expect(savedPreferences.at(-1)?.youtubeEnabled).toBe(false);
+    expect(runtime.getState().runtimeSessionId).toBe("youtube-subtitle-session-2");
+    expect(buttonStatus()).toBe("disabled");
+    expect(mountedOverlay()).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps local video-change invalidation when background cancel rejects", async () => {
+    createPlayerDom();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { runtime, setCurrentUrl } = createRuntimeHarness({
+      sendBackgroundMessage: async () => {
+        throw new Error("Cancel failed.");
+      },
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    setCurrentUrl("https://www.youtube.com/watch?v=video-b");
+    document.body.append(document.createElement("span"));
+    await flushRuntime();
+
+    expect(runtime.getState().runtimeSessionId).toBe("youtube-subtitle-session-2");
+    expect(buttonStatus()).toBe("enabled");
+    expect(mountedOverlay()).not.toBeNull();
+  });
+
+  it("removes UI and ignores later stop calls when destroy cancellation rejects", async () => {
+    createPlayerDom();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { runtime, sentMessages } = createRuntimeHarness({
+      sendBackgroundMessage: async () => {
+        throw new Error("Cancel failed.");
+      },
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await runtime.destroy();
+    await runtime.stop("configChanged");
+
+    expect(sentMessages).toHaveLength(1);
+    expect(mountedButtons()).toHaveLength(0);
+    expect(mountedOverlay()).toBeNull();
   });
 
   it("does not mount observers or UI after destroy wins a pending start", async () => {

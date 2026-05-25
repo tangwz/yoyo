@@ -76,6 +76,7 @@ export function createYouTubeSubtitleRuntime(
 
   let preferences: SubtitlePreferences | undefined;
   let started = false;
+  let cancellableSession = false;
   let destroyed = false;
   let stopped = false;
   let startPromise: Promise<void> | undefined;
@@ -108,6 +109,7 @@ export function createYouTubeSubtitleRuntime(
       sessionCache = new SubtitleSessionCache();
       videoKey = readVideoKey(getCurrentUrl());
       started = true;
+      cancellableSession = true;
       stopped = false;
       ensureObserver();
       await reconcile();
@@ -117,6 +119,9 @@ export function createYouTubeSubtitleRuntime(
   }
 
   async function stop(reason: YouTubeSubtitleStopReason): Promise<void> {
+    if (destroyed) {
+      return;
+    }
     await stopSession(reason, true);
   }
 
@@ -124,7 +129,7 @@ export function createYouTubeSubtitleRuntime(
     reason: YouTubeSubtitleStopReason,
     suspendRuntime: boolean,
   ): Promise<void> {
-    if (!started && !startPromise) {
+    if (!cancellableSession) {
       return;
     }
 
@@ -136,13 +141,27 @@ export function createYouTubeSubtitleRuntime(
     scheduler.clearInFlight();
     sessionCache.clear();
 
-    await dependencies.sendBackgroundMessage({
-      type: "cancelSubtitleRequests",
-      runtimeSessionId: currentRuntimeSessionId(),
-      reason,
-    });
-
+    const cancelledRuntimeSessionId = currentRuntimeSessionId();
+    cancellableSession = false;
     advanceSession();
+
+    try {
+      await dependencies.sendBackgroundMessage({
+        type: "cancelSubtitleRequests",
+        runtimeSessionId: cancelledRuntimeSessionId,
+        reason,
+      });
+    } catch (error) {
+      console.warn("[yoyo] failed to cancel YouTube subtitle requests", {
+        error,
+        reason,
+        runtimeSessionId: cancelledRuntimeSessionId,
+      });
+    } finally {
+      if (!suspendRuntime && !destroyed) {
+        cancellableSession = true;
+      }
+    }
   }
 
   async function destroy(): Promise<void> {
@@ -159,6 +178,7 @@ export function createYouTubeSubtitleRuntime(
     overlay?.destroy();
     overlay = undefined;
     started = false;
+    cancellableSession = false;
   }
 
   async function reconcile(): Promise<void> {
@@ -235,6 +255,7 @@ export function createYouTubeSubtitleRuntime(
     await dependencies.subtitlePreferences.save(preferences);
     stopped = false;
     advanceSession();
+    cancellableSession = true;
     await reconcile();
   }
 
