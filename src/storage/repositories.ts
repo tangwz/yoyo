@@ -270,7 +270,7 @@ export type StorageRepositories = {
   providers: ReturnType<typeof providerProfileRepository>;
   uiPreferences: ReturnType<typeof uiPreferenceRepository>;
   translationPreferences: ReturnType<typeof translationPreferenceRepository>;
-  subtitlePreferences?: ReturnType<typeof subtitlePreferenceRepository>;
+  subtitlePreferences: ReturnType<typeof subtitlePreferenceRepository>;
 };
 
 export function createStorageRepositories(): StorageRepositories {
