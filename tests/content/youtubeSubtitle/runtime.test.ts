@@ -4,6 +4,7 @@ import {
   type YouTubeCaptionPayloadResult,
   type YouTubeSubtitleRuntimeDependencies,
 } from "@/content/youtubeSubtitle/runtime";
+import { buildTrackKey } from "@/content/youtubeSubtitle/trackSelection";
 import type {
   BackgroundRequest,
   BackgroundResponse,
@@ -46,6 +47,8 @@ function createRuntimeHarness(options: {
     message: BackgroundRequest,
   ) => Promise<BackgroundResponse>;
   fetchCaptionPayload?: () => Promise<YouTubeCaptionPayloadResult | undefined>;
+  getCaptionTrackKey?: () => Promise<string | undefined>;
+  createRuntimeSessionIdBase?: () => string;
 } = {}): {
   runtime: TestRuntime;
   preferences: SubtitlePreferences;
@@ -76,6 +79,12 @@ function createRuntimeHarness(options: {
     fetchCaptionPayload: vi.fn(
       options.fetchCaptionPayload ?? createCaptionPayload,
     ),
+    getCaptionTrackKey: options.getCaptionTrackKey
+      ? vi.fn(options.getCaptionTrackKey)
+      : undefined,
+    createRuntimeSessionIdBase:
+      options.createRuntimeSessionIdBase ??
+      (() => "youtube-subtitle-session"),
     getCurrentUrl: () => currentUrl,
   };
 
@@ -303,6 +312,97 @@ describe("createYouTubeSubtitleRuntime", () => {
     });
     expect(mountedOverlay()?.textContent).toContain("Hello world.");
     expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
+  });
+
+  it("uses unique runtime session ids by default", () => {
+    createPlayerDom();
+    const dependencies: YouTubeSubtitleRuntimeDependencies = {
+      subtitlePreferences: {
+        get: vi.fn(async () => createPreferences()),
+        save: vi.fn(),
+      },
+      sendBackgroundMessage: vi.fn(async (message: BackgroundRequest) =>
+        createBackgroundResponse(message),
+      ),
+      fetchCaptionPayload: vi.fn(createCaptionPayload),
+      getCurrentUrl: () => "https://www.youtube.com/watch?v=video-a",
+    };
+    const first = createYouTubeSubtitleRuntime(dependencies);
+    const second = createYouTubeSubtitleRuntime(dependencies);
+    trackRuntime(first);
+    trackRuntime(second);
+
+    expect(first.getState().runtimeSessionId).not.toBe(
+      second.getState().runtimeSessionId,
+    );
+  });
+
+  it("skips provider translation when source language already matches target language", async () => {
+    createPlayerDom();
+    const { runtime, sentMessages } = createRuntimeHarness({
+      sendBackgroundMessage: async (message) => {
+        if (message.type === "getSubtitleRuntimeConfig") {
+          return {
+            type: "subtitleRuntimeConfig",
+            configured: true,
+            providerId: "test-provider",
+            modelKey: "test-model",
+            targetLanguage: "en",
+          };
+        }
+        return createBackgroundResponse(message);
+      },
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    expect(translateMessages(sentMessages)).toHaveLength(0);
+    expect(mountedOverlay()?.textContent).toContain("Hello world.");
+  });
+
+  it("reinitializes the pipeline when the active caption track changes", async () => {
+    createPlayerDom();
+    let track = {
+      languageCode: "en",
+      kind: "asr",
+      name: "English",
+      baseUrl: "https://www.youtube.com/api/timedtext?v=video-a&lang=en",
+    };
+    const { runtime, sentMessages } = createRuntimeHarness({
+      fetchCaptionPayload: async () => ({
+        ...(await createCaptionPayload()),
+        track,
+      }),
+      getCaptionTrackKey: async () => buildTrackKey("video-a", track),
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+    track = {
+      languageCode: "ja",
+      kind: "manual",
+      name: "Japanese",
+      baseUrl: "https://www.youtube.com/api/timedtext?v=video-a&lang=ja",
+    };
+    document.body.append(document.createElement("span"));
+    await flushRuntime();
+
+    expect(cancelMessages(sentMessages)).toContainEqual({
+      type: "cancelSubtitleRequests",
+      runtimeSessionId: "youtube-subtitle-session-1",
+      reason: "configChanged",
+    });
+    expect(runtime.getState()).toMatchObject({
+      runtimeSessionId: "youtube-subtitle-session-2",
+      configVersion: 2,
+    });
+    expect(translateMessages(sentMessages).at(-1)).toMatchObject({
+      runtimeSessionId: "youtube-subtitle-session-2",
+      configVersion: 2,
+    });
   });
 
   it("uses AI segmentation when the subtitle preference is enabled", async () => {

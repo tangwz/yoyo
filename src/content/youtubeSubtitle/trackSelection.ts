@@ -11,6 +11,7 @@ export type YouTubeCaptionTrack = {
 type TrackPreference = {
   languageCode?: string;
   kind?: string | null;
+  vssId?: string;
 };
 
 function isChatTrack(track: YouTubeCaptionTrack): boolean {
@@ -46,11 +47,15 @@ export function selectCaptionTrack(
   preference: TrackPreference = {},
 ): YouTubeCaptionTrack | undefined {
   const usableTracks = tracks.filter((track) => !isChatTrack(track));
+  const sameVssIdTrack = usableTracks.find(
+    (track) => preference.vssId && track.vssId === preference.vssId,
+  );
   const sameLanguageTracks = usableTracks.filter(
     (track) => track.languageCode === preference.languageCode,
   );
   const preferredKind = preference.kind ?? null;
   return (
+    sameVssIdTrack ??
     usableTracks.find(
       (track) =>
         track.languageCode === preference.languageCode &&

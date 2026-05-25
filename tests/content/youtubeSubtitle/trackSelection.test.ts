@@ -61,6 +61,18 @@ describe("trackSelection", () => {
     expect(track?.name).toBe("English manual");
   });
 
+  it("honors the active track vssId before language fallback", () => {
+    const track = selectCaptionTrack(
+      [
+        { languageCode: "en", name: "English manual", vssId: ".en" },
+        { languageCode: "ja", name: "Japanese manual", vssId: ".ja" },
+      ],
+      { languageCode: "en", vssId: ".ja" },
+    );
+
+    expect(track?.name).toBe("Japanese manual");
+  });
+
   it("falls back to the first usable track when no same-language track exists", () => {
     const track = selectCaptionTrack(
       [

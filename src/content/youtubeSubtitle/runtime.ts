@@ -67,6 +67,10 @@ export type YouTubeSubtitleRuntimeDependencies = {
   fetchCaptionPayload?: (
     request: YouTubeCaptionPayloadRequest,
   ) => Promise<YouTubeCaptionPayloadResult | undefined>;
+  getCaptionTrackKey?: (
+    request: YouTubeCaptionPayloadRequest,
+  ) => Promise<string | undefined>;
+  createRuntimeSessionIdBase?: () => string;
   document?: Document;
   getCurrentUrl?: () => string;
   createMutationObserver?: (callback: MutationCallback) => MutationObserver;
@@ -127,6 +131,9 @@ export function createYouTubeSubtitleRuntime(
   let button: YoutubeSubtitlePlayerButton | undefined;
   let buttonStatus: YoutubeSubtitlePlayerButtonStatus | undefined;
   let overlay: YoutubeSubtitleOverlay | undefined;
+  const runtimeSessionIdBase =
+    dependencies.createRuntimeSessionIdBase?.() ??
+    `${SESSION_ID_PREFIX}-${crypto.randomUUID()}`;
   let sessionIndex = 1;
   let configVersion = 1;
   let videoKey = readVideoKey(getCurrentUrl());
@@ -391,7 +398,7 @@ export function createYouTubeSubtitleRuntime(
   };
 
   function currentRuntimeSessionId(): string {
-    return `${SESSION_ID_PREFIX}-${sessionIndex}`;
+    return `${runtimeSessionIdBase}-${sessionIndex}`;
   }
 
   async function ensurePipeline(player: HTMLElement): Promise<void> {
@@ -404,6 +411,22 @@ export function createYouTubeSubtitleRuntime(
       pipeline.configVersion === configVersion &&
       pipeline.videoKey === videoKey
     ) {
+      const activePipeline = pipeline;
+      const currentTrackKey = await dependencies.getCaptionTrackKey?.({
+        runtimeSessionId: activePipeline.runtimeSessionId,
+        configVersion: activePipeline.configVersion,
+        videoKey: activePipeline.videoKey,
+      });
+      if (currentTrackKey && currentTrackKey !== activePipeline.trackKey) {
+        const cancelledRuntimeSessionId = currentRuntimeSessionId();
+        advanceSession();
+        void dependencies.sendBackgroundMessage({
+          type: "cancelSubtitleRequests",
+          runtimeSessionId: cancelledRuntimeSessionId,
+          reason: "configChanged",
+        }).catch(() => undefined);
+        return ensurePipeline(player);
+      }
       renderActiveSubtitle();
       scheduleTranslations();
       return;
@@ -605,6 +628,19 @@ export function createYouTubeSubtitleRuntime(
       renderActiveSubtitle();
     }
     if (missingSegments.length === 0) {
+      return;
+    }
+
+    if (sourceMatchesTarget(active)) {
+      for (const segment of missingSegments) {
+        active.translations.set(segment.segmentId, segment.sourceText);
+        sessionCache.set(cacheKey(active, segment), segment.sourceText);
+      }
+      scheduler.markTranslated(
+        requestId,
+        missingSegments.map((segment) => segment.segmentId),
+      );
+      renderActiveSubtitle();
       return;
     }
 
@@ -834,6 +870,18 @@ function sourceLanguageFromTrack(track: YouTubeCaptionTrack): SubtitleSourceLang
 
 function currentVideoTimeMs(pipeline: ActivePipeline): number {
   return Math.max(0, Math.round((pipeline.video?.currentTime ?? 0) * 1000));
+}
+
+function sourceMatchesTarget(pipeline: ActivePipeline): boolean {
+  return (
+    pipeline.sourceLanguage.kind === "known" &&
+    normalizeLanguageCode(pipeline.sourceLanguage.code) ===
+      normalizeLanguageCode(pipeline.targetLanguage)
+  );
+}
+
+function normalizeLanguageCode(languageCode: string): string {
+  return languageCode.trim().replace(/_/g, "-").toLowerCase();
 }
 
 function cacheKey(pipeline: ActivePipeline, segment: SubtitleSegment): string {
