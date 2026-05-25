@@ -304,4 +304,14 @@ describe("segmentSubtitleCues", () => {
       ]).valid,
     ).toBe(false);
   });
+
+  it("rejects segment timing that is not derived from source cue boundaries", () => {
+    const cues = [cue(0, 0, 1000, "One."), cue(1, 1000, 2000, "Two.")];
+    const invalidTiming = {
+      ...segment(0, 1, cues),
+      endMs: 1900,
+    };
+
+    expect(validateSubtitleSegments(cues, [invalidTiming]).valid).toBe(false);
+  });
 });
