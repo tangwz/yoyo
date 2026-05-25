@@ -14,6 +14,32 @@ type YouTubeJson3Payload = {
   events?: YouTubeJson3Event[];
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toJson3Payload(payload: unknown): YouTubeJson3Payload {
+  if (!isRecord(payload) || !Array.isArray(payload.events)) {
+    return {};
+  }
+
+  return {
+    events: payload.events
+      .filter(isRecord)
+      .map((event) => ({
+        tStartMs:
+          typeof event.tStartMs === "number" ? event.tStartMs : undefined,
+        dDurationMs:
+          typeof event.dDurationMs === "number" ? event.dDurationMs : undefined,
+        segs: Array.isArray(event.segs)
+          ? event.segs.filter(isRecord).map((segment) => ({
+              utf8: typeof segment.utf8 === "string" ? segment.utf8 : undefined,
+            }))
+          : undefined,
+      })),
+  };
+}
+
 function cleanCueText(text: string): string {
   return text
     .replace(/<[^>]+>/g, "")
@@ -21,12 +47,11 @@ function cleanCueText(text: string): string {
     .trim();
 }
 
-export function parseYouTubeJson3Cues(
-  payload: YouTubeJson3Payload,
-): SubtitleCue[] {
+export function parseYouTubeJson3Cues(payload: unknown): SubtitleCue[] {
+  const json3Payload = toJson3Payload(payload);
   const cues: SubtitleCue[] = [];
 
-  for (const event of payload.events ?? []) {
+  for (const event of json3Payload.events ?? []) {
     const startMs = event.tStartMs ?? 0;
     const durationMs = event.dDurationMs ?? 0;
     const endMs = startMs + durationMs;

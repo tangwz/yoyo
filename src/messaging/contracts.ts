@@ -135,6 +135,7 @@ export type BackgroundRequest =
     }
   | { type: "getTaskForTab"; tabId: number }
   | { type: "getProviderStatus" }
+  | { type: "getSubtitleRuntimeConfig" }
   | {
       type: "openOptions";
       section?: OptionsSection;
@@ -222,6 +223,19 @@ export type BackgroundResponse =
       requestId: string;
       message: string;
       retryable: boolean;
+    }
+  | {
+      type: "subtitleRuntimeConfig";
+      configured: true;
+      providerId: string;
+      modelKey: string;
+      targetLanguage: string;
+    }
+  | {
+      type: "subtitleRuntimeConfig";
+      configured: false;
+      targetLanguage: string;
+      message: string;
     }
   | {
       type: "segmentSubtitleChunkResult";

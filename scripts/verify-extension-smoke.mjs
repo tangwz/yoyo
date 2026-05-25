@@ -13,6 +13,7 @@ const detachBrowser = process.env.YOYO_SMOKE_DETACH_BROWSER === "1";
 const baseUrlLabel = /^(Base URL|接口地址)$/;
 const apiKeyLabel = /^(API key|API Key|访问密钥)$/;
 const textModelLabel = /^(Text model|Text Model|文本模型)$/;
+const openAiCompatibleProviderLabel = /^(OpenAI-compatible provider|OpenAI 兼容服务)$/;
 const promptProbe = {
   connectionTestPrompt: "",
   translationPrompts: [],
@@ -582,6 +583,12 @@ async function main() {
     );
     await firstRunPopupPage.close().catch(() => undefined);
 
+    const openAiProviderRadio = optionsPage.getByRole("radio", {
+      name: openAiCompatibleProviderLabel,
+    });
+    if (!(await openAiProviderRadio.isChecked())) {
+      await openAiProviderRadio.click();
+    }
     await optionsPage.getByLabel(baseUrlLabel).fill(providerServer.baseUrl);
     await optionsPage.getByLabel(apiKeyLabel).fill("smoke-test-key");
     await optionsPage.getByLabel(textModelLabel).fill("mock-model");

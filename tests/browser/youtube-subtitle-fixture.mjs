@@ -97,16 +97,100 @@ const timedTextJson = {
   ],
 };
 
+function readJsonBody(request) {
+  return new Promise((resolveBody, rejectBody) => {
+    let raw = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      raw += chunk;
+    });
+    request.on("end", () => {
+      try {
+        resolveBody(JSON.parse(raw || "{}"));
+      } catch (error) {
+        rejectBody(error);
+      }
+    });
+    request.on("error", rejectBody);
+  });
+}
+
+function extractPromptItems(prompt) {
+  const inputIndex = prompt.lastIndexOf("Input:");
+  if (inputIndex === -1) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(prompt.slice(inputIndex + "Input:".length).trim());
+    if (!Array.isArray(parsed.items)) {
+      return [];
+    }
+
+    return parsed.items
+      .map((item) => {
+        const id = item?.segmentId ?? item?.id;
+        if (typeof id !== "string" || id === "...") {
+          return undefined;
+        }
+
+        return {
+          id,
+          text: typeof item?.text === "string" ? item.text : id,
+        };
+      })
+      .filter((item) => item !== undefined);
+  } catch {
+    return [];
+  }
+}
+
 export function startYouTubeSubtitleFixtureServer() {
-  const server = createServer((request, response) => {
+  const probe = {
+    timedTextRequests: 0,
+    providerRequests: [],
+  };
+
+  const server = createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
 
     if (requestUrl.pathname === "/api/timedtext") {
+      probe.timedTextRequests += 1;
       response.writeHead(200, {
         "content-type": "application/json; charset=utf-8",
         "cache-control": "no-store",
       });
       response.end(JSON.stringify(timedTextJson));
+      return;
+    }
+
+    if (request.method === "POST" && requestUrl.pathname === "/v1/chat/completions") {
+      try {
+        const body = await readJsonBody(request);
+        const prompt = body.messages?.[0]?.content ?? "";
+        const items = extractPromptItems(prompt).map((item) => ({
+          id: item.id,
+          text: `[translated ${item.text}]`,
+        }));
+        probe.providerRequests.push({ prompt, items });
+
+        response.writeHead(200, {
+          "content-type": "application/json; charset=utf-8",
+          "cache-control": "no-store",
+        });
+        response.end(
+          JSON.stringify({
+            model: body.model ?? "fixture-model",
+            choices: [{ message: { content: JSON.stringify({ items }) } }],
+          }),
+        );
+      } catch (error) {
+        response.writeHead(500, {
+          "content-type": "text/plain; charset=utf-8",
+          "cache-control": "no-store",
+        });
+        response.end(error instanceof Error ? error.message : "Provider failed");
+      }
       return;
     }
 
@@ -135,6 +219,10 @@ export function startYouTubeSubtitleFixtureServer() {
 
       resolveServer({
         url: `${baseUrl}/watch?v=fixture&yoyoSubtitleFixture=1`,
+        providerBaseUrl: `${baseUrl}/v1`,
+        getTimedTextRequestCount: () => probe.timedTextRequests,
+        getProviderRequestCount: () => probe.providerRequests.length,
+        getLastProviderRequest: () => probe.providerRequests.at(-1),
         close: () => new Promise((resolveClose) => server.close(resolveClose)),
       });
     });

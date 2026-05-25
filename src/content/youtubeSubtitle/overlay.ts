@@ -33,6 +33,7 @@ class YoutubeSubtitleOverlayHandle implements YoutubeSubtitleOverlay {
   private readonly player: HTMLElement;
   private readonly originalInlinePosition: string;
   private readonly ownsPlayerPosition: boolean;
+  private lastRenderKey: string | undefined;
 
   constructor(options: YoutubeSubtitleOverlayOptions) {
     this.player = options.player;
@@ -70,6 +71,12 @@ class YoutubeSubtitleOverlayHandle implements YoutubeSubtitleOverlay {
   }
 
   render(state: YoutubeSubtitleOverlayRenderState): void {
+    const renderKey = renderStateKey(state);
+    if (!this.element.hidden && this.lastRenderKey === renderKey) {
+      return;
+    }
+    this.lastRenderKey = renderKey;
+
     this.element.replaceChildren();
     this.element.append(createLine("source", state.sourceText));
 
@@ -87,6 +94,7 @@ class YoutubeSubtitleOverlayHandle implements YoutubeSubtitleOverlay {
   }
 
   hide(): void {
+    this.lastRenderKey = undefined;
     this.element.hidden = true;
   }
 
@@ -101,6 +109,18 @@ class YoutubeSubtitleOverlayHandle implements YoutubeSubtitleOverlay {
       delete this.player.dataset.yoyoYoutubeSubtitlePositioned;
     }
   }
+}
+
+function renderStateKey(state: YoutubeSubtitleOverlayRenderState): string {
+  if (state.state === "translated") {
+    return `${state.state}\n${state.sourceText}\n${state.translatedText}`;
+  }
+
+  if (state.state === "failed") {
+    return `${state.state}\n${state.sourceText}\n${state.errorText ?? ""}`;
+  }
+
+  return `${state.state}\n${state.sourceText}`;
 }
 
 export function mountYoutubeSubtitleOverlay(

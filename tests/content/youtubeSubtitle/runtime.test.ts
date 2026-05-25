@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createYouTubeSubtitleRuntime,
+  type YouTubeCaptionPayloadResult,
   type YouTubeSubtitleRuntimeDependencies,
 } from "@/content/youtubeSubtitle/runtime";
 import type {
@@ -9,6 +10,7 @@ import type {
 } from "@/messaging/contracts";
 import {
   defaultSubtitlePreferences,
+  type SubtitleCue,
   type SubtitlePreferences,
 } from "@/subtitle/types";
 
@@ -17,6 +19,9 @@ type TestRuntime = ReturnType<typeof createYouTubeSubtitleRuntime>;
 function createPlayerDom(): HTMLElement {
   const player = document.createElement("div");
   player.id = "movie_player";
+  const video = document.createElement("video");
+  video.currentTime = 0;
+  player.append(video);
   const controls = document.createElement("div");
   controls.className = "ytp-right-controls";
   player.append(controls);
@@ -40,6 +45,7 @@ function createRuntimeHarness(options: {
   sendBackgroundMessage?: (
     message: BackgroundRequest,
   ) => Promise<BackgroundResponse>;
+  fetchCaptionPayload?: () => Promise<YouTubeCaptionPayloadResult | undefined>;
 } = {}): {
   runtime: TestRuntime;
   preferences: SubtitlePreferences;
@@ -65,8 +71,11 @@ function createRuntimeHarness(options: {
       if (options.sendBackgroundMessage) {
         return options.sendBackgroundMessage(message);
       }
-      return { type: "backgroundActionResult", success: true };
+      return createBackgroundResponse(message);
     }) as (message: BackgroundRequest) => Promise<BackgroundResponse>,
+    fetchCaptionPayload: vi.fn(
+      options.fetchCaptionPayload ?? createCaptionPayload,
+    ),
     getCurrentUrl: () => currentUrl,
   };
 
@@ -84,9 +93,130 @@ function createRuntimeHarness(options: {
 }
 
 async function flushRuntime(): Promise<void> {
-  for (let index = 0; index < 10; index += 1) {
+  for (let index = 0; index < 20; index += 1) {
     await Promise.resolve();
   }
+}
+
+function createCaptionPayload(): Promise<YouTubeCaptionPayloadResult> {
+  return Promise.resolve({
+    payload: {
+      events: [
+        {
+          tStartMs: 0,
+          dDurationMs: 2000,
+          segs: [{ utf8: "Hello world." }],
+        },
+        {
+          tStartMs: 2500,
+          dDurationMs: 1800,
+          segs: [{ utf8: "Second cue." }],
+        },
+      ],
+    },
+    track: {
+      languageCode: "en",
+      kind: "asr",
+      name: "English",
+      baseUrl: "https://www.youtube.com/api/timedtext?v=video-a&lang=en",
+    },
+    sourceLanguage: { kind: "known", code: "en" },
+  });
+}
+
+function createBackgroundResponse(
+  message: BackgroundRequest,
+): BackgroundResponse {
+  if (message.type === "getSubtitleRuntimeConfig") {
+    return {
+      type: "subtitleRuntimeConfig",
+      configured: true,
+      providerId: "test-provider",
+      modelKey: "test-model",
+      targetLanguage: "zh-CN",
+    };
+  }
+
+  if (message.type === "translateSubtitleBatch") {
+    return {
+      type: "subtitleTranslateBatchResult",
+      runtimeSessionId: message.runtimeSessionId,
+      configVersion: message.configVersion,
+      requestId: message.requestId,
+      items: message.segments.map((segment) => ({
+        segmentId: segment.segmentId,
+        translatedText: `Translated: ${segment.sourceText}`,
+      })),
+    };
+  }
+
+  if (message.type === "segmentSubtitleChunk") {
+    const firstCue = message.sourceCues[0];
+    const lastCue = message.sourceCues.at(-1);
+    if (!firstCue || !lastCue) {
+      throw new Error("Expected source cues.");
+    }
+
+    return {
+      type: "segmentSubtitleChunkResult",
+      runtimeSessionId: message.runtimeSessionId,
+      configVersion: message.configVersion,
+      requestId: message.requestId,
+      segments: [
+        {
+          segmentId: "ai-segment-1",
+          sourceCueIds: message.sourceCues.map((cue: SubtitleCue) => cue.cueId),
+          sourceCueStartIndex: firstCue.index,
+          sourceCueEndIndex: lastCue.index,
+          startMs: firstCue.startMs,
+          endMs: lastCue.endMs,
+          sourceText: "AI segmented text.",
+          textHash: "ai-segmented-text",
+        },
+      ],
+    };
+  }
+
+  return { type: "backgroundActionResult", success: true };
+}
+
+function cancelMessages(
+  messages: readonly BackgroundRequest[],
+): Extract<BackgroundRequest, { type: "cancelSubtitleRequests" }>[] {
+  return messages.filter(
+    (
+      message,
+    ): message is Extract<
+      BackgroundRequest,
+      { type: "cancelSubtitleRequests" }
+    > => message.type === "cancelSubtitleRequests",
+  );
+}
+
+function translateMessages(
+  messages: readonly BackgroundRequest[],
+): Extract<BackgroundRequest, { type: "translateSubtitleBatch" }>[] {
+  return messages.filter(
+    (
+      message,
+    ): message is Extract<
+      BackgroundRequest,
+      { type: "translateSubtitleBatch" }
+    > => message.type === "translateSubtitleBatch",
+  );
+}
+
+function segmentationMessages(
+  messages: readonly BackgroundRequest[],
+): Extract<BackgroundRequest, { type: "segmentSubtitleChunk" }>[] {
+  return messages.filter(
+    (
+      message,
+    ): message is Extract<
+      BackgroundRequest,
+      { type: "segmentSubtitleChunk" }
+    > => message.type === "segmentSubtitleChunk",
+  );
 }
 
 function mountedButtons(): NodeListOf<HTMLButtonElement> {
@@ -142,10 +272,140 @@ describe("createYouTubeSubtitleRuntime", () => {
 
     await runtime.start();
     await runtime.start();
+    await flushRuntime();
 
     expect(mountedButtons()).toHaveLength(1);
     expect(buttonStatus()).toBe("enabled");
     expect(mountedOverlay()).not.toBeNull();
+  });
+
+  it("fetches captions, translates a window, and renders the active bilingual segment", async () => {
+    createPlayerDom();
+    const { runtime, sentMessages } = createRuntimeHarness();
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    expect(translateMessages(sentMessages)).toHaveLength(1);
+    expect(translateMessages(sentMessages)[0]).toMatchObject({
+      type: "translateSubtitleBatch",
+      runtimeSessionId: "youtube-subtitle-session-1",
+      configVersion: 1,
+      videoId: "video-a",
+      sourceLanguage: { kind: "known", code: "en" },
+      targetLanguage: "zh-CN",
+      providerId: "test-provider",
+      modelKey: "test-model",
+      promptVersion: "subtitle-translation-v1",
+      segmentationVersion: "builtin-v1",
+      translationMode: "youtubeSubtitleRealtime",
+    });
+    expect(mountedOverlay()?.textContent).toContain("Hello world.");
+    expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
+  });
+
+  it("uses AI segmentation when the subtitle preference is enabled", async () => {
+    createPlayerDom();
+    const { runtime, sentMessages } = createRuntimeHarness({
+      preferences: createPreferences({ aiSegmentationEnabled: true }),
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    expect(segmentationMessages(sentMessages)).toHaveLength(1);
+    expect(segmentationMessages(sentMessages)[0]).toMatchObject({
+      type: "segmentSubtitleChunk",
+      runtimeSessionId: "youtube-subtitle-session-1",
+      configVersion: 1,
+      segmentationPromptVersion: "subtitle-segmentation-v1",
+      segmentationVersion: "ai-v1",
+    });
+    expect(translateMessages(sentMessages)[0]).toMatchObject({
+      type: "translateSubtitleBatch",
+      segmentationVersion: "ai-v1",
+      segments: [expect.objectContaining({ segmentId: "ai-segment-1" })],
+    });
+    expect(mountedOverlay()?.textContent).toContain("AI segmented text.");
+    expect(mountedOverlay()?.textContent).toContain(
+      "Translated: AI segmented text.",
+    );
+  });
+
+  it("falls back to built-in segmentation when AI segmentation fails", async () => {
+    createPlayerDom();
+    const { runtime, sentMessages } = createRuntimeHarness({
+      preferences: createPreferences({ aiSegmentationEnabled: true }),
+      sendBackgroundMessage: async (message) => {
+        if (message.type === "segmentSubtitleChunk") {
+          return {
+            type: "segmentSubtitleChunkError",
+            runtimeSessionId: message.runtimeSessionId,
+            configVersion: message.configVersion,
+            requestId: message.requestId,
+            message: "AI segmentation failed.",
+            fallbackRequired: true,
+          };
+        }
+        return createBackgroundResponse(message);
+      },
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    expect(segmentationMessages(sentMessages)).toHaveLength(1);
+    expect(translateMessages(sentMessages)[0]).toMatchObject({
+      type: "translateSubtitleBatch",
+      segmentationVersion: "builtin-v1",
+    });
+    expect(mountedOverlay()?.textContent).toContain("Hello world.");
+    expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
+  });
+
+  it("ignores stale AI segmentation responses before falling back", async () => {
+    createPlayerDom();
+    const { runtime, sentMessages } = createRuntimeHarness({
+      preferences: createPreferences({ aiSegmentationEnabled: true }),
+      sendBackgroundMessage: async (message) => {
+        if (message.type === "segmentSubtitleChunk") {
+          return {
+            type: "segmentSubtitleChunkResult",
+            runtimeSessionId: message.runtimeSessionId,
+            configVersion: message.configVersion + 1,
+            requestId: message.requestId,
+            segments: [
+              {
+                segmentId: "stale-ai-segment",
+                sourceCueIds: ["cue-1"],
+                sourceCueStartIndex: 0,
+                sourceCueEndIndex: 0,
+                startMs: 0,
+                endMs: 2000,
+                sourceText: "Stale AI text.",
+                textHash: "stale-ai-text",
+              },
+            ],
+          };
+        }
+        return createBackgroundResponse(message);
+      },
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    expect(segmentationMessages(sentMessages)).toHaveLength(1);
+    expect(translateMessages(sentMessages)[0]).toMatchObject({
+      type: "translateSubtitleBatch",
+      segmentationVersion: "builtin-v1",
+    });
+    expect(mountedOverlay()?.textContent).not.toContain("Stale AI text.");
+    expect(mountedOverlay()?.textContent).toContain("Hello world.");
   });
 
   it("persists disabled preference and cancels the active session on click", async () => {
@@ -154,11 +414,12 @@ describe("createYouTubeSubtitleRuntime", () => {
     trackRuntime(runtime);
 
     await runtime.start();
+    await flushRuntime();
     mountedButton().click();
     await flushRuntime();
 
     expect(savedPreferences.at(-1)?.youtubeEnabled).toBe(false);
-    expect(sentMessages).toContainEqual({
+    expect(cancelMessages(sentMessages)).toContainEqual({
       type: "cancelSubtitleRequests",
       runtimeSessionId: "youtube-subtitle-session-1",
       reason: "userDisabled",
@@ -183,7 +444,7 @@ describe("createYouTubeSubtitleRuntime", () => {
     await flushRuntime();
 
     expect(savedPreferences.at(-1)?.youtubeEnabled).toBe(true);
-    expect(sentMessages).toHaveLength(0);
+    expect(cancelMessages(sentMessages)).toHaveLength(0);
     expect(buttonStatus()).toBe("enabled");
     expect(mountedOverlay()).not.toBeNull();
   });
@@ -194,9 +455,10 @@ describe("createYouTubeSubtitleRuntime", () => {
     trackRuntime(runtime);
 
     await runtime.start();
+    await flushRuntime();
     await runtime.stop("configChanged");
 
-    expect(sentMessages.at(-1)).toEqual({
+    expect(cancelMessages(sentMessages).at(-1)).toEqual({
       type: "cancelSubtitleRequests",
       runtimeSessionId: "youtube-subtitle-session-1",
       reason: "configChanged",
@@ -207,7 +469,7 @@ describe("createYouTubeSubtitleRuntime", () => {
     await runtime.destroy();
     await runtime.destroy();
 
-    expect(sentMessages).toHaveLength(1);
+    expect(cancelMessages(sentMessages)).toHaveLength(1);
     expect(mountedOverlay()).toBeNull();
     expect(mountedButtons()).toHaveLength(0);
   });
@@ -218,10 +480,11 @@ describe("createYouTubeSubtitleRuntime", () => {
     trackRuntime(runtime);
 
     await runtime.start();
+    await flushRuntime();
     await runtime.stop("configChanged");
     await runtime.stop("configChanged");
 
-    expect(sentMessages).toHaveLength(1);
+    expect(cancelMessages(sentMessages)).toHaveLength(1);
     expect(runtime.getState().runtimeSessionId).toBe("youtube-subtitle-session-2");
   });
 
@@ -231,6 +494,7 @@ describe("createYouTubeSubtitleRuntime", () => {
     trackRuntime(runtime);
 
     await runtime.start();
+    await flushRuntime();
     const firstButton = mountedButton();
     player.querySelector(".ytp-right-controls")?.remove();
 
@@ -250,11 +514,12 @@ describe("createYouTubeSubtitleRuntime", () => {
     trackRuntime(runtime);
 
     await runtime.start();
+    await flushRuntime();
     setCurrentUrl("https://www.youtube.com/watch?v=video-b");
     document.body.append(document.createElement("span"));
     await flushRuntime();
 
-    expect(sentMessages).toContainEqual({
+    expect(cancelMessages(sentMessages)).toContainEqual({
       type: "cancelSubtitleRequests",
       runtimeSessionId: "youtube-subtitle-session-1",
       reason: "videoChanged",
@@ -264,17 +529,68 @@ describe("createYouTubeSubtitleRuntime", () => {
     expect(mountedOverlay()).not.toBeNull();
   });
 
+  it("invalidates in-flight state when provider or language config changes", async () => {
+    createPlayerDom();
+    const { runtime, sentMessages } = createRuntimeHarness();
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+    await runtime.handleConfigChanged();
+    await flushRuntime();
+
+    expect(cancelMessages(sentMessages)).toContainEqual({
+      type: "cancelSubtitleRequests",
+      runtimeSessionId: "youtube-subtitle-session-1",
+      reason: "configChanged",
+    });
+    expect(runtime.getState()).toMatchObject({
+      runtimeSessionId: "youtube-subtitle-session-2",
+      configVersion: 2,
+      enabled: true,
+    });
+    expect(translateMessages(sentMessages).at(-1)).toMatchObject({
+      type: "translateSubtitleBatch",
+      runtimeSessionId: "youtube-subtitle-session-2",
+      configVersion: 2,
+    });
+    expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
+  });
+
+  it("reloads disabled subtitle preferences on config changes", async () => {
+    createPlayerDom();
+    const { runtime, preferences } = createRuntimeHarness();
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+    preferences.youtubeEnabled = false;
+    await runtime.handleConfigChanged();
+    await flushRuntime();
+
+    expect(runtime.getState()).toMatchObject({
+      enabled: false,
+      runtimeSessionId: "youtube-subtitle-session-2",
+    });
+    expect(buttonStatus()).toBe("disabled");
+    expect(mountedOverlay()).toBeNull();
+  });
+
   it("keeps local disable state when background cancel rejects", async () => {
     createPlayerDom();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { runtime, savedPreferences } = createRuntimeHarness({
-      sendBackgroundMessage: async () => {
-        throw new Error("Cancel failed.");
+      sendBackgroundMessage: async (message) => {
+        if (message.type === "cancelSubtitleRequests") {
+          throw new Error("Cancel failed.");
+        }
+        return createBackgroundResponse(message);
       },
     });
     trackRuntime(runtime);
 
     await runtime.start();
+    await flushRuntime();
     mountedButton().click();
     await flushRuntime();
 
@@ -289,13 +605,17 @@ describe("createYouTubeSubtitleRuntime", () => {
     createPlayerDom();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { runtime, setCurrentUrl } = createRuntimeHarness({
-      sendBackgroundMessage: async () => {
-        throw new Error("Cancel failed.");
+      sendBackgroundMessage: async (message) => {
+        if (message.type === "cancelSubtitleRequests") {
+          throw new Error("Cancel failed.");
+        }
+        return createBackgroundResponse(message);
       },
     });
     trackRuntime(runtime);
 
     await runtime.start();
+    await flushRuntime();
     setCurrentUrl("https://www.youtube.com/watch?v=video-b");
     document.body.append(document.createElement("span"));
     await flushRuntime();
@@ -309,17 +629,21 @@ describe("createYouTubeSubtitleRuntime", () => {
     createPlayerDom();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { runtime, sentMessages } = createRuntimeHarness({
-      sendBackgroundMessage: async () => {
-        throw new Error("Cancel failed.");
+      sendBackgroundMessage: async (message) => {
+        if (message.type === "cancelSubtitleRequests") {
+          throw new Error("Cancel failed.");
+        }
+        return createBackgroundResponse(message);
       },
     });
     trackRuntime(runtime);
 
     await runtime.start();
+    await flushRuntime();
     await runtime.destroy();
     await runtime.stop("configChanged");
 
-    expect(sentMessages).toHaveLength(1);
+    expect(cancelMessages(sentMessages)).toHaveLength(1);
     expect(mountedButtons()).toHaveLength(0);
     expect(mountedOverlay()).toBeNull();
   });

@@ -94,6 +94,31 @@ export default defineBackground(() => {
     return (await storage.translationPreferences.get()).mode;
   }
 
+  async function getSubtitleRuntimeConfig(): Promise<BackgroundResponse> {
+    const [targetLanguage, profile] = await Promise.all([
+      getStoredTargetLanguage(),
+      getActiveProfile(),
+    ]);
+
+    if (!profile) {
+      return {
+        type: "subtitleRuntimeConfig",
+        configured: false,
+        targetLanguage,
+        message: "No translation provider is configured.",
+      };
+    }
+
+    return {
+      type: "subtitleRuntimeConfig",
+      configured: true,
+      providerId: profile.id,
+      modelKey:
+        profile.type === "openai-compatible" ? profile.textModel : profile.id,
+      targetLanguage,
+    };
+  }
+
   async function getProviderProfile(providerId: string): Promise<ProviderProfile | undefined> {
     return selectReadyProviderProfile(await listProfiles(), providerId);
   }
@@ -325,6 +350,8 @@ export default defineBackground(() => {
           const { activeProviderId, profiles } = await loadStoredProviderState();
           return buildProviderStatusResponse(profiles, activeProviderId);
         }
+        case "getSubtitleRuntimeConfig":
+          return getSubtitleRuntimeConfig();
         case "translateSelection":
           await translateSelection(request, {
             getActiveProfile,

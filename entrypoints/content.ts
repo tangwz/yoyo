@@ -12,13 +12,26 @@ import {
 } from "@/content/pageRuntime";
 import { showSelectionTranslation } from "@/content/selectionPanel";
 import { showPageSummary } from "@/content/summaryPanel";
-import { createYouTubeSubtitleRuntime } from "@/content/youtubeSubtitle/runtime";
-import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
+import {
+  createYouTubeSubtitleRuntime,
+  type YouTubeCaptionPayloadResult,
+} from "@/content/youtubeSubtitle/runtime";
+import {
+  selectCaptionTrack,
+  type YouTubeCaptionTrack,
+} from "@/content/youtubeSubtitle/trackSelection";
+import type {
+  BackgroundRequest,
+  BackgroundResponse,
+  ContentRequest,
+  ContentResponse,
+} from "@/messaging/contracts";
 import {
   addRuntimeMessageListener,
   sendRuntimeMessage,
 } from "@/messaging/runtime";
 import { createStorageRepositories } from "@/storage/repositories";
+import { storageKeys } from "@/storage/storageKeys";
 
 function normalizeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -45,6 +58,132 @@ function isYouTubeSubtitleFixture(location: Location): boolean {
   );
 }
 
+type StorageChanges = Record<string, { oldValue?: unknown; newValue?: unknown }>;
+
+function isYouTubeSubtitleConfigChange(
+  changes: StorageChanges,
+  areaName: string,
+): boolean {
+  const relevantKeys =
+    areaName === "local"
+      ? [storageKeys.providerProfiles, storageKeys.activeProviderId]
+      : areaName === "sync"
+        ? [storageKeys.translationPreferences, storageKeys.subtitlePreferences]
+        : [];
+
+  return relevantKeys.some((key) => key in changes);
+}
+
+type YouTubePlayerResponse = {
+  captions?: {
+    playerCaptionsTracklistRenderer?: {
+      captionTracks?: YouTubeCaptionTrack[];
+    };
+  };
+};
+
+function readInitialPlayerResponse(): YouTubePlayerResponse | undefined {
+  const pageWindow = window as typeof window & {
+    ytInitialPlayerResponse?: YouTubePlayerResponse;
+  };
+  if (pageWindow.ytInitialPlayerResponse) {
+    return pageWindow.ytInitialPlayerResponse;
+  }
+
+  for (const script of document.scripts) {
+    const text = script.textContent ?? "";
+    const marker = "ytInitialPlayerResponse";
+    const markerIndex = text.indexOf(marker);
+    if (markerIndex < 0) {
+      continue;
+    }
+    const objectStart = text.indexOf("{", markerIndex);
+    if (objectStart < 0) {
+      continue;
+    }
+    const objectText = extractJsonObject(text, objectStart);
+    if (!objectText) {
+      continue;
+    }
+    try {
+      return JSON.parse(objectText) as YouTubePlayerResponse;
+    } catch {
+      continue;
+    }
+  }
+
+  return undefined;
+}
+
+function extractJsonObject(text: string, start: number): string | undefined {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    } else if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(start, index + 1);
+      }
+    }
+  }
+
+  return undefined;
+}
+
+async function fetchYoutubeCaptionPayload(): Promise<
+  YouTubeCaptionPayloadResult | undefined
+> {
+  if (isYouTubeSubtitleFixture(window.location)) {
+    const url = new URL("/api/timedtext", window.location.href);
+    return {
+      payload: await fetch(url).then((response) => response.json()),
+      track: {
+        languageCode: "en",
+        kind: "asr",
+        name: "Fixture English",
+        baseUrl: url.toString(),
+      },
+      sourceLanguage: { kind: "known", code: "en" },
+    };
+  }
+
+  const tracks =
+    readInitialPlayerResponse()?.captions?.playerCaptionsTracklistRenderer
+      ?.captionTracks ?? [];
+  const track = selectCaptionTrack(tracks);
+  if (!track?.baseUrl) {
+    return undefined;
+  }
+
+  const url = new URL(track.baseUrl);
+  url.searchParams.set("fmt", "json3");
+  return {
+    payload: await fetch(url).then((response) => response.json()),
+    track: { ...track, baseUrl: url.toString() },
+    sourceLanguage: track.languageCode
+      ? { kind: "known", code: track.languageCode }
+      : { kind: "unknown" },
+  };
+}
+
 export default defineContentScript({
   matches: ["<all_urls>"],
   main() {
@@ -57,11 +196,24 @@ export default defineContentScript({
       const repositories = createStorageRepositories();
       const youtubeSubtitleRuntime = createYouTubeSubtitleRuntime({
         subtitlePreferences: repositories.subtitlePreferences,
-        sendBackgroundMessage: sendRuntimeMessage,
+        sendBackgroundMessage: (message) =>
+          sendRuntimeMessage<BackgroundRequest, BackgroundResponse>(message),
+        fetchCaptionPayload: fetchYoutubeCaptionPayload,
       });
 
+      const handleSubtitleConfigStorageChange = (
+        changes: StorageChanges,
+        areaName: string,
+      ): void => {
+        if (isYouTubeSubtitleConfigChange(changes, areaName)) {
+          void youtubeSubtitleRuntime.handleConfigChanged();
+        }
+      };
+
       void youtubeSubtitleRuntime.start();
+      browser.storage.onChanged.addListener(handleSubtitleConfigStorageChange);
       window.addEventListener("pagehide", () => {
+        browser.storage.onChanged.removeListener(handleSubtitleConfigStorageChange);
         void youtubeSubtitleRuntime.destroy();
       });
     }
