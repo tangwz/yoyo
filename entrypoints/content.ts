@@ -36,12 +36,24 @@ function isYouTubeHost(hostname: string): boolean {
   return hostname === "youtube.com" || hostname === "www.youtube.com";
 }
 
+function isYouTubeSubtitleFixture(location: Location): boolean {
+  const fixtureHostnames = new Set(["localhost", "127.0.0.1"]);
+  const url = new URL(location.href);
+  return (
+    fixtureHostnames.has(url.hostname) &&
+    url.searchParams.get("yoyoSubtitleFixture") === "1"
+  );
+}
+
 export default defineContentScript({
   matches: ["<all_urls>"],
   main() {
     console.info("[yoyo] content script ready");
 
-    if (isYouTubeHost(window.location.hostname)) {
+    if (
+      isYouTubeHost(window.location.hostname) ||
+      isYouTubeSubtitleFixture(window.location)
+    ) {
       const repositories = createStorageRepositories();
       const youtubeSubtitleRuntime = createYouTubeSubtitleRuntime({
         subtitlePreferences: repositories.subtitlePreferences,
