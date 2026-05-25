@@ -34,19 +34,43 @@ describe("trackSelection", () => {
     ).toBe("French manual");
     expect(
       selectCaptionTrack(tracks, { languageCode: "it", kind: "asr" })?.name,
-    ).toBe("French manual");
+    ).toBe("English ASR");
     expect(
       selectCaptionTrack(
         tracks.filter((track) => track.name !== "French manual"),
         { languageCode: "it", kind: "asr" },
       )?.name,
-    ).toBe("Spanish manual");
+    ).toBe("English ASR");
     expect(
       selectCaptionTrack(
         tracks.filter((track) => !track.name?.includes("manual")),
         { languageCode: "it", kind: null },
       )?.name,
     ).toBe("English ASR");
+  });
+
+  it("prefers same-language manual tracks before ASR regardless of source order", () => {
+    const track = selectCaptionTrack(
+      [
+        { languageCode: "en", kind: "asr", name: "English ASR" },
+        { languageCode: "en", name: "English manual" },
+      ],
+      { languageCode: "en" },
+    );
+
+    expect(track?.name).toBe("English manual");
+  });
+
+  it("falls back to the first usable track when no same-language track exists", () => {
+    const track = selectCaptionTrack(
+      [
+        { languageCode: "en", kind: "asr", name: "English ASR" },
+        { languageCode: "fr", name: "French manual" },
+      ],
+      { languageCode: "de" },
+    );
+
+    expect(track?.name).toBe("English ASR");
   });
 
   it("builds stable track keys", () => {

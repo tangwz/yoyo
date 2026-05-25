@@ -46,6 +46,21 @@ describe("parseYouTubeJson3Cues", () => {
       parseYouTubeJson3Cues({
         events: [
           { tStartMs: 1000, dDurationMs: 0, segs: [{ utf8: "No duration" }] },
+          {
+            tStartMs: -100,
+            dDurationMs: 500,
+            segs: [{ utf8: "Negative start" }],
+          },
+          {
+            tStartMs: Number.POSITIVE_INFINITY,
+            dDurationMs: 500,
+            segs: [{ utf8: "Infinite start" }],
+          },
+          {
+            tStartMs: 1000,
+            dDurationMs: Number.NaN,
+            segs: [{ utf8: "NaN duration" }],
+          },
           { tStartMs: 2000, dDurationMs: 500, segs: [{ utf8: "   " }] },
         ],
       }),

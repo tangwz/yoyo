@@ -20,19 +20,53 @@ const defaultMaxWords = 30;
 const defaultMaxChars = 80;
 const defaultLongPauseMs = 1200;
 
-function isCjkText(text: string): boolean {
-  return /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(text);
+function isCjkCharacter(char: string): boolean {
+  return /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(char);
+}
+
+function isLatinCharacter(char: string): boolean {
+  return /\p{Script=Latin}/u.test(char);
+}
+
+function countWhitespaceSeparatedWords(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length;
 }
 
 function shouldUseCharacterStrategy(
   cues: readonly SubtitleCue[],
   sourceLanguage: SubtitleSourceLanguage,
 ): boolean {
+  const combined = cues.map((cue) => cue.text).join(" ");
+  let cjkCount = 0;
+  let latinCount = 0;
+
+  for (const char of combined) {
+    if (isCjkCharacter(char)) {
+      cjkCount += 1;
+    } else if (isLatinCharacter(char)) {
+      latinCount += 1;
+    }
+  }
+
+  if (cjkCount > latinCount) {
+    return true;
+  }
+  if (latinCount > cjkCount) {
+    return false;
+  }
+
+  const nonWhitespaceLength = Array.from(combined).filter(
+    (char) => char.trim().length > 0,
+  ).length;
+  const wordCount = countWhitespaceSeparatedWords(combined);
+  if (nonWhitespaceLength > 1 && wordCount <= 1) {
+    return true;
+  }
+
   if (sourceLanguage.kind === "known") {
     return /^(zh|ja|ko)/i.test(sourceLanguage.code);
   }
-  const combined = cues.map((cue) => cue.text).join("");
-  return isCjkText(combined);
+  return false;
 }
 
 function hasStrongSentenceEnd(text: string): boolean {
@@ -41,8 +75,8 @@ function hasStrongSentenceEnd(text: string): boolean {
 
 function measureText(text: string, characterStrategy: boolean): number {
   return characterStrategy
-    ? text.length
-    : text.split(/\s+/).filter(Boolean).length;
+    ? Array.from(text).length
+    : countWhitespaceSeparatedWords(text);
 }
 
 function joinCueText(
@@ -68,15 +102,20 @@ function buildSegment(
     throw new Error("Cannot build a subtitle segment without cues.");
   }
   const sourceText = joinCueText(cues, characterStrategy);
+  const sourceCueIds = cues.map((cue) => cue.cueId);
+  const textHash = hashSubtitleText(sourceText);
+  const segmentHash = hashSubtitleText(
+    [sourceCueIds.join(","), first.startMs, last.endMs, sourceText].join("|"),
+  );
   return {
-    segmentId: `sub-${first.index}-${last.index}-${hashSubtitleText(sourceText)}`,
-    sourceCueIds: cues.map((cue) => cue.cueId),
+    segmentId: `sub-${first.index}-${last.index}-${segmentHash}`,
+    sourceCueIds,
     sourceCueStartIndex: first.index,
     sourceCueEndIndex: last.index,
     startMs: first.startMs,
     endMs: last.endMs,
     sourceText,
-    textHash: hashSubtitleText(sourceText),
+    textHash,
   };
 }
 
@@ -115,8 +154,11 @@ function buildSplitCueSegment(
   endMs: number,
 ): SubtitleSegment {
   const textHash = hashSubtitleText(sourceText);
+  const segmentHash = hashSubtitleText(
+    [[cue.cueId].join(","), startMs, endMs, sourceText].join("|"),
+  );
   return {
-    segmentId: `sub-${cue.index}-${cue.index}-${startMs}-${endMs}-${textHash}`,
+    segmentId: `sub-${cue.index}-${cue.index}-${startMs}-${endMs}-${segmentHash}`,
     sourceCueIds: [cue.cueId],
     sourceCueStartIndex: cue.index,
     sourceCueEndIndex: cue.index,

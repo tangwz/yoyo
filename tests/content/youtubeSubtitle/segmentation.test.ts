@@ -105,6 +105,52 @@ describe("segmentSubtitleCues", () => {
     ]);
   });
 
+  it("uses word strategy when Latin text is dominant in mixed cues", () => {
+    const segments = segmentSubtitleCues(
+      [
+        cue(0, 0, 1000, "Hello world"),
+        cue(1, 1000, 2000, "你好"),
+      ],
+      { sourceLanguage: { kind: "unknown" } },
+    );
+
+    expect(segments.map((segment) => segment.sourceText)).toEqual([
+      "Hello world 你好",
+    ]);
+  });
+
+  it("uses character strategy when CJK text is dominant in mixed cues", () => {
+    const segments = segmentSubtitleCues(
+      [
+        cue(0, 0, 1000, "你好世界朋友"),
+        cue(1, 1000, 2000, "hi"),
+      ],
+      { sourceLanguage: { kind: "unknown" }, maxChars: 5 },
+    );
+
+    expect(segments.map((segment) => segment.sourceText)).toEqual([
+      "你好世",
+      "界朋友",
+      "hi",
+    ]);
+    expect(segments.every((segment) => Array.from(segment.sourceText).length <= 5)).toBe(
+      true,
+    );
+  });
+
+  it("uses character strategy for unknown no-space non-Latin text", () => {
+    const segments = segmentSubtitleCues(
+      [cue(0, 0, 1000, "กขคงจฉ")],
+      { sourceLanguage: { kind: "unknown" }, maxChars: 2 },
+    );
+
+    expect(segments.map((segment) => segment.sourceText)).toEqual([
+      "กข",
+      "คง",
+      "จฉ",
+    ]);
+  });
+
   it("splits at long pauses", () => {
     const segments = segmentSubtitleCues(
       [cue(0, 0, 1000, "Hello"), cue(1, 2500, 3500, "world")],
@@ -202,11 +248,29 @@ describe("segmentSubtitleCues", () => {
     const second = segmentSubtitleCues(cues, {
       sourceLanguage: { kind: "known", code: "en" },
     });
+    const expectedHash = hashSubtitleText("cue-0|0|1000|Hello world.");
 
     expect(first[0]?.segmentId).toBe(
-      `sub-0-0-${hashSubtitleText("Hello world.")}`,
+      `sub-0-0-${expectedHash}`,
     );
     expect(first[0]?.segmentId).toBe(second[0]?.segmentId);
+  });
+
+  it("changes segment ids when source cue ids or timing changes", () => {
+    const first = segmentSubtitleCues([cue(0, 0, 1000, "Hello world.")], {
+      sourceLanguage: { kind: "known", code: "en" },
+    });
+    const differentCueId = segmentSubtitleCues(
+      [{ ...cue(0, 0, 1000, "Hello world."), cueId: "cue-external" }],
+      { sourceLanguage: { kind: "known", code: "en" } },
+    );
+    const differentTiming = segmentSubtitleCues(
+      [cue(0, 100, 1100, "Hello world.")],
+      { sourceLanguage: { kind: "known", code: "en" } },
+    );
+
+    expect(first[0]?.segmentId).not.toBe(differentCueId[0]?.segmentId);
+    expect(first[0]?.segmentId).not.toBe(differentTiming[0]?.segmentId);
   });
 
   it("rejects non-contiguous segment coverage", () => {

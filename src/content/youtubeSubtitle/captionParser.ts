@@ -34,7 +34,14 @@ export function parseYouTubeJson3Cues(
       (event.segs ?? []).map((segment) => segment.utf8 ?? "").join(""),
     );
 
-    if (!text || durationMs <= 0 || endMs <= startMs) {
+    if (
+      !text ||
+      !Number.isFinite(startMs) ||
+      !Number.isFinite(durationMs) ||
+      startMs < 0 ||
+      durationMs <= 0 ||
+      endMs <= startMs
+    ) {
       continue;
     }
 

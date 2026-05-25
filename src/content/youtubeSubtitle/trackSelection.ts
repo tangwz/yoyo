@@ -31,15 +31,18 @@ export function selectCaptionTrack(
   preference: TrackPreference = {},
 ): YouTubeCaptionTrack | undefined {
   const usableTracks = tracks.filter((track) => !isChatTrack(track));
+  const sameLanguageTracks = usableTracks.filter(
+    (track) => track.languageCode === preference.languageCode,
+  );
+  const preferredKind = preference.kind ?? null;
   return (
     usableTracks.find(
       (track) =>
         track.languageCode === preference.languageCode &&
-        (track.kind ?? null) === (preference.kind ?? null),
+        (track.kind ?? null) === preferredKind,
     ) ??
-    usableTracks.find((track) => track.languageCode === preference.languageCode) ??
-    usableTracks.find((track) => track.kind !== "asr") ??
-    usableTracks.find((track) => track.kind === "asr") ??
+    sameLanguageTracks.find((track) => track.kind !== "asr") ??
+    sameLanguageTracks.find((track) => track.kind === "asr") ??
     usableTracks[0]
   );
 }
