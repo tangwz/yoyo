@@ -12,8 +12,13 @@ import {
 } from "@/content/pageRuntime";
 import { showSelectionTranslation } from "@/content/selectionPanel";
 import { showPageSummary } from "@/content/summaryPanel";
+import { createYouTubeSubtitleRuntime } from "@/content/youtubeSubtitle/runtime";
 import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
-import { addRuntimeMessageListener } from "@/messaging/runtime";
+import {
+  addRuntimeMessageListener,
+  sendRuntimeMessage,
+} from "@/messaging/runtime";
+import { createStorageRepositories } from "@/storage/repositories";
 
 function normalizeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -27,10 +32,27 @@ function isRuntimeMessage(message: unknown): message is { type?: unknown } {
   return typeof message === "object" && message !== null;
 }
 
+function isYouTubeHost(hostname: string): boolean {
+  return hostname === "youtube.com" || hostname === "www.youtube.com";
+}
+
 export default defineContentScript({
   matches: ["<all_urls>"],
   main() {
     console.info("[yoyo] content script ready");
+
+    if (isYouTubeHost(window.location.hostname)) {
+      const repositories = createStorageRepositories();
+      const youtubeSubtitleRuntime = createYouTubeSubtitleRuntime({
+        subtitlePreferences: repositories.subtitlePreferences,
+        sendBackgroundMessage: sendRuntimeMessage,
+      });
+
+      void youtubeSubtitleRuntime.start();
+      window.addEventListener("pagehide", () => {
+        void youtubeSubtitleRuntime.destroy();
+      });
+    }
 
     addRuntimeMessageListener<unknown, ContentResponse>(
       async (message) => {
