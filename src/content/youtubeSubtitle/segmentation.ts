@@ -28,6 +28,10 @@ function isLatinCharacter(char: string): boolean {
   return /\p{Script=Latin}/u.test(char);
 }
 
+function isLetter(char: string): boolean {
+  return /\p{Letter}/u.test(char);
+}
+
 function countWhitespaceSeparatedWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
@@ -39,19 +43,24 @@ function shouldUseCharacterStrategy(
   const combined = cues.map((cue) => cue.text).join(" ");
   let cjkCount = 0;
   let latinCount = 0;
+  let noSpaceNonLatinCount = 0;
 
   for (const char of combined) {
     if (isCjkCharacter(char)) {
       cjkCount += 1;
     } else if (isLatinCharacter(char)) {
       latinCount += 1;
+    } else if (isLetter(char)) {
+      noSpaceNonLatinCount += 1;
     }
   }
 
-  if (cjkCount > latinCount) {
+  const characterStrategyCount = cjkCount + noSpaceNonLatinCount;
+
+  if (characterStrategyCount > latinCount) {
     return true;
   }
-  if (latinCount > cjkCount) {
+  if (latinCount > characterStrategyCount) {
     return false;
   }
 

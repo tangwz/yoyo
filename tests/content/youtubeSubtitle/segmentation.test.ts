@@ -151,6 +151,19 @@ describe("segmentSubtitleCues", () => {
     ]);
   });
 
+  it("uses character strategy for dominant no-space non-Latin mixed text", () => {
+    const segments = segmentSubtitleCues(
+      [cue(0, 0, 1000, "กขคงจฉhi")],
+      { sourceLanguage: { kind: "unknown" }, maxChars: 3 },
+    );
+
+    expect(segments.map((segment) => segment.sourceText)).toEqual([
+      "กขค",
+      "งจฉ",
+      "hi",
+    ]);
+  });
+
   it("splits at long pauses", () => {
     const segments = segmentSubtitleCues(
       [cue(0, 0, 1000, "Hello"), cue(1, 2500, 3500, "world")],

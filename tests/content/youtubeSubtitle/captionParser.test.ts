@@ -61,6 +61,11 @@ describe("parseYouTubeJson3Cues", () => {
             dDurationMs: Number.NaN,
             segs: [{ utf8: "NaN duration" }],
           },
+          {
+            tStartMs: Number.MAX_VALUE,
+            dDurationMs: Number.MAX_VALUE,
+            segs: [{ utf8: "Overflow end" }],
+          },
           { tStartMs: 2000, dDurationMs: 500, segs: [{ utf8: "   " }] },
         ],
       }),

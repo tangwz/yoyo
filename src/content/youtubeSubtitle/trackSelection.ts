@@ -11,7 +11,7 @@ type TrackPreference = {
 };
 
 function isChatTrack(track: YouTubeCaptionTrack): boolean {
-  return /chat/i.test(track.name ?? "");
+  return /chat/i.test(`${track.name ?? ""} ${track.kind ?? ""}`);
 }
 
 export function buildTrackKey(

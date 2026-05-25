@@ -38,6 +38,7 @@ export function parseYouTubeJson3Cues(
       !text ||
       !Number.isFinite(startMs) ||
       !Number.isFinite(durationMs) ||
+      !Number.isFinite(endMs) ||
       startMs < 0 ||
       durationMs <= 0 ||
       endMs <= startMs

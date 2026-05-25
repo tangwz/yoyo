@@ -73,6 +73,18 @@ describe("trackSelection", () => {
     expect(track?.name).toBe("English ASR");
   });
 
+  it("filters live chat tracks by kind as well as name", () => {
+    const track = selectCaptionTrack(
+      [
+        { languageCode: "en", kind: "live_chat", name: "English" },
+        { languageCode: "fr", name: "French manual" },
+      ],
+      { languageCode: "de" },
+    );
+
+    expect(track?.name).toBe("French manual");
+  });
+
   it("builds stable track keys", () => {
     expect(
       buildTrackKey("video-1", {
