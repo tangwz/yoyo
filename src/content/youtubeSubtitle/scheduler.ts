@@ -84,8 +84,11 @@ export class SubtitleScheduler {
     return batch;
   }
 
-  markTranslated(segmentIds: readonly string[]): void {
+  markTranslated(requestId: string, segmentIds: readonly string[]): void {
     for (const segmentId of segmentIds) {
+      if (!this.isCurrentRequest(segmentId, requestId)) {
+        continue;
+      }
       this.pendingSegmentIds.delete(segmentId);
       this.inFlightSegmentIds.delete(segmentId);
       this.requestIdsBySegmentId.delete(segmentId);
@@ -94,8 +97,11 @@ export class SubtitleScheduler {
     }
   }
 
-  markFailed(segmentIds: readonly string[]): void {
+  markFailed(requestId: string, segmentIds: readonly string[]): void {
     for (const segmentId of segmentIds) {
+      if (!this.isCurrentRequest(segmentId, requestId)) {
+        continue;
+      }
       this.pendingSegmentIds.delete(segmentId);
       this.inFlightSegmentIds.delete(segmentId);
       this.requestIdsBySegmentId.delete(segmentId);
@@ -139,6 +145,10 @@ export class SubtitleScheduler {
 
   private isRetryExhausted(segmentId: string): boolean {
     return this.failureCount(segmentId) > this.options.maxRetryCount;
+  }
+
+  private isCurrentRequest(segmentId: string, requestId: string): boolean {
+    return this.requestIdsBySegmentId.get(segmentId) === requestId;
   }
 
   private failureCount(segmentId: string): number {

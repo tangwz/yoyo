@@ -101,7 +101,7 @@ describe("SubtitleScheduler", () => {
     queue.scanWindow(100);
 
     const first = queue.takeBatch("request-1");
-    queue.markTranslated(["one"]);
+    queue.markTranslated("request-1", ["one"]);
     queue.scanWindow(100);
 
     expect(first.map((entry) => entry.segmentId)).toEqual(["one", "two", "three"]);
@@ -117,13 +117,13 @@ describe("SubtitleScheduler", () => {
       "retry",
     ]);
 
-    queue.markFailed(["retry"]);
+    queue.markFailed("request-1", ["retry"]);
     queue.scanWindow(0);
     expect(queue.takeBatch("request-2").map((entry) => entry.segmentId)).toEqual([
       "retry",
     ]);
 
-    queue.markFailed(["retry"]);
+    queue.markFailed("request-2", ["retry"]);
     queue.scanWindow(0);
     expect(queue.takeBatch("request-3")).toEqual([]);
   });
@@ -159,11 +159,11 @@ describe("SubtitleScheduler", () => {
     expect(queue.takeBatch("request-1").map((entry) => entry.segmentId)).toEqual([
       "translated",
     ]);
-    queue.markTranslated(["translated"]);
+    queue.markTranslated("request-1", ["translated"]);
     expect(queue.takeBatch("request-2").map((entry) => entry.segmentId)).toEqual([
       "exhausted",
     ]);
-    queue.markFailed(["exhausted"]);
+    queue.markFailed("request-2", ["exhausted"]);
     expect(queue.takeBatch("request-3").map((entry) => entry.segmentId)).toEqual([
       "in-flight",
     ]);
@@ -177,13 +177,40 @@ describe("SubtitleScheduler", () => {
     expect(queue.takeBatch("request-5")).toEqual([]);
   });
 
+  it("ignores stale request results after in-flight entries are rescheduled", () => {
+    const queue = scheduler({ maxRetryCount: 0 });
+    queue.replaceTimeline([segment("one", 0, 100)]);
+    queue.scanWindow(0);
+
+    expect(queue.takeBatch("request-1").map((entry) => entry.segmentId)).toEqual([
+      "one",
+    ]);
+    queue.clearInFlight();
+    queue.scanWindow(0);
+    expect(queue.takeBatch("request-2").map((entry) => entry.segmentId)).toEqual([
+      "one",
+    ]);
+
+    queue.markTranslated("request-1", ["one"]);
+    queue.markFailed("request-1", ["one"]);
+
+    expect(queue.inFlightRequestId("one")).toBe("request-2");
+    queue.scanWindow(0);
+    expect(queue.takeBatch("request-3")).toEqual([]);
+
+    queue.markTranslated("request-2", ["one"]);
+    queue.clearInFlight();
+    queue.scanWindow(0);
+    expect(queue.takeBatch("request-4")).toEqual([]);
+  });
+
   it("replaceTimeline clears old pending, in-flight, translated, and retry state", () => {
     const queue = scheduler({ maxRetryCount: 0 });
     queue.replaceTimeline([segment("old", 0, 100), segment("failed", 100, 200)]);
     queue.scanWindow(0);
     queue.takeBatch("request-1");
-    queue.markTranslated(["old"]);
-    queue.markFailed(["failed"]);
+    queue.markTranslated("request-1", ["old"]);
+    queue.markFailed("request-1", ["failed"]);
 
     queue.replaceTimeline([segment("old", 0, 100), segment("new", 100, 200)]);
     queue.scanWindow(0);
