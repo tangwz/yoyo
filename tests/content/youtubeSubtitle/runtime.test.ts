@@ -36,6 +36,7 @@ function createPreferences(
 function createRuntimeHarness(options: {
   preferences?: SubtitlePreferences;
   currentUrl?: string;
+  loadPreferences?: () => Promise<SubtitlePreferences>;
 } = {}): {
   runtime: TestRuntime;
   preferences: SubtitlePreferences;
@@ -50,7 +51,7 @@ function createRuntimeHarness(options: {
 
   const dependencies: YouTubeSubtitleRuntimeDependencies = {
     subtitlePreferences: {
-      get: vi.fn(async () => preferences),
+      get: vi.fn(options.loadPreferences ?? (async () => preferences)),
       save: vi.fn(async (nextPreferences) => {
         preferences = nextPreferences;
         savedPreferences.push(nextPreferences);
@@ -246,5 +247,47 @@ describe("createYouTubeSubtitleRuntime", () => {
     expect(runtime.getState().runtimeSessionId).toBe("youtube-subtitle-session-2");
     expect(buttonStatus()).toBe("enabled");
     expect(mountedOverlay()).not.toBeNull();
+  });
+
+  it("does not mount observers or UI after destroy wins a pending start", async () => {
+    createPlayerDom();
+    let resolvePreferences: (preferences: SubtitlePreferences) => void = () => undefined;
+    let observeCalls = 0;
+    const runtime = createYouTubeSubtitleRuntime({
+      subtitlePreferences: {
+        get: vi.fn(
+          () =>
+            new Promise<SubtitlePreferences>((resolve) => {
+              resolvePreferences = resolve;
+            }),
+        ),
+        save: vi.fn(),
+      },
+      sendBackgroundMessage: vi.fn(
+        async (): Promise<BackgroundResponse> => ({
+          type: "backgroundActionResult",
+          success: true,
+        }),
+      ),
+      createMutationObserver: (callback) =>
+        ({
+          observe: () => {
+            observeCalls += 1;
+            callback([], {} as MutationObserver);
+          },
+          disconnect: vi.fn(),
+          takeRecords: vi.fn(() => []),
+        }) as unknown as MutationObserver,
+    });
+
+    const pendingStart = runtime.start();
+    await runtime.destroy();
+    resolvePreferences(createPreferences());
+    await pendingStart;
+    await flushRuntime();
+
+    expect(observeCalls).toBe(0);
+    expect(mountedButtons()).toHaveLength(0);
+    expect(mountedOverlay()).toBeNull();
   });
 });

@@ -101,6 +101,9 @@ export function createYouTubeSubtitleRuntime(
 
     startPromise = (async () => {
       preferences = await dependencies.subtitlePreferences.get();
+      if (destroyed) {
+        return;
+      }
       scheduler = createScheduler(preferences);
       sessionCache = new SubtitleSessionCache();
       videoKey = readVideoKey(getCurrentUrl());
@@ -236,7 +239,7 @@ export function createYouTubeSubtitleRuntime(
   }
 
   function ensureObserver(): void {
-    if (observer) {
+    if (observer || destroyed) {
       return;
     }
 
