@@ -302,12 +302,20 @@ const defaultSubtitlePreferences: SubtitlePreferences = {
 - background 翻译：active provider 复用、独立 subtitle cache namespace、整批错误响应、provider 缺失、cancel request。
 - UI/runtime：按钮只挂载一次、badge 状态变化、YouTube SPA 跳转清理、player rebuild 后重新挂载、overlay 使用 `.notranslate` 和 `translate="no"`、overlay 不阻挡控件。
 
-集成或 smoke 测试覆盖：
+自动化浏览器测试覆盖：
 
-- 在 mock YouTube DOM 中插入 player controls，确认按钮定位和去重。
-- 模拟 video timeupdate 和 seek，确认 overlay 按当前 segment 更新。
+- 新增 mock YouTube fixture page，模拟 player controls、video element、caption tracks、`timedtext` `json3` response、SPA navigation、player rebuild、剧场模式和全屏相关 DOM 变化。
+- 使用 Playwright 启动 Chromium 并加载 unpacked extension，访问 mock fixture page，而不是依赖真实 YouTube 网络和 DOM。
+- 在 fixture 中插入 player controls，确认按钮定位、状态 badge、点击持久化偏好和去重挂载。
+- 模拟 video `timeupdate` 和 seek，确认 overlay 按当前 segment 更新。
 - 模拟旧 `runtimeSessionId`、旧 `configVersion`、旧 `requestId` 返回，确认不会更新 overlay。
 - 模拟 provider 变更或目标语言变更，确认 in-flight 队列清空并从当前播放时间重新调度。
+- 拦截或 mock background provider response，覆盖成功翻译、整批错误、retryable error、最终失败和 provider missing。
+- 检查 overlay DOM 带 `.notranslate` 和 `translate="no"`，且默认 `pointer-events: none`。
+
+Chrome DevTools MCP 可用于开发阶段辅助定位真实浏览器问题，例如检查 YouTube DOM、network、console 和 extension runtime 状态；但 CI 或常规本地验证不应依赖 MCP。可重复验收应优先沉淀为 Playwright fixture 测试和 Vitest 单元测试。真实 YouTube 页面只保留为发布前可选人工 smoke，不作为第一版合格标准。
+
+实现阶段应新增 `pnpm test:browser` 脚本，用于运行上述 Playwright extension fixture 测试。
 
 建议实现完成后运行：
 
@@ -315,6 +323,7 @@ const defaultSubtitlePreferences: SubtitlePreferences = {
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm test:browser
 pnpm verify:extension
 ```
 
