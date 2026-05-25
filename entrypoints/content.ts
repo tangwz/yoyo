@@ -351,12 +351,26 @@ function installYouTubeSubtitleRuntimeManager(): void {
   window.addEventListener("popstate", notifyLocationChanged);
   window.addEventListener("yoyo:locationchange", ensureRuntime);
   browser.storage.onChanged.addListener(handleSubtitleConfigStorageChange);
-  window.addEventListener("pagehide", () => {
+
+  const handlePageShow = (event: PageTransitionEvent): void => {
+    if (event.persisted) {
+      ensureRuntime();
+    }
+  };
+  const handlePageHide = (event: PageTransitionEvent): void => {
+    if (event.persisted) {
+      return;
+    }
     browser.storage.onChanged.removeListener(handleSubtitleConfigStorageChange);
     window.removeEventListener("popstate", notifyLocationChanged);
     window.removeEventListener("yoyo:locationchange", ensureRuntime);
+    window.removeEventListener("pageshow", handlePageShow);
+    window.removeEventListener("pagehide", handlePageHide);
     void stopRuntime();
-  });
+  };
+
+  window.addEventListener("pageshow", handlePageShow);
+  window.addEventListener("pagehide", handlePageHide);
 
   ensureRuntime();
 }

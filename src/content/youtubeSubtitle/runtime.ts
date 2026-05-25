@@ -427,6 +427,7 @@ export function createYouTubeSubtitleRuntime(
         }).catch(() => undefined);
         return ensurePipeline(player);
       }
+      bindPipelineVideo(player, activePipeline);
       renderActiveSubtitle();
       scheduleTranslations();
       return;
@@ -525,19 +526,16 @@ export function createYouTubeSubtitleRuntime(
     }
 
     scheduler.replaceTimeline(segments);
-    const video = findVideo(player);
     const onTimeChange = (): void => {
       renderActiveSubtitle();
       scheduleTranslations();
     };
-    video?.addEventListener("timeupdate", onTimeChange);
-    video?.addEventListener("seeked", onTimeChange);
 
     pipeline = {
       runtimeSessionId,
       configVersion: pipelineConfigVersion,
       videoKey: pipelineVideoKey,
-      video,
+      video: undefined,
       trackKey,
       sourceLanguage,
       targetLanguage: configResponse.targetLanguage,
@@ -549,6 +547,7 @@ export function createYouTubeSubtitleRuntime(
       failedSegmentIds: new Set(),
       onTimeChange,
     };
+    bindPipelineVideo(player, pipeline);
 
     updateButtonStatus("enabled");
     renderActiveSubtitle();
@@ -570,11 +569,10 @@ export function createYouTubeSubtitleRuntime(
     }
 
     const currentTimeMs = currentVideoTimeMs(pipeline);
-    const activeSegment =
-      pipeline.segments.find(
-        (segment) =>
-          segment.startMs <= currentTimeMs && segment.endMs >= currentTimeMs,
-      ) ?? pipeline.segments[0];
+    const activeSegment = pipeline.segments.find(
+      (segment) =>
+        segment.startMs <= currentTimeMs && segment.endMs >= currentTimeMs,
+    );
     if (!activeSegment) {
       overlay.hide();
       return;
@@ -596,6 +594,19 @@ export function createYouTubeSubtitleRuntime(
     }
 
     overlay.render({ state: "loading", sourceText: activeSegment.sourceText });
+  }
+
+  function bindPipelineVideo(player: HTMLElement, active: ActivePipeline): void {
+    const nextVideo = findVideo(player);
+    if (active.video === nextVideo) {
+      return;
+    }
+
+    active.video?.removeEventListener("timeupdate", active.onTimeChange);
+    active.video?.removeEventListener("seeked", active.onTimeChange);
+    active.video = nextVideo;
+    active.video?.addEventListener("timeupdate", active.onTimeChange);
+    active.video?.addEventListener("seeked", active.onTimeChange);
   }
 
   function scheduleTranslations(): void {
@@ -854,7 +865,14 @@ function readVideoKey(url: string): string {
   try {
     const parsedUrl = new URL(url);
     if (parsedUrl.hostname.endsWith("youtube.com")) {
-      return parsedUrl.searchParams.get("v") ?? parsedUrl.pathname;
+      const watchVideoId = parsedUrl.searchParams.get("v");
+      if (watchVideoId) {
+        return watchVideoId;
+      }
+      const pathVideoId = parsedUrl.pathname.match(
+        /^\/(?:shorts|embed)\/([^/?#]+)/,
+      )?.[1];
+      return pathVideoId ?? parsedUrl.pathname;
     }
     return `${parsedUrl.hostname}${parsedUrl.pathname}${parsedUrl.search}`;
   } catch {

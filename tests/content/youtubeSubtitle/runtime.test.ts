@@ -17,12 +17,14 @@ import {
 
 type TestRuntime = ReturnType<typeof createYouTubeSubtitleRuntime>;
 
-function createPlayerDom(): HTMLElement {
+function createPlayerDom(options: { video?: boolean } = {}): HTMLElement {
   const player = document.createElement("div");
   player.id = "movie_player";
-  const video = document.createElement("video");
-  video.currentTime = 0;
-  player.append(video);
+  if (options.video ?? true) {
+    const video = document.createElement("video");
+    video.currentTime = 0;
+    player.append(video);
+  }
   const controls = document.createElement("div");
   controls.className = "ytp-right-controls";
   player.append(controls);
@@ -250,6 +252,14 @@ function mountedOverlay(): HTMLElement | null {
   );
 }
 
+function mountedVideo(): HTMLVideoElement {
+  const video = document.querySelector<HTMLVideoElement>("#movie_player video");
+  if (!video) {
+    throw new Error("Expected video to be mounted.");
+  }
+  return video;
+}
+
 function buttonStatus(): string | undefined {
   return mountedButton().querySelector<HTMLElement>(
     '[data-yoyo-youtube-subtitle-badge="true"]',
@@ -312,6 +322,58 @@ describe("createYouTubeSubtitleRuntime", () => {
     });
     expect(mountedOverlay()?.textContent).toContain("Hello world.");
     expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
+  });
+
+  it("derives video keys from YouTube shorts and embed URLs", async () => {
+    createPlayerDom();
+    const shorts = createRuntimeHarness({
+      currentUrl: "https://www.youtube.com/shorts/short-video-id",
+    }).runtime;
+    const embed = createRuntimeHarness({
+      currentUrl: "https://www.youtube.com/embed/embed-video-id",
+    }).runtime;
+    trackRuntime(shorts);
+    trackRuntime(embed);
+
+    await shorts.start();
+    await embed.start();
+    await flushRuntime();
+
+    expect(shorts.getState().videoKey).toBe("short-video-id");
+    expect(embed.getState().videoKey).toBe("embed-video-id");
+  });
+
+  it("hides the overlay when playback is outside subtitle segment ranges", async () => {
+    createPlayerDom();
+    const { runtime } = createRuntimeHarness();
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+    mountedVideo().currentTime = 2.2;
+    mountedVideo().dispatchEvent(new Event("timeupdate"));
+    await flushRuntime();
+
+    expect(mountedOverlay()?.hidden).toBe(true);
+  });
+
+  it("binds playback listeners when the video element appears after pipeline init", async () => {
+    const player = createPlayerDom({ video: false });
+    const { runtime } = createRuntimeHarness();
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    const video = document.createElement("video");
+    video.currentTime = 3;
+    player.prepend(video);
+    await flushRuntime();
+    video.dispatchEvent(new Event("timeupdate"));
+    await flushRuntime();
+
+    expect(mountedOverlay()?.textContent).toContain("Second cue.");
+    expect(mountedOverlay()?.textContent).toContain("Translated: Second cue.");
   });
 
   it("uses unique runtime session ids by default", () => {
