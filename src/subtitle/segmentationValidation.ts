@@ -8,9 +8,15 @@ export function validateSubtitleSegments(
   cues: readonly SubtitleCue[],
   segments: readonly SubtitleSegment[],
 ): SubtitleSegmentValidationResult {
-  let expectedCueIndex = 0;
+  if (cues.length === 0 || segments.length === 0) {
+    return { valid: false, reason: "Segments must cover at least one cue." };
+  }
 
-  for (const segment of segments) {
+  let expectedCueIndex = 0;
+  let segmentIndex = 0;
+
+  while (segmentIndex < segments.length) {
+    const segment = segments[segmentIndex]!;
     if (segment.sourceCueStartIndex !== expectedCueIndex) {
       return {
         valid: false,
@@ -19,6 +25,53 @@ export function validateSubtitleSegments(
     }
     if (segment.sourceCueEndIndex < segment.sourceCueStartIndex) {
       return { valid: false, reason: "Segment range is invalid." };
+    }
+
+    if (segment.sourceCueStartIndex === segment.sourceCueEndIndex) {
+      const cue = cues[segment.sourceCueStartIndex];
+      if (!cue) {
+        return { valid: false, reason: "Segment does not cover any cues." };
+      }
+
+      let expectedStartMs = cue.startMs;
+      while (segmentIndex < segments.length) {
+        const splitSegment = segments[segmentIndex]!;
+        if (
+          splitSegment.sourceCueStartIndex !== cue.index ||
+          splitSegment.sourceCueEndIndex !== cue.index
+        ) {
+          break;
+        }
+        if (splitSegment.sourceCueIds.join("|") !== cue.cueId) {
+          return {
+            valid: false,
+            reason: "Segment cue ids do not match its range.",
+          };
+        }
+        if (
+          splitSegment.startMs !== expectedStartMs ||
+          splitSegment.endMs <= splitSegment.startMs ||
+          splitSegment.endMs > cue.endMs
+        ) {
+          return {
+            valid: false,
+            reason: "Split segment timing does not cover its source cue.",
+          };
+        }
+
+        expectedStartMs = splitSegment.endMs;
+        segmentIndex += 1;
+      }
+
+      if (expectedStartMs !== cue.endMs) {
+        return {
+          valid: false,
+          reason: "Split segments do not cover their source cue.",
+        };
+      }
+
+      expectedCueIndex += 1;
+      continue;
     }
 
     const covered = cues.slice(
@@ -45,6 +98,7 @@ export function validateSubtitleSegments(
     }
 
     expectedCueIndex = segment.sourceCueEndIndex + 1;
+    segmentIndex += 1;
   }
 
   if (expectedCueIndex !== cues.length) {

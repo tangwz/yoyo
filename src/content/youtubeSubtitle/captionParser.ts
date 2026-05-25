@@ -38,6 +38,14 @@ export function parseYouTubeJson3Cues(
       continue;
     }
 
+    const previous = cues.at(-1);
+    if (previous && startMs < previous.endMs) {
+      if (startMs <= previous.startMs) {
+        continue;
+      }
+      previous.endMs = startMs;
+    }
+
     cues.push({
       cueId: `cue-${cues.length}`,
       index: cues.length,

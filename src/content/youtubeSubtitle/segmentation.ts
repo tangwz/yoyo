@@ -80,6 +80,116 @@ function buildSegment(
   };
 }
 
+function splitTextIntoUnits(text: string, characterStrategy: boolean): string[] {
+  return characterStrategy
+    ? Array.from(text)
+    : text.split(/\s+/).filter(Boolean);
+}
+
+function splitUnitsEvenly(
+  units: readonly string[],
+  chunkCount: number,
+): string[][] {
+  const chunks: string[][] = [];
+  let unitOffset = 0;
+
+  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+    const remainingUnits = units.length - unitOffset;
+    const remainingChunks = chunkCount - chunkIndex;
+    const chunkSize = Math.ceil(remainingUnits / remainingChunks);
+    chunks.push(units.slice(unitOffset, unitOffset + chunkSize));
+    unitOffset += chunkSize;
+  }
+
+  return chunks;
+}
+
+function joinUnits(units: readonly string[], characterStrategy: boolean): string {
+  return characterStrategy ? units.join("") : units.join(" ");
+}
+
+function buildSplitCueSegment(
+  cue: SubtitleCue,
+  sourceText: string,
+  startMs: number,
+  endMs: number,
+): SubtitleSegment {
+  const textHash = hashSubtitleText(sourceText);
+  return {
+    segmentId: `sub-${cue.index}-${cue.index}-${startMs}-${endMs}-${textHash}`,
+    sourceCueIds: [cue.cueId],
+    sourceCueStartIndex: cue.index,
+    sourceCueEndIndex: cue.index,
+    startMs,
+    endMs,
+    sourceText,
+    textHash,
+  };
+}
+
+function buildSingleCueSegments(
+  cue: SubtitleCue,
+  characterStrategy: boolean,
+  maxDurationMs: number,
+  maxUnits: number,
+): SubtitleSegment[] {
+  const safeMaxDurationMs = Math.max(1, maxDurationMs);
+  const safeMaxUnits = Math.max(1, maxUnits);
+  const units = splitTextIntoUnits(cue.text, characterStrategy);
+  const durationMs = cue.endMs - cue.startMs;
+  const chunkCount = Math.max(
+    Math.ceil(durationMs / safeMaxDurationMs),
+    Math.ceil(units.length / safeMaxUnits),
+  );
+
+  if (chunkCount <= 1) {
+    return [buildSegment([cue], characterStrategy)];
+  }
+
+  const textChunks =
+    chunkCount <= units.length
+      ? splitUnitsEvenly(units, chunkCount).map((chunk) =>
+          joinUnits(chunk, characterStrategy),
+        )
+      : splitUnitsEvenly(
+          Array.from(cue.text).filter((char) => char.trim()),
+          chunkCount,
+        ).map((chunk) => chunk.join(""));
+
+  return textChunks
+    .map((sourceText, index) => {
+      const startMs =
+        index === 0
+          ? cue.startMs
+          : cue.startMs + Math.round((durationMs * index) / textChunks.length);
+      const endMs =
+        index === textChunks.length - 1
+          ? cue.endMs
+          : cue.startMs +
+            Math.round((durationMs * (index + 1)) / textChunks.length);
+      return buildSplitCueSegment(cue, sourceText, startMs, endMs);
+    })
+    .filter((segment) => segment.sourceText && segment.endMs > segment.startMs);
+}
+
+function buildSegments(
+  cues: readonly SubtitleCue[],
+  characterStrategy: boolean,
+  maxDurationMs: number,
+  maxUnits: number,
+): SubtitleSegment[] {
+  if (cues.length === 1) {
+    return buildSingleCueSegments(
+      cues[0]!,
+      characterStrategy,
+      maxDurationMs,
+      maxUnits,
+    );
+  }
+
+  return [buildSegment(cues, characterStrategy)];
+}
+
 export function segmentSubtitleCues(
   cues: readonly SubtitleCue[],
   options: SegmentOptions,
@@ -98,7 +208,9 @@ export function segmentSubtitleCues(
 
   function flush(): void {
     if (buffer.length > 0) {
-      segments.push(buildSegment(buffer, characterStrategy));
+      segments.push(
+        ...buildSegments(buffer, characterStrategy, maxDurationMs, maxUnits),
+      );
       buffer = [];
     }
   }
