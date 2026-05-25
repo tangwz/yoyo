@@ -379,6 +379,40 @@ describe("segmentSubtitleCues", () => {
     ).toBe(true);
   });
 
+  it("accepts complete segmentation for cue chunks with non-zero source indexes", () => {
+    const cues = [
+      cue(30, 30000, 31000, "Thirty."),
+      cue(31, 31000, 32000, "Thirty one."),
+    ];
+
+    expect(
+      validateSubtitleSegments(cues, [
+        {
+          segmentId: "seg-30-31",
+          sourceCueIds: ["cue-30", "cue-31"],
+          sourceCueStartIndex: 30,
+          sourceCueEndIndex: 31,
+          startMs: 30000,
+          endMs: 32000,
+          sourceText: "Thirty. Thirty one.",
+          textHash: "hash",
+        },
+      ]).valid,
+    ).toBe(true);
+  });
+
+  it("rejects segments that exceed validation bounds", () => {
+    const cues = [cue(0, 0, 3000, "one two three")];
+
+    expect(
+      validateSubtitleSegments(cues, [segment(0, 0, cues)], {
+        maxDurationMs: 2000,
+        maxWords: 2,
+        characterStrategy: false,
+      }).valid,
+    ).toBe(false);
+  });
+
   it("rejects empty cues with empty segments", () => {
     expect(validateSubtitleSegments([], []).valid).toBe(false);
   });

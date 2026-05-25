@@ -92,6 +92,35 @@ describe("trackSelection", () => {
         kind: "asr",
         name: "English",
       }),
-    ).toBe("video-1|en|asr|English");
+    ).toBe("video-1|en|asr|English|");
+  });
+
+  it("keeps same-name tracks distinct by stable track identity", () => {
+    const first = buildTrackKey("video-1", {
+      languageCode: "en",
+      kind: "asr",
+      name: "English",
+      baseUrl: "https://www.youtube.com/api/timedtext?v=video-1&fmt=json3",
+    });
+    const second = buildTrackKey("video-1", {
+      languageCode: "en",
+      kind: "asr",
+      name: "English",
+      baseUrl: "https://www.youtube.com/api/timedtext?v=video-1&fmt=vtt",
+    });
+
+    expect(first).not.toBe(second);
+  });
+
+  it("prefers vssId over URL identity for track keys", () => {
+    expect(
+      buildTrackKey("video-1", {
+        languageCode: "en",
+        kind: "asr",
+        name: "English",
+        baseUrl: "https://example.com/one",
+        vssId: "a.en",
+      }),
+    ).toBe("video-1|en|asr|English|a.en");
   });
 });

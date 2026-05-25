@@ -1,8 +1,11 @@
+import { hashSubtitleText } from "@/subtitle/hash";
+
 export type YouTubeCaptionTrack = {
   languageCode?: string;
   kind?: string;
   name?: string;
   baseUrl?: string;
+  vssId?: string;
 };
 
 type TrackPreference = {
@@ -14,15 +17,27 @@ function isChatTrack(track: YouTubeCaptionTrack): boolean {
   return /chat/i.test(`${track.name ?? ""} ${track.kind ?? ""}`);
 }
 
+function normalizeTrackUrl(value: string): string {
+  try {
+    return new URL(value).toString();
+  } catch {
+    return value;
+  }
+}
+
 export function buildTrackKey(
   videoId: string,
   track: YouTubeCaptionTrack,
 ): string {
+  const trackIdentity =
+    track.vssId ??
+    (track.baseUrl ? hashSubtitleText(normalizeTrackUrl(track.baseUrl)) : "");
   return [
     videoId,
     track.languageCode ?? "unknown",
     track.kind ?? "manual",
     track.name ?? "",
+    trackIdentity,
   ].join("|");
 }
 
