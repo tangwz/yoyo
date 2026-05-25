@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/vue";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/vue";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -47,6 +47,10 @@ const browserMock = vi.hoisted(() => ({
   tabsQuery: vi.fn(),
   tabsSendMessage: vi.fn(),
 }));
+
+const defaultTranslateLabel = "\u7ffb\u8bd1\u9875\u9762";
+const pageActionsLabel = "Page actions";
+const summaryLabel = "\u4e00\u952e\u603b\u7ed3";
 
 function idleTaskProgress() {
   return {
@@ -317,8 +321,10 @@ describe("popup app", () => {
     expect(screen.getByRole("combobox", { name: "Target language" })).toHaveDisplayValue(
       "简体中文",
     );
-    expect(screen.getByText("翻译当前页面")).toBeVisible();
-    expect(screen.getByRole("button", { name: "一键总结" })).toBeVisible();
+    const pageActions = screen.getByRole("group", { name: pageActionsLabel });
+
+    expect(within(pageActions).getByRole("button", { name: defaultTranslateLabel })).toBeVisible();
+    expect(within(pageActions).getByRole("button", { name: summaryLabel })).toBeVisible();
     expect(screen.getByText("设置")).toBeVisible();
     expect(screen.getByText("0.3.0")).toBeVisible();
     expect(screen.getByText("更多")).toBeVisible();
@@ -351,7 +357,7 @@ describe("popup app", () => {
 
     render(PopupApp);
 
-    expect(await screen.findByRole("button", { name: "翻译当前页面" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: defaultTranslateLabel })).toBeVisible();
     expect(screen.getByRole("button", { name: "一键总结" })).toBeVisible();
     await waitFor(() => {
       expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
@@ -532,7 +538,7 @@ describe("popup app", () => {
 
     render(PopupApp);
 
-    const primaryButton = screen.getByRole("button", { name: "翻译当前页面" });
+    const primaryButton = screen.getByRole("button", { name: defaultTranslateLabel });
 
     expect(primaryButton).toBeDisabled();
 
@@ -693,7 +699,7 @@ describe("popup app", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Chrome Built-in AI requires desktop Chrome 138 or later.",
     );
-    expect(screen.getByRole("button", { name: "翻译当前页面" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: defaultTranslateLabel })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "打开设置" })).not.toBeInTheDocument();
 
     await waitFor(() => {
@@ -931,7 +937,7 @@ describe("popup app", () => {
       taskId: "task-previous",
     });
     expect(screen.queryByText("页面已有译文")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "翻译当前页面" })).toBeVisible();
+    expect(screen.getByRole("button", { name: defaultTranslateLabel })).toBeVisible();
   });
 
   it("shows an alert when hiding existing translations fails", async () => {
@@ -1143,7 +1149,7 @@ describe("popup app", () => {
       expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+    await fireEvent.click(screen.getByRole("button", { name: defaultTranslateLabel }));
 
     expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
       type: "translatePage",
@@ -1168,7 +1174,7 @@ describe("popup app", () => {
     });
     await fireEvent.update(screen.getByRole("combobox", { name: "Source language" }), "en");
     await fireEvent.update(screen.getByRole("combobox", { name: "Target language" }), "ja");
-    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+    await fireEvent.click(screen.getByRole("button", { name: defaultTranslateLabel }));
 
     expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
       type: "translatePage",
@@ -1233,7 +1239,7 @@ describe("popup app", () => {
     await waitFor(() => {
       expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
     });
-    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+    await fireEvent.click(screen.getByRole("button", { name: defaultTranslateLabel }));
 
     expect(languageDetectorCreate).toHaveBeenCalledTimes(1);
     expect(detectorDestroy).toHaveBeenCalledTimes(1);
@@ -1281,9 +1287,9 @@ describe("popup app", () => {
       expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+    await fireEvent.click(screen.getByRole("button", { name: defaultTranslateLabel }));
 
-    expect(await screen.findByRole("button", { name: "翻译当前页面" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: defaultTranslateLabel })).toBeVisible();
     expect(screen.queryByLabelText("Task progress")).not.toBeInTheDocument();
     expect(screen.queryByText("翻译失败，请稍后重试。")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -1330,7 +1336,7 @@ describe("popup app", () => {
       expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+    await fireEvent.click(screen.getByRole("button", { name: defaultTranslateLabel }));
     await fireEvent.click(await screen.findByRole("button", { name: "取消翻译" }));
 
     expect(browserMock.runtimeSendMessage).toHaveBeenCalledWith({
@@ -1338,7 +1344,7 @@ describe("popup app", () => {
       taskId: "task-1",
       reason: "userCancelled",
     });
-    expect(await screen.findByRole("button", { name: "翻译当前页面" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: defaultTranslateLabel })).toBeVisible();
   });
 
   it("applies background progress broadcasts for the active task", async () => {
@@ -1369,7 +1375,7 @@ describe("popup app", () => {
       expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+    await fireEvent.click(screen.getByRole("button", { name: defaultTranslateLabel }));
 
     for (const listener of browserMock.runtimeListeners) {
       listener({
@@ -1418,7 +1424,7 @@ describe("popup app", () => {
 
     await waitFor(() => {
       expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
-      expect(screen.getByRole("button", { name: "翻译当前页面" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: defaultTranslateLabel })).toBeDisabled();
       expect(screen.getByRole("button", { name: "一键总结" })).toBeDisabled();
     });
     expect(await screen.findByRole("alert")).toHaveTextContent("Unsupported page URL.");
@@ -1446,7 +1452,7 @@ describe("popup app", () => {
 
     await waitFor(() => {
       expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
-      expect(screen.getByRole("button", { name: "翻译当前页面" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: defaultTranslateLabel })).toBeDisabled();
       expect(screen.getByRole("button", { name: "一键总结" })).toBeDisabled();
     });
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -1482,7 +1488,7 @@ describe("popup app", () => {
       expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+    await fireEvent.click(screen.getByRole("button", { name: defaultTranslateLabel }));
 
     expect(await screen.findByRole("button", { name: "重新翻译" })).toBeVisible();
     expect(screen.getByLabelText("Task progress")).toBeVisible();
@@ -1523,12 +1529,12 @@ describe("popup app", () => {
       expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+    await fireEvent.click(screen.getByRole("button", { name: defaultTranslateLabel }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Translation provider is unavailable.",
     );
-    expect(screen.getByRole("button", { name: "翻译当前页面" })).toBeVisible();
+    expect(screen.getByRole("button", { name: defaultTranslateLabel })).toBeVisible();
     expect(screen.queryByRole("button", { name: "重新翻译" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Task progress")).not.toBeInTheDocument();
     expect(screen.queryByText("Completed")).not.toBeInTheDocument();
@@ -1556,7 +1562,7 @@ describe("popup app", () => {
       expect(browserMock.tabsSendMessage).toHaveBeenCalledWith(123, { type: "estimatePage" });
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "翻译当前页面" }));
+    await fireEvent.click(screen.getByRole("button", { name: defaultTranslateLabel }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("No provider is configured.");
   });

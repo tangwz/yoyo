@@ -94,7 +94,7 @@ const primaryLabel = computed(() => {
     return "重新翻译";
   }
 
-  return "翻译当前页面";
+  return "\u7ffb\u8bd1\u9875\u9762";
 });
 
 const isPrimaryDisabled = computed(
@@ -745,23 +745,29 @@ async function onRemoveTranslations(): Promise<void> {
         :provider-label="providerLabel"
       />
 
-      <button
-        class="primary-action"
-        type="button"
-        :disabled="isPrimaryDisabled"
-        @click="onPrimaryAction"
+      <div
+        class="action-grid"
+        role="group"
+        aria-label="Page actions"
       >
-        {{ primaryLabel }}
-      </button>
+        <button
+          class="primary-action"
+          type="button"
+          :disabled="isPrimaryDisabled"
+          @click="onPrimaryAction"
+        >
+          {{ primaryLabel }}
+        </button>
 
-      <button
-        class="secondary-action summary-action"
-        type="button"
-        :disabled="isSummaryDisabled"
-        @click="onSummaryAction"
-      >
-        {{ isSummarizing ? t("button.summarizingPage") : t("button.summarizePage") }}
-      </button>
+        <button
+          class="summary-action"
+          type="button"
+          :disabled="isSummaryDisabled"
+          @click="onSummaryAction"
+        >
+          {{ isSummarizing ? t("button.summarizingPage") : t("button.summarizePage") }}
+        </button>
+      </div>
 
       <TaskProgress
         v-if="state === 'translating' || state === 'completed'"
@@ -843,10 +849,16 @@ async function onRemoveTranslations(): Promise<void> {
   margin-bottom: 16px;
 }
 
+.action-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
 .primary-action {
   width: 100%;
   min-height: 48px;
-  padding: 0 16px;
+  padding: 0 14px;
   border: 0;
   border-radius: 12px;
   color: #ffffff;
@@ -856,8 +868,9 @@ async function onRemoveTranslations(): Promise<void> {
     var(--yoyo-brand-800) 100%
   );
   box-shadow: 0 10px 20px rgb(7 95 50 / 22%);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 750;
+  line-height: 1.2;
   cursor: pointer;
 }
 
@@ -875,6 +888,44 @@ async function onRemoveTranslations(): Promise<void> {
 }
 
 .primary-action:focus-visible {
+  outline: 3px solid var(--yoyo-focus-ring);
+  outline-offset: 3px;
+}
+
+.summary-action {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid #b9d8aa;
+  border-radius: 12px;
+  color: var(--yoyo-brand-800);
+  background: linear-gradient(
+    180deg,
+    var(--yoyo-surface-muted) 0%,
+    var(--yoyo-brand-100) 100%
+  );
+  box-shadow: 0 8px 18px rgb(7 95 50 / 10%);
+  font-size: 14px;
+  font-weight: 730;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.summary-action:hover {
+  border-color: var(--yoyo-border-strong);
+  background: linear-gradient(
+    180deg,
+    var(--yoyo-brand-100) 0%,
+    var(--yoyo-surface-muted) 100%
+  );
+}
+
+.summary-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.summary-action:focus-visible {
   outline: 3px solid var(--yoyo-focus-ring);
   outline-offset: 3px;
 }
