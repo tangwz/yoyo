@@ -24,12 +24,17 @@ function isCjkCharacter(char: string): boolean {
   return /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(char);
 }
 
-function isLatinCharacter(char: string): boolean {
-  return /\p{Script=Latin}/u.test(char);
+function isNoSpaceScriptCharacter(char: string): boolean {
+  return (
+    isCjkCharacter(char) ||
+    /\p{Script=Thai}|\p{Script=Lao}|\p{Script=Khmer}|\p{Script=Myanmar}/u.test(
+      char,
+    )
+  );
 }
 
-function isLetter(char: string): boolean {
-  return /\p{Letter}/u.test(char);
+function isLatinCharacter(char: string): boolean {
+  return /\p{Script=Latin}/u.test(char);
 }
 
 function countWhitespaceSeparatedWords(text: string): number {
@@ -41,26 +46,21 @@ function shouldUseCharacterStrategy(
   sourceLanguage: SubtitleSourceLanguage,
 ): boolean {
   const combined = cues.map((cue) => cue.text).join(" ");
-  let cjkCount = 0;
+  let noSpaceScriptCount = 0;
   let latinCount = 0;
-  let noSpaceNonLatinCount = 0;
 
   for (const char of combined) {
-    if (isCjkCharacter(char)) {
-      cjkCount += 1;
+    if (isNoSpaceScriptCharacter(char)) {
+      noSpaceScriptCount += 1;
     } else if (isLatinCharacter(char)) {
       latinCount += 1;
-    } else if (isLetter(char)) {
-      noSpaceNonLatinCount += 1;
     }
   }
 
-  const characterStrategyCount = cjkCount + noSpaceNonLatinCount;
-
-  if (characterStrategyCount > latinCount) {
+  if (noSpaceScriptCount > latinCount) {
     return true;
   }
-  if (latinCount > characterStrategyCount) {
+  if (latinCount > noSpaceScriptCount) {
     return false;
   }
 

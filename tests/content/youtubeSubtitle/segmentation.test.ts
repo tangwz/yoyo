@@ -164,6 +164,29 @@ describe("segmentSubtitleCues", () => {
     ]);
   });
 
+  it("uses word strategy for known space-separated non-Latin text", () => {
+    const segments = segmentSubtitleCues(
+      [cue(0, 0, 1000, "Привет"), cue(1, 1000, 2000, "мир.")],
+      { sourceLanguage: { kind: "known", code: "ru" } },
+    );
+
+    expect(segments.map((segment) => segment.sourceText)).toEqual([
+      "Привет мир.",
+    ]);
+  });
+
+  it("uses word strategy for unknown non-Latin text with spaces", () => {
+    const segments = segmentSubtitleCues(
+      [cue(0, 0, 1000, "Привет мир один два")],
+      { sourceLanguage: { kind: "unknown" }, maxWords: 2 },
+    );
+
+    expect(segments.map((segment) => segment.sourceText)).toEqual([
+      "Привет мир",
+      "один два",
+    ]);
+  });
+
   it("splits at long pauses", () => {
     const segments = segmentSubtitleCues(
       [cue(0, 0, 1000, "Hello"), cue(1, 2500, 3500, "world")],
