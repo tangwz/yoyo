@@ -38,6 +38,8 @@ describe("createSubtitleSessionCacheKey", () => {
   });
 
   it.each([
+    ["videoId", { videoId: "video-2" }],
+    ["trackKey", { trackKey: "track-2" }],
     ["promptVersion", { promptVersion: "prompt-v2" }],
     ["segmentationVersion", { segmentationVersion: "v2" }],
     ["translationMode", { translationMode: "youtubeSubtitleRealtime:v2" }],

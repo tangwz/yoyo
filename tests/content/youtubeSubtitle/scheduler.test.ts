@@ -147,6 +147,36 @@ describe("SubtitleScheduler", () => {
     ]);
   });
 
+  it("clearInFlight does not resurrect translated or retry-exhausted entries", () => {
+    const queue = scheduler({ maxBatchSegments: 1, maxRetryCount: 0 });
+    queue.replaceTimeline([
+      segment("translated", 0, 100),
+      segment("exhausted", 100, 200),
+      segment("in-flight", 200, 300),
+    ]);
+    queue.scanWindow(0);
+
+    expect(queue.takeBatch("request-1").map((entry) => entry.segmentId)).toEqual([
+      "translated",
+    ]);
+    queue.markTranslated(["translated"]);
+    expect(queue.takeBatch("request-2").map((entry) => entry.segmentId)).toEqual([
+      "exhausted",
+    ]);
+    queue.markFailed(["exhausted"]);
+    expect(queue.takeBatch("request-3").map((entry) => entry.segmentId)).toEqual([
+      "in-flight",
+    ]);
+
+    queue.clearInFlight();
+    queue.scanWindow(0);
+
+    expect(queue.takeBatch("request-4").map((entry) => entry.segmentId)).toEqual([
+      "in-flight",
+    ]);
+    expect(queue.takeBatch("request-5")).toEqual([]);
+  });
+
   it("replaceTimeline clears old pending, in-flight, translated, and retry state", () => {
     const queue = scheduler({ maxRetryCount: 0 });
     queue.replaceTimeline([segment("old", 0, 100), segment("failed", 100, 200)]);
