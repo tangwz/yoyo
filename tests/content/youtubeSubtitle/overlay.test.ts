@@ -131,4 +131,19 @@ describe("mountYoutubeSubtitleOverlay", () => {
     ).toHaveLength(1);
     expect(mountedOverlay(player)).toBe(first.element);
   });
+
+  it("destroys stale overlay handles before remounting on the same player", () => {
+    const player = createPlayer();
+    const first = mountYoutubeSubtitleOverlay({ player });
+
+    first.element.remove();
+    const second = mountYoutubeSubtitleOverlay({ player });
+
+    expect(second.element).not.toBe(first.element);
+    expect(mountedOverlay(player)).toBe(second.element);
+
+    second.destroy();
+
+    expect(player.style.position).toBe("");
+  });
 });

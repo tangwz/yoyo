@@ -129,4 +129,32 @@ describe("mountYoutubeSubtitlePlayerButton", () => {
     expect(remounted.element).not.toBe(mounted.element);
     expect(mountedButton(controls)).toBe(remounted.element);
   });
+
+  it("destroys stale button handles before remounting on the same controls", () => {
+    const controls = createControls();
+    const staleHost = document.createElement("div");
+    document.body.append(staleHost);
+    const staleHandler = vi.fn();
+    const nextHandler = vi.fn();
+    const first = mountYoutubeSubtitlePlayerButton({
+      controls,
+      status: "enabled",
+      onToggle: staleHandler,
+    });
+
+    staleHost.append(first.element);
+    const second = mountYoutubeSubtitlePlayerButton({
+      controls,
+      status: "disabled",
+      onToggle: nextHandler,
+    });
+
+    expect(second.element).not.toBe(first.element);
+    expect(mountedButton(controls)).toBe(second.element);
+    first.element.click();
+    second.element.click();
+
+    expect(staleHandler).not.toHaveBeenCalled();
+    expect(nextHandler).toHaveBeenCalledTimes(1);
+  });
 });

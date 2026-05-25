@@ -175,6 +175,7 @@ export function mountYoutubeSubtitlePlayerButton(
     });
     return existing;
   }
+  existing?.destroy();
 
   const button = new YoutubeSubtitlePlayerButtonHandle(options);
   const mountedButton = createMountedButton(options.controls, button);

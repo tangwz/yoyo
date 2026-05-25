@@ -110,6 +110,7 @@ export function mountYoutubeSubtitleOverlay(
   if (existing && existing.element.parentElement === options.player) {
     return existing;
   }
+  existing?.destroy();
 
   const overlay = new YoutubeSubtitleOverlayHandle(options);
   const mountedOverlay = createMountedOverlay(options.player, overlay);
