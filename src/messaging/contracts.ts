@@ -7,6 +7,13 @@ import type {
 } from "@/translation/types";
 import type { ProviderReadiness } from "@/provider/readiness";
 import type { SummarySourceResult } from "@/summary/types";
+import type {
+  SubtitleCue,
+  SubtitleSegment,
+  SubtitleSourceLanguage,
+  SubtitleTranslationItem,
+  SubtitleTranslationMode,
+} from "@/subtitle/types";
 
 export type OptionsSection = "provider";
 
@@ -150,6 +157,44 @@ export type BackgroundRequest =
       collectionComplete?: boolean;
       failedSegmentIds?: string[];
       recovery?: LazySegmentRecoverySnapshot;
+    }
+  | {
+      type: "translateSubtitleBatch";
+      runtimeSessionId: string;
+      configVersion: number;
+      requestId: string;
+      videoId: string;
+      trackKey: string;
+      sourceLanguage: SubtitleSourceLanguage;
+      targetLanguage: string;
+      providerId: string;
+      modelKey: string;
+      promptVersion: string;
+      segmentationVersion: string;
+      translationMode: SubtitleTranslationMode;
+      segments: SubtitleSegment[];
+    }
+  | {
+      type: "cancelSubtitleRequests";
+      runtimeSessionId: string;
+      reason: "userDisabled" | "videoChanged" | "configChanged" | "pageUnloaded";
+    }
+  | {
+      type: "segmentSubtitleChunk";
+      runtimeSessionId: string;
+      configVersion: number;
+      requestId: string;
+      videoId: string;
+      trackKey: string;
+      sourceLanguage: SubtitleSourceLanguage;
+      targetLanguage: string;
+      providerId: string;
+      modelKey: string;
+      segmentationPromptVersion: string;
+      segmentationVersion: string;
+      sourceCues: SubtitleCue[];
+      previousContext?: string;
+      nextContext?: string;
     };
 
 export type BackgroundResponse =
@@ -162,4 +207,34 @@ export type BackgroundResponse =
       providerMode: ProviderMode;
     }
   | { type: "backgroundActionResult"; success: true }
-  | { type: "backgroundError"; message: string };
+  | { type: "backgroundError"; message: string }
+  | {
+      type: "subtitleTranslateBatchResult";
+      runtimeSessionId: string;
+      configVersion: number;
+      requestId: string;
+      items: SubtitleTranslationItem[];
+    }
+  | {
+      type: "subtitleTranslateBatchError";
+      runtimeSessionId: string;
+      configVersion: number;
+      requestId: string;
+      message: string;
+      retryable: boolean;
+    }
+  | {
+      type: "segmentSubtitleChunkResult";
+      runtimeSessionId: string;
+      configVersion: number;
+      requestId: string;
+      segments: Array<SubtitleSegment & { translatedText?: string }>;
+    }
+  | {
+      type: "segmentSubtitleChunkError";
+      runtimeSessionId: string;
+      configVersion: number;
+      requestId: string;
+      message: string;
+      fallbackRequired: true;
+    };

@@ -1,5 +1,10 @@
 import type { TranslationPreferences } from "@/translation/types";
 
+export {
+  defaultSubtitlePreferences,
+  type SubtitlePreferences,
+} from "@/subtitle/types";
+
 export type UiPreferences = {
   theme: "light";
   uiLanguage: "zh-CN" | "en-US";

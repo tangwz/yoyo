@@ -226,6 +226,38 @@ describe("messaging contracts", () => {
     });
   });
 
+  it("supports subtitle translation batch requests", () => {
+    const request = {
+      type: "translateSubtitleBatch",
+      runtimeSessionId: "runtime-1",
+      configVersion: 2,
+      requestId: "request-1",
+      videoId: "video-1",
+      trackKey: "video-1|en|asr",
+      sourceLanguage: { kind: "known", code: "en" },
+      targetLanguage: "zh-CN",
+      providerId: "provider-1",
+      modelKey: "gpt-5-mini",
+      promptVersion: "subtitle-translation-v1",
+      segmentationVersion: "builtin-v1",
+      translationMode: "youtubeSubtitleRealtime",
+      segments: [
+        {
+          segmentId: "seg-1",
+          sourceCueIds: ["cue-1"],
+          sourceCueStartIndex: 0,
+          sourceCueEndIndex: 0,
+          startMs: 1000,
+          endMs: 2500,
+          sourceText: "Hello world.",
+          textHash: "hash-1",
+        },
+      ],
+    } satisfies BackgroundRequest;
+
+    expect(request.type).toBe("translateSubtitleBatch");
+  });
+
   it("keeps content error responses available to runtime handlers", () => {
     const response = {
       type: "contentError",

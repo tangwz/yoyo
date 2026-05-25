@@ -7,6 +7,11 @@ import {
 } from "@/storage/defaults";
 import { storageKeys } from "@/storage/storageKeys";
 import {
+  defaultSubtitlePreferences,
+  normalizeSubtitlePreferences,
+  type SubtitlePreferences,
+} from "@/subtitle/types";
+import {
   isTargetLanguage,
   type TargetLanguage,
   type TranslationMode,
@@ -30,6 +35,10 @@ type UiPreferenceRepositoryDependencies = {
 };
 
 type TranslationPreferenceRepositoryDependencies = {
+  syncedStorage: StorageArea;
+};
+
+type SubtitlePreferenceRepositoryDependencies = {
   syncedStorage: StorageArea;
 };
 
@@ -238,7 +247,33 @@ export function translationPreferenceRepository({
   return { get, save };
 }
 
-export function createStorageRepositories() {
+export function subtitlePreferenceRepository({
+  syncedStorage,
+}: SubtitlePreferenceRepositoryDependencies) {
+  async function get(): Promise<SubtitlePreferences> {
+    const result = await syncedStorage.get({
+      [storageKeys.subtitlePreferences]: defaultSubtitlePreferences,
+    });
+    return normalizeSubtitlePreferences(result[storageKeys.subtitlePreferences]);
+  }
+
+  async function save(preferences: SubtitlePreferences): Promise<void> {
+    await syncedStorage.set({
+      [storageKeys.subtitlePreferences]: normalizeSubtitlePreferences(preferences),
+    });
+  }
+
+  return { get, save };
+}
+
+export type StorageRepositories = {
+  providers: ReturnType<typeof providerProfileRepository>;
+  uiPreferences: ReturnType<typeof uiPreferenceRepository>;
+  translationPreferences: ReturnType<typeof translationPreferenceRepository>;
+  subtitlePreferences?: ReturnType<typeof subtitlePreferenceRepository>;
+};
+
+export function createStorageRepositories(): StorageRepositories {
   const runtime = globalThis as typeof globalThis & ExtensionStorageRuntime;
   const storage = runtime.chrome.storage;
 
@@ -246,5 +281,6 @@ export function createStorageRepositories() {
     providers: providerProfileRepository({ privateStorage: storage.local }),
     uiPreferences: uiPreferenceRepository({ syncedStorage: storage.sync }),
     translationPreferences: translationPreferenceRepository({ syncedStorage: storage.sync }),
+    subtitlePreferences: subtitlePreferenceRepository({ syncedStorage: storage.sync }),
   };
 }

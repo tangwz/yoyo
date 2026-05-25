@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createInMemoryStorageArea,
   providerProfileRepository,
+  subtitlePreferenceRepository,
   translationPreferenceRepository,
   uiPreferenceRepository,
 } from "@/storage/repositories";
+import { defaultSubtitlePreferences } from "@/subtitle/types";
 import { isTargetLanguage } from "@/translation/types";
 
 describe("storage repositories", () => {
@@ -65,6 +67,33 @@ describe("storage repositories", () => {
       "yoyo.uiPreferences": { theme: "light", uiLanguage: "zh-CN" },
     });
     expect(await local.get("yoyo.uiPreferences")).toEqual({});
+  });
+
+  it("stores subtitle preferences in sync storage", async () => {
+    const sync = createInMemoryStorageArea();
+    const repository = subtitlePreferenceRepository({ syncedStorage: sync });
+
+    await expect(repository.get()).resolves.toEqual(defaultSubtitlePreferences);
+
+    await repository.save({
+      schemaVersion: 1,
+      youtubeEnabled: false,
+      aiSegmentationEnabled: true,
+      prefetchBeforeMs: 1000,
+      prefetchAfterMs: 45000,
+      maxRetryCount: 1,
+    });
+
+    expect(await sync.get("yoyo.subtitlePreferences")).toEqual({
+      "yoyo.subtitlePreferences": {
+        schemaVersion: 1,
+        youtubeEnabled: false,
+        aiSegmentationEnabled: true,
+        prefetchBeforeMs: 1000,
+        prefetchAfterMs: 45000,
+        maxRetryCount: 1,
+      },
+    });
   });
 
   it("falls back to default UI preferences for corrupt sync storage data", async () => {
