@@ -7,6 +7,16 @@ import {
 function createControls(): HTMLElement {
   const controls = document.createElement("div");
   controls.className = "ytp-right-controls";
+
+  const settings = document.createElement("button");
+  settings.className = "ytp-settings-button";
+  settings.type = "button";
+
+  const fullscreen = document.createElement("button");
+  fullscreen.className = "ytp-fullscreen-button";
+  fullscreen.type = "button";
+
+  controls.append(settings, fullscreen);
   document.body.append(controls);
   return controls;
 }
@@ -47,6 +57,20 @@ describe("mountYoutubeSubtitlePlayerButton", () => {
     expect(first.element.textContent).toContain("\u6587");
     expect(first.element.getAttribute("aria-label")).toContain("enabled");
     expect(first.element.title).toContain("enabled");
+  });
+
+  it("mounts before native controls so it stays inside the controls cluster", () => {
+    const controls = createControls();
+    const nativeFirstControl = controls.firstElementChild;
+
+    const button = mountYoutubeSubtitlePlayerButton({
+      controls,
+      status: "enabled",
+      onToggle: vi.fn(),
+    });
+
+    expect(button.element.nextElementSibling).toBe(nativeFirstControl);
+    expect(controls.firstElementChild).toBe(button.element);
   });
 
   it.each([

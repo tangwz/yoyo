@@ -169,6 +169,7 @@ export function mountYoutubeSubtitlePlayerButton(
 ): YoutubeSubtitlePlayerButton {
   const existing = mountedButtons.get(options.controls);
   if (existing && existing.element.parentElement === options.controls) {
+    placeButtonAtControlsStart(options.controls, existing.element);
     existing.update({
       status: options.status,
       onToggle: options.onToggle,
@@ -179,10 +180,21 @@ export function mountYoutubeSubtitlePlayerButton(
 
   const button = new YoutubeSubtitlePlayerButtonHandle(options);
   const mountedButton = createMountedButton(options.controls, button);
-  options.controls.append(button.element);
+  placeButtonAtControlsStart(options.controls, button.element);
   mountedButtons.set(options.controls, mountedButton);
 
   return mountedButton;
+}
+
+function placeButtonAtControlsStart(
+  controls: HTMLElement,
+  button: HTMLButtonElement,
+): void {
+  if (controls.firstElementChild === button) {
+    return;
+  }
+
+  controls.insertBefore(button, controls.firstElementChild);
 }
 
 function createMountedButton(
