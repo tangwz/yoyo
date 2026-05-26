@@ -35,10 +35,13 @@ const copyLabel = "Copy translation";
 const copiedLabel = "Copied";
 const copyFailedLabel = "Copy failed";
 const copyResetDelayMs = 1600;
+const svgNamespace = "http://www.w3.org/2000/svg";
+const maxDismissedRequestIds = 32;
 
 let currentInput: SelectionTranslationPanelInput | undefined;
 let currentDependencies: ResolvedSelectionPanelDependencies | undefined;
 let copyResetTimer: number | undefined;
+const dismissedRequestIds = new Set<string>();
 
 function resolveDependencies(
   dependencies: SelectionPanelDependencies = {},
@@ -66,8 +69,22 @@ function removeExistingPanel(): void {
 }
 
 function closePanel(): void {
+  if (currentInput) {
+    rememberDismissedRequestId(currentInput.requestId);
+  }
   removeExistingPanel();
   currentInput = undefined;
+}
+
+function rememberDismissedRequestId(requestId: string): void {
+  dismissedRequestIds.add(requestId);
+  while (dismissedRequestIds.size > maxDismissedRequestIds) {
+    const oldestRequestId = dismissedRequestIds.values().next().value;
+    if (oldestRequestId === undefined) {
+      return;
+    }
+    dismissedRequestIds.delete(oldestRequestId);
+  }
 }
 
 function createHeader(input: SelectionTranslationPanelInput): HTMLElement {
@@ -96,14 +113,16 @@ function createHeader(input: SelectionTranslationPanelInput): HTMLElement {
   const spacer = document.createElement("span");
   spacer.style.flex = "1 1 auto";
 
-  const copyButton = createIconButton("[ ]", copyLabel, "copy");
+  const copyButton = createIconButton("copy", copyLabel);
+  copyButton.dataset.yoyoSelectionAction = "copy";
   copyButton.disabled =
     input.state !== "translated" || input.translatedText.length === 0;
   copyButton.addEventListener("click", () => {
     void copyTranslation(copyButton);
   });
 
-  const closeButton = createIconButton("x", "Close translation popup", "close");
+  const closeButton = createIconButton("close", "Close translation popup");
+  closeButton.dataset.yoyoSelectionAction = "close";
   closeButton.addEventListener("click", closePanel);
 
   header.append(brand, providerSelect, spacer, copyButton, closeButton);
@@ -131,7 +150,7 @@ function createProviderSelect(input: SelectionTranslationPanelInput): HTMLSelect
   }
 
   select.value = input.selectedProviderId ?? input.providerOptions[0]?.id ?? "";
-  select.disabled = input.providerOptions.length === 0;
+  select.disabled = input.state === "loading" || input.providerOptions.length === 0;
   select.addEventListener("change", () => {
     void switchProvider(select.value);
   });
@@ -140,15 +159,13 @@ function createProviderSelect(input: SelectionTranslationPanelInput): HTMLSelect
 }
 
 function createIconButton(
-  text: string,
+  icon: "copy" | "close",
   label: string,
-  action: "copy" | "close",
 ): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
-  button.dataset.yoyoSelectionAction = action;
   button.setAttribute("aria-label", label);
-  button.textContent = text;
+  button.append(createIconSvg(icon));
   button.style.display = "inline-flex";
   button.style.alignItems = "center";
   button.style.justifyContent = "center";
@@ -163,6 +180,35 @@ function createIconButton(
   button.style.cursor = "pointer";
   button.style.padding = "0";
   return button;
+}
+
+function createIconSvg(icon: "copy" | "close"): SVGSVGElement {
+  const svg = document.createElementNS(svgNamespace, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+
+  const pathData =
+    icon === "copy"
+      ? [
+          "M8 8H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-2",
+          "M10 4h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z",
+        ]
+      : ["M18 6 6 18", "M6 6l12 12"];
+
+  for (const data of pathData) {
+    const path = document.createElementNS(svgNamespace, "path");
+    path.setAttribute("d", data);
+    svg.append(path);
+  }
+
+  return svg;
 }
 
 function createBody(input: SelectionTranslationPanelInput): HTMLElement {
@@ -441,6 +487,17 @@ export function showSelectionTranslation(
   input: SelectionTranslationPanelInput,
   dependencies: SelectionPanelDependencies = {},
 ): void {
+  if (dismissedRequestIds.has(input.requestId)) {
+    return;
+  } else if (
+    input.state !== "loading" &&
+    currentInput &&
+    currentInput.requestId !== input.requestId &&
+    document.getElementById(panelId) !== null
+  ) {
+    return;
+  }
+
   currentInput = input;
   currentDependencies = resolveDependencies(dependencies);
   renderPanel(input);

@@ -49,6 +49,7 @@ export async function translateSelection(
   }
 
   const translationStartedAt = nowMs();
+  const requestId = input.requestId ?? createSelectionTranslationRequestId();
   let currentStage = "selection";
   let resolvedSourceLanguage = input.sourceLanguage;
   let selectedProviderId: string | undefined;
@@ -61,6 +62,16 @@ export async function translateSelection(
   });
 
   try {
+    await dependencies.sendToContent(input.tabId, {
+      type: "showSelectionTranslation",
+      requestId,
+      state: "loading",
+      sourceText,
+      sourceLanguage: input.sourceLanguage,
+      targetLanguage: input.targetLanguage,
+      providerOptions,
+    });
+
     currentStage = "profile";
     const profileStartedAt = nowMs();
     const providerSelection = await selectSelectionProvider(input, dependencies);
@@ -75,6 +86,7 @@ export async function translateSelection(
       await sendSelectionTranslationError(
         input,
         {
+          requestId,
           sourceText,
           sourceLanguage: resolvedSourceLanguage,
           providerOptions,
@@ -88,6 +100,17 @@ export async function translateSelection(
       return;
     }
     selectedProviderId = profile.id;
+    await dependencies.sendToContent(input.tabId, {
+      type: "showSelectionTranslation",
+      requestId,
+      state: "loading",
+      sourceText,
+      sourceLanguage: input.sourceLanguage,
+      targetLanguage: input.targetLanguage,
+      selectedProviderId,
+      providerOptions,
+    });
+
     currentStage = "detectLanguage";
     const detectStartedAt = nowMs();
     const sourceLanguage = await resolveSelectionSourceLanguage(
@@ -145,7 +168,7 @@ export async function translateSelection(
     const showResultStartedAt = nowMs();
     await dependencies.sendToContent(input.tabId, {
       type: "showSelectionTranslation",
-      requestId: input.requestId ?? createSelectionTranslationRequestId(),
+      requestId,
       state: "translated",
       sourceText,
       sourceLanguage,
@@ -163,6 +186,7 @@ export async function translateSelection(
     await sendSelectionTranslationError(
       input,
       {
+        requestId,
         sourceText,
         sourceLanguage: resolvedSourceLanguage,
         selectedProviderId,
@@ -327,6 +351,7 @@ function createSelectionTranslationRequestId(): string {
 async function sendSelectionTranslationError(
   input: TranslateSelectionInput,
   details: {
+    requestId?: string;
     sourceText: string;
     sourceLanguage: string;
     selectedProviderId?: string;
@@ -337,7 +362,8 @@ async function sendSelectionTranslationError(
 ): Promise<void> {
   await dependencies.sendToContent(input.tabId, {
     type: "showSelectionTranslation",
-    requestId: input.requestId ?? createSelectionTranslationRequestId(),
+    requestId:
+      details.requestId ?? input.requestId ?? createSelectionTranslationRequestId(),
     state: "failed",
     sourceText: details.sourceText,
     sourceLanguage: details.sourceLanguage,

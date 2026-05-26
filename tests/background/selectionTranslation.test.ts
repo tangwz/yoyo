@@ -192,6 +192,54 @@ describe("translateSelection", () => {
     );
   });
 
+  it("sends a loading popup before calling the translation provider", async () => {
+    const callOrder: string[] = [];
+    translateText.mockImplementation(async () => {
+      callOrder.push("translate");
+      return { translatedText: "你好" };
+    });
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "showSelectionTranslation") {
+        callOrder.push(message.state);
+      }
+      return { type: "contentActionResult", success: true };
+    });
+
+    await translateSelection(
+      {
+        tabId: 42,
+        requestId: "selection-request-1",
+        text: "Hello",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+      },
+      dependencies(),
+    );
+
+    expect(callOrder).toEqual(["loading", "loading", "translate", "translated"]);
+    expect(sendToContent).toHaveBeenNthCalledWith(
+      1,
+      42,
+      expect.objectContaining({
+        type: "showSelectionTranslation",
+        requestId: "selection-request-1",
+        state: "loading",
+        sourceText: "Hello",
+        providerOptions: [],
+      }),
+    );
+    expect(sendToContent).toHaveBeenNthCalledWith(
+      2,
+      42,
+      expect.objectContaining({
+        type: "showSelectionTranslation",
+        requestId: "selection-request-1",
+        state: "loading",
+        selectedProviderId: "provider-1",
+      }),
+    );
+  });
+
   it("uses the saved selection provider by default", async () => {
     const secondProfile = {
       id: "provider-2",
@@ -313,6 +361,15 @@ describe("translateSelection", () => {
 
     expect(getTranslationProvider).not.toHaveBeenCalled();
     expect(translateText).not.toHaveBeenCalled();
+    expect(sendToContent).toHaveBeenNthCalledWith(
+      1,
+      42,
+      expect.objectContaining({
+        type: "showSelectionTranslation",
+        requestId: "selection-request-4",
+        state: "loading",
+      }),
+    );
     expect(sendToContent).toHaveBeenCalledWith(
       42,
       expect.objectContaining({

@@ -96,12 +96,32 @@ describe("selection panel", () => {
     expect(closeButton?.getAttribute("aria-label")).toBe(
       "Close translation popup",
     );
+    expect(copyButton?.querySelector("svg")).not.toBeNull();
+    expect(closeButton?.querySelector("svg")).not.toBeNull();
     expect(copyButton?.textContent).not.toContain("Copy");
     expect(closeButton?.textContent).not.toContain("Close");
   });
 
+  it("disables provider dropdown while a selection translation is loading", () => {
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "selection-request-1",
+      state: "loading",
+    });
+
+    const providerSelect = getPanel().querySelector("select") as HTMLSelectElement;
+
+    expect(providerSelect.disabled).toBe(true);
+  });
+
   it("replaces previous panel content", () => {
     showSelectionTranslation(translatedInput);
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "selection-request-2",
+      sourceText: "Good morning",
+      state: "loading",
+    });
     showSelectionTranslation({
       ...translatedInput,
       requestId: "selection-request-2",
@@ -115,6 +135,100 @@ describe("selection panel", () => {
     expect(document.body.textContent).not.toContain("Hello translated");
     expect(document.body.textContent).not.toContain("Good morning");
     expect(document.body.textContent).toContain("Morning translated");
+  });
+
+  it("ignores terminal results from stale selection requests", () => {
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "selection-request-1",
+      state: "loading",
+    });
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "selection-request-2",
+      state: "loading",
+      sourceText: "Good morning",
+    });
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "selection-request-1",
+      translatedText: "Stale translation",
+    });
+
+    const panel = getPanel();
+    expect(panel.textContent).toContain("Translating...");
+    expect(panel.textContent).not.toContain("Stale translation");
+    expect(panel.textContent).not.toContain("Good morning");
+  });
+
+  it("shows a new failed result after its loading state replaces an older popup", () => {
+    showSelectionTranslation(translatedInput);
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "selection-request-2",
+      state: "loading",
+      sourceText: "Good morning",
+      providerOptions: [],
+    });
+    showSelectionTranslation({
+      type: "showSelectionTranslation",
+      requestId: "selection-request-2",
+      state: "failed",
+      sourceText: "Good morning",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+      providerOptions: [],
+      errorMessage: "No translation provider is configured.",
+    });
+
+    const panel = getPanel();
+    expect(panel.getAttribute("role")).toBe("alert");
+    expect(panel.textContent).toContain("No translation provider is configured.");
+    expect(panel.textContent).not.toContain("Hello translated");
+    expect(panel.textContent).not.toContain("Good morning");
+  });
+
+  it("does not reopen a closed panel when its terminal result arrives", () => {
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "closed-request-1",
+      state: "loading",
+    });
+
+    const closeButton = getPanel().querySelector(
+      '[data-yoyo-selection-action="close"]',
+    ) as HTMLButtonElement;
+    closeButton.click();
+
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "closed-request-1",
+      translatedText: "Late translation",
+    });
+
+    expect(document.getElementById("yoyo-selection-translation-panel")).toBeNull();
+  });
+
+  it("does not reopen a closed panel when a later loading state arrives", () => {
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "closed-request-2",
+      state: "loading",
+      providerOptions: [],
+    });
+
+    const closeButton = getPanel().querySelector(
+      '[data-yoyo-selection-action="close"]',
+    ) as HTMLButtonElement;
+    closeButton.click();
+
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "closed-request-2",
+      state: "loading",
+    });
+
+    expect(document.getElementById("yoyo-selection-translation-panel")).toBeNull();
   });
 
   it("renders failed state without source text", () => {
@@ -441,7 +555,10 @@ describe("selection panel", () => {
   });
 
   it("removes panel on close", () => {
-    showSelectionTranslation(translatedInput);
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "close-request-1",
+    });
 
     const closeButton = getPanel().querySelector(
       '[data-yoyo-selection-action="close"]',
