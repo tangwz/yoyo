@@ -1,8 +1,10 @@
 import type { ProviderProfile } from "@/provider/types";
 import {
+  defaultSelectionTranslationPreferences,
   defaultTranslationPreferences,
   defaultUiPreferences,
   isUiLanguage,
+  type SelectionTranslationPreferences,
   type UiPreferences,
 } from "@/storage/defaults";
 import { storageKeys } from "@/storage/storageKeys";
@@ -39,6 +41,10 @@ type TranslationPreferenceRepositoryDependencies = {
 };
 
 type SubtitlePreferenceRepositoryDependencies = {
+  syncedStorage: StorageArea;
+};
+
+type SelectionTranslationPreferenceRepositoryDependencies = {
   syncedStorage: StorageArea;
 };
 
@@ -114,6 +120,21 @@ function normalizeUiPreferences(value: unknown): UiPreferences {
       ? value.uiLanguage
       : defaultUiPreferences.uiLanguage,
   };
+}
+
+function normalizeSelectionTranslationPreferences(
+  value: unknown,
+): SelectionTranslationPreferences {
+  if (!isRecord(value)) {
+    return defaultSelectionTranslationPreferences;
+  }
+
+  const providerId =
+    typeof value.providerId === "string" && value.providerId.trim().length > 0
+      ? value.providerId
+      : undefined;
+
+  return providerId === undefined ? {} : { providerId };
 }
 
 export function createInMemoryStorageArea(): StorageArea {
@@ -247,6 +268,30 @@ export function translationPreferenceRepository({
   return { get, save };
 }
 
+export function selectionTranslationPreferenceRepository({
+  syncedStorage,
+}: SelectionTranslationPreferenceRepositoryDependencies) {
+  async function get(): Promise<SelectionTranslationPreferences> {
+    const result = await syncedStorage.get({
+      [storageKeys.selectionTranslationPreferences]:
+        defaultSelectionTranslationPreferences,
+    });
+
+    return normalizeSelectionTranslationPreferences(
+      result[storageKeys.selectionTranslationPreferences],
+    );
+  }
+
+  async function save(preferences: SelectionTranslationPreferences): Promise<void> {
+    await syncedStorage.set({
+      [storageKeys.selectionTranslationPreferences]:
+        normalizeSelectionTranslationPreferences(preferences),
+    });
+  }
+
+  return { get, save };
+}
+
 export function subtitlePreferenceRepository({
   syncedStorage,
 }: SubtitlePreferenceRepositoryDependencies) {
@@ -270,6 +315,9 @@ export type StorageRepositories = {
   providers: ReturnType<typeof providerProfileRepository>;
   uiPreferences: ReturnType<typeof uiPreferenceRepository>;
   translationPreferences: ReturnType<typeof translationPreferenceRepository>;
+  selectionTranslationPreferences: ReturnType<
+    typeof selectionTranslationPreferenceRepository
+  >;
   subtitlePreferences: ReturnType<typeof subtitlePreferenceRepository>;
 };
 
@@ -281,6 +329,9 @@ export function createStorageRepositories(): StorageRepositories {
     providers: providerProfileRepository({ privateStorage: storage.local }),
     uiPreferences: uiPreferenceRepository({ syncedStorage: storage.sync }),
     translationPreferences: translationPreferenceRepository({ syncedStorage: storage.sync }),
+    selectionTranslationPreferences: selectionTranslationPreferenceRepository({
+      syncedStorage: storage.sync,
+    }),
     subtitlePreferences: subtitlePreferenceRepository({ syncedStorage: storage.sync }),
   };
 }

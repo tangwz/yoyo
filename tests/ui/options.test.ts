@@ -17,6 +17,8 @@ const getUiPreferences = vi.fn();
 const saveUiPreferences = vi.fn();
 const getTranslationPreferences = vi.fn();
 const saveTranslationPreferences = vi.fn();
+const getSelectionTranslationPreferences = vi.fn();
+const saveSelectionTranslationPreferences = vi.fn();
 const getSubtitlePreferences = vi.fn();
 const saveSubtitlePreferences = vi.fn();
 const originalScrollIntoView = Element.prototype.scrollIntoView;
@@ -54,6 +56,10 @@ function mockStorageRepositories() {
       get: getTranslationPreferences,
       save: saveTranslationPreferences,
     },
+    selectionTranslationPreferences: {
+      get: getSelectionTranslationPreferences,
+      save: saveSelectionTranslationPreferences,
+    },
     subtitlePreferences: {
       get: getSubtitlePreferences,
       save: saveSubtitlePreferences,
@@ -86,6 +92,8 @@ describe("options app", () => {
       targetLanguage: "zh-CN",
     });
     saveTranslationPreferences.mockResolvedValue(undefined);
+    getSelectionTranslationPreferences.mockResolvedValue({});
+    saveSelectionTranslationPreferences.mockResolvedValue(undefined);
     getSubtitlePreferences.mockResolvedValue({
       schemaVersion: 1,
       youtubeEnabled: true,

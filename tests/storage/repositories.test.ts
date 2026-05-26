@@ -2,10 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createInMemoryStorageArea,
   providerProfileRepository,
+  selectionTranslationPreferenceRepository,
   subtitlePreferenceRepository,
   translationPreferenceRepository,
   uiPreferenceRepository,
 } from "@/storage/repositories";
+import {
+  defaultSelectionTranslationPreferences,
+} from "@/storage/defaults";
 import { defaultSubtitlePreferences } from "@/subtitle/types";
 import { isTargetLanguage } from "@/translation/types";
 
@@ -94,6 +98,57 @@ describe("storage repositories", () => {
         maxRetryCount: 1,
       },
     });
+  });
+
+  it("stores selection translation preferences in sync storage", async () => {
+    const local = createInMemoryStorageArea();
+    const sync = createInMemoryStorageArea();
+    const repository = selectionTranslationPreferenceRepository({
+      syncedStorage: sync,
+    });
+
+    await expect(repository.get()).resolves.toEqual(
+      defaultSelectionTranslationPreferences,
+    );
+
+    await repository.save({ providerId: "provider-1" });
+
+    expect(await sync.get("yoyo.selectionTranslationPreferences")).toEqual({
+      "yoyo.selectionTranslationPreferences": { providerId: "provider-1" },
+    });
+    expect(await local.get("yoyo.selectionTranslationPreferences")).toEqual({});
+  });
+
+  it("normalizes corrupt selection translation preferences", async () => {
+    const sync = createInMemoryStorageArea();
+    const repository = selectionTranslationPreferenceRepository({
+      syncedStorage: sync,
+    });
+
+    for (const storedValue of [null, "", 1, true, ["provider-1"]]) {
+      await sync.set({ "yoyo.selectionTranslationPreferences": storedValue });
+
+      await expect(repository.get()).resolves.toEqual(
+        defaultSelectionTranslationPreferences,
+      );
+    }
+  });
+
+  it("drops invalid selection translation provider ids", async () => {
+    const sync = createInMemoryStorageArea();
+    const repository = selectionTranslationPreferenceRepository({
+      syncedStorage: sync,
+    });
+
+    for (const providerId of ["", "   ", 1, true, null, ["provider-1"]]) {
+      await sync.set({
+        "yoyo.selectionTranslationPreferences": { providerId },
+      });
+
+      await expect(repository.get()).resolves.toEqual(
+        defaultSelectionTranslationPreferences,
+      );
+    }
   });
 
   it("falls back to default UI preferences for corrupt sync storage data", async () => {
