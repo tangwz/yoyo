@@ -1,5 +1,10 @@
-import type { ContentRequest, ContentResponse } from "@/messaging/contracts";
+import type {
+  ContentRequest,
+  ContentResponse,
+  SelectionTranslationProviderOption,
+} from "@/messaging/contracts";
 import { formatLocalAiErrorMessage, LocalAiError } from "@/provider/localAiErrors";
+import { evaluateProviderReadiness } from "@/provider/readiness";
 import type { TranslationProvider } from "@/provider/translationProvider";
 import type { ProviderProfile } from "@/provider/types";
 import { elapsedMs, metadataForError, nowMs, tracePerf } from "@/utils/perfTrace";
@@ -7,13 +12,20 @@ import { elapsedMs, metadataForError, nowMs, tracePerf } from "@/utils/perfTrace
 export type TranslateSelectionInput = {
   tabId: number;
   requestId?: string;
+  providerId?: string;
   text: string;
   sourceLanguage: string;
   targetLanguage: string;
 };
 
+export type TranslateSelectionProviderState = {
+  profiles: ProviderProfile[];
+  activeProviderId: string | undefined;
+};
+
 export type TranslateSelectionDependencies = {
-  getActiveProfile: () => Promise<ProviderProfile | undefined>;
+  getProviderState: () => Promise<TranslateSelectionProviderState>;
+  getSelectionProviderId: () => Promise<string | undefined>;
   getTranslationProvider: (profile: ProviderProfile) => TranslationProvider;
   detectSourceLanguage?: (text: string) => Promise<string | undefined>;
   prepareChromeBuiltInAi?: (
@@ -39,6 +51,7 @@ export async function translateSelection(
   let currentStage = "selection";
   let resolvedSourceLanguage = input.sourceLanguage;
   let selectedProviderId: string | undefined;
+  let providerOptions: SelectionTranslationProviderOption[] = [];
   tracePerf("selection.translate.start", {
     stage: "selection",
     sourceCharCount: sourceText.length,
@@ -49,7 +62,9 @@ export async function translateSelection(
   try {
     currentStage = "profile";
     const profileStartedAt = nowMs();
-    const profile = await dependencies.getActiveProfile();
+    const providerSelection = await selectSelectionProvider(input, dependencies);
+    providerOptions = providerSelection.providerOptions;
+    const profile = providerSelection.profile;
     tracePerf("selection.profile.done", {
       providerType: profile?.type,
       durationMs: elapsedMs(profileStartedAt),
@@ -61,6 +76,7 @@ export async function translateSelection(
         {
           sourceText,
           sourceLanguage: resolvedSourceLanguage,
+          providerOptions,
           errorMessage: "No active provider profile.",
         },
         dependencies,
@@ -134,7 +150,7 @@ export async function translateSelection(
       sourceLanguage,
       targetLanguage: input.targetLanguage,
       ...(selectedProviderId === undefined ? {} : { selectedProviderId }),
-      providerOptions: [],
+      providerOptions,
       translatedText: response.translatedText,
     });
     tracePerf("selection.showResult.done", {
@@ -149,6 +165,7 @@ export async function translateSelection(
         sourceText,
         sourceLanguage: resolvedSourceLanguage,
         selectedProviderId,
+        providerOptions,
         errorMessage: getSelectionTranslationErrorMessage(error),
       },
       dependencies,
@@ -159,6 +176,62 @@ export async function translateSelection(
       metadataForError(error),
     );
   }
+}
+
+export function buildSelectionProviderOptions(
+  profiles: ProviderProfile[],
+): SelectionTranslationProviderOption[] {
+  return getReadySelectionProfiles(profiles).map((profile) => {
+    if (profile.type === "chrome-built-in-ai") {
+      return {
+        id: profile.id,
+        label: "Chrome Built-in AI",
+        providerMode: "local-only",
+      };
+    }
+
+    return {
+      id: profile.id,
+      label: `${profile.displayName} / ${profile.textModel}`,
+      providerMode: "remote",
+    };
+  });
+}
+
+async function selectSelectionProvider(
+  input: TranslateSelectionInput,
+  dependencies: TranslateSelectionDependencies,
+): Promise<{
+  profile: ProviderProfile | undefined;
+  providerOptions: SelectionTranslationProviderOption[];
+}> {
+  const [providerState, savedProviderId] = await Promise.all([
+    dependencies.getProviderState(),
+    dependencies.getSelectionProviderId(),
+  ]);
+  const readyProfiles = getReadySelectionProfiles(providerState.profiles);
+  const providerOptions = buildSelectionProviderOptions(providerState.profiles);
+  const selectedProviderId = [
+    input.providerId,
+    savedProviderId,
+    providerState.activeProviderId,
+    readyProfiles[0]?.id,
+  ].find(
+    (providerId): providerId is string =>
+      providerId !== undefined &&
+      readyProfiles.some((profile) => profile.id === providerId),
+  );
+
+  return {
+    profile: readyProfiles.find((profile) => profile.id === selectedProviderId),
+    providerOptions,
+  };
+}
+
+function getReadySelectionProfiles(profiles: ProviderProfile[]): ProviderProfile[] {
+  return profiles.filter(
+    (profile) => evaluateProviderReadiness(profiles, profile.id).readiness === "ready",
+  );
 }
 
 function traceSelectionTranslationError(
@@ -212,6 +285,7 @@ async function sendSelectionTranslationError(
     sourceText: string;
     sourceLanguage: string;
     selectedProviderId?: string;
+    providerOptions: SelectionTranslationProviderOption[];
     errorMessage: string;
   },
   dependencies: Pick<TranslateSelectionDependencies, "sendToContent">,
@@ -226,7 +300,7 @@ async function sendSelectionTranslationError(
     ...(details.selectedProviderId === undefined
       ? {}
       : { selectedProviderId: details.selectedProviderId }),
-    providerOptions: [],
+    providerOptions: details.providerOptions,
     errorMessage: details.errorMessage,
   });
 }

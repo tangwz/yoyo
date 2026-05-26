@@ -90,6 +90,10 @@ export default defineBackground(() => {
     return (await storage.translationPreferences.get()).targetLanguage;
   }
 
+  async function getSelectionProviderId(): Promise<string | undefined> {
+    return (await storage.selectionTranslationPreferences.get()).providerId;
+  }
+
   async function getStoredTranslationMode() {
     return (await storage.translationPreferences.get()).mode;
   }
@@ -235,11 +239,11 @@ export default defineBackground(() => {
   onTranslateSelectionMenuClick(
     async (input) => {
       await handleTranslateSelectionMenuClick(input, {
-        getActiveProfile,
         getStoredTargetLanguage,
-        translateSelection: (request, activeProfile) =>
+        translateSelection: (request) =>
           translateSelection(request, {
-            getActiveProfile: async () => activeProfile,
+            getProviderState: loadStoredProviderState,
+            getSelectionProviderId,
             getTranslationProvider: (profile) =>
               translationProviderResolver.getTranslationProvider(profile),
             detectSourceLanguage: (sourceText) =>
@@ -354,7 +358,8 @@ export default defineBackground(() => {
           return getSubtitleRuntimeConfig();
         case "translateSelection":
           await translateSelection(request, {
-            getActiveProfile,
+            getProviderState: loadStoredProviderState,
+            getSelectionProviderId,
             getTranslationProvider: (profile) =>
               translationProviderResolver.getTranslationProvider(profile),
             detectSourceLanguage: (sourceText) =>

@@ -34,12 +34,8 @@ export type TranslatePageMenuClickDependencies = {
 };
 
 export type TranslateSelectionMenuClickDependencies = {
-  getActiveProfile: () => Promise<ProviderProfile | undefined>;
   getStoredTargetLanguage: () => Promise<string>;
-  translateSelection: (
-    input: TranslateSelectionMenuInput,
-    activeProfile: ProviderProfile | undefined,
-  ) => Promise<void>;
+  translateSelection: (input: TranslateSelectionMenuInput) => Promise<void>;
 };
 
 export type SummarizePageMenuClickDependencies = {
@@ -86,19 +82,14 @@ export async function handleTranslateSelectionMenuClick(
   input: TranslateSelectionMenuClickInput,
   dependencies: TranslateSelectionMenuClickDependencies,
 ): Promise<void> {
-  const activeProfile = await dependencies.getActiveProfile();
-
-  await dependencies.translateSelection(
-    {
-      tabId: input.tabId,
-      text: input.text,
-      sourceLanguage: "auto",
-      targetLanguage: await getStoredTargetLanguageOrDefault(
-        dependencies.getStoredTargetLanguage,
-      ),
-    },
-    activeProfile,
-  );
+  await dependencies.translateSelection({
+    tabId: input.tabId,
+    text: input.text,
+    sourceLanguage: "auto",
+    targetLanguage: await getStoredTargetLanguageOrDefault(
+      dependencies.getStoredTargetLanguage,
+    ),
+  });
 }
 
 export async function handleSummarizePageMenuClick(

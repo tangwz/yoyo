@@ -77,28 +77,17 @@ describe("context menu background actions", () => {
     await handleTranslateSelectionMenuClick(
       { tabId: 42, text: "Hello" },
       {
-        getActiveProfile: async () => ({
-          id: "provider-1",
-          displayName: "Provider",
-          type: "openai-compatible",
-          baseURL: "https://api.example.com/v1",
-          apiKey: "sk-test",
-          textModel: "gpt-5-mini",
-        }),
         getStoredTargetLanguage: async () => "ko",
         translateSelection,
       },
     );
 
-    expect(translateSelection).toHaveBeenCalledWith(
-      {
-        tabId: 42,
-        text: "Hello",
-        sourceLanguage: "auto",
-        targetLanguage: "ko",
-      },
-      expect.objectContaining({ id: "provider-1" }),
-    );
+    expect(translateSelection).toHaveBeenCalledWith({
+      tabId: 42,
+      text: "Hello",
+      sourceLanguage: "auto",
+      targetLanguage: "ko",
+    });
   });
 
   it("falls back to the default target language when selection translation language lookup fails", async () => {
@@ -107,14 +96,6 @@ describe("context menu background actions", () => {
     await handleTranslateSelectionMenuClick(
       { tabId: 42, text: "Hello" },
       {
-        getActiveProfile: async () => ({
-          id: "provider-1",
-          displayName: "Provider",
-          type: "openai-compatible",
-          baseURL: "https://api.example.com/v1",
-          apiKey: "sk-test",
-          textModel: "gpt-5-mini",
-        }),
         getStoredTargetLanguage: async () => {
           throw new Error("Storage unavailable.");
         },
@@ -122,15 +103,12 @@ describe("context menu background actions", () => {
       },
     );
 
-    expect(translateSelection).toHaveBeenCalledWith(
-      {
-        tabId: 42,
-        text: "Hello",
-        sourceLanguage: "auto",
-        targetLanguage: "zh-CN",
-      },
-      expect.objectContaining({ id: "provider-1" }),
-    );
+    expect(translateSelection).toHaveBeenCalledWith({
+      tabId: 42,
+      text: "Hello",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+    });
   });
 
   it("uses the stored target language for page summary", async () => {
