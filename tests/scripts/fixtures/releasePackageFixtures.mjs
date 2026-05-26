@@ -3,7 +3,7 @@ export function createValidManifest(overrides = {}) {
     manifest_version: 3,
     name: "Yoyo",
     description: "A privacy-conscious LLM reading and translation assistant.",
-    version: "0.3.0",
+    version: "0.4.0",
     icons: {
       128: "icon/128.png",
     },

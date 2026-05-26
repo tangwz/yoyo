@@ -326,7 +326,7 @@ describe("popup app", () => {
     expect(within(pageActions).getByRole("button", { name: defaultTranslateLabel })).toBeVisible();
     expect(within(pageActions).getByRole("button", { name: summaryLabel })).toBeVisible();
     expect(screen.getByText("设置")).toBeVisible();
-    expect(screen.getByText("0.3.0")).toBeVisible();
+    expect(screen.getByText("0.4.0")).toBeVisible();
     expect(screen.getByText("更多")).toBeVisible();
 
     await waitFor(() => {
