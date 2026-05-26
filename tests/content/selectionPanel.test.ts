@@ -211,6 +211,32 @@ describe("selection panel", () => {
     expect(panel.textContent).not.toContain("Older source");
   });
 
+  it("does not reopen a dismissed popup from an older stale request", () => {
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "dismissed-stale-request-1",
+      state: "loading",
+    });
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "dismissed-stale-request-2",
+      state: "loading",
+    });
+
+    const closeButton = getPanel().querySelector(
+      '[data-yoyo-selection-action="close"]',
+    ) as HTMLButtonElement;
+    closeButton.click();
+
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "dismissed-stale-request-1",
+      translatedText: "Late stale translation",
+    });
+
+    expect(document.getElementById("yoyo-selection-translation-panel")).toBeNull();
+  });
+
   it("keeps the initial selection anchor for later states of the same request", () => {
     mockSelectionRect({
       left: 200,

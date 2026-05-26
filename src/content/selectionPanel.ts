@@ -41,6 +41,7 @@ const maxTrackedRequestIds = 64;
 
 let currentInput: SelectionTranslationPanelInput | undefined;
 let currentDependencies: ResolvedSelectionPanelDependencies | undefined;
+let latestRequestId: string | undefined;
 let copyResetTimer: number | undefined;
 const dismissedRequestIds = new Set<string>();
 const seenRequestIds = new Set<string>();
@@ -536,19 +537,33 @@ export function showSelectionTranslation(
   input: SelectionTranslationPanelInput,
   dependencies: SelectionPanelDependencies = {},
 ): void {
+  resetDetachedPanelState();
+
   if (dismissedRequestIds.has(input.requestId)) {
     return;
-  } else if (
-    currentInput &&
-    currentInput.requestId !== input.requestId &&
-    (input.state !== "loading" || seenRequestIds.has(input.requestId)) &&
-    document.getElementById(panelId) !== null
-  ) {
+  } else if (latestRequestId !== input.requestId && isStaleInput(input)) {
     return;
   }
 
   rememberSeenRequestId(input.requestId);
+  latestRequestId = input.requestId;
   currentInput = input;
   currentDependencies = resolveDependencies(dependencies);
   renderPanel(input);
+}
+
+function resetDetachedPanelState(): void {
+  if (currentInput === undefined || document.getElementById(panelId) !== null) {
+    return;
+  }
+
+  currentInput = undefined;
+  latestRequestId = undefined;
+  seenRequestIds.clear();
+  dismissedRequestIds.clear();
+  requestAnchors.clear();
+}
+
+function isStaleInput(input: SelectionTranslationPanelInput): boolean {
+  return seenRequestIds.has(input.requestId);
 }
