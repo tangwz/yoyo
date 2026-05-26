@@ -6,6 +6,7 @@ import { elapsedMs, metadataForError, nowMs, tracePerf } from "@/utils/perfTrace
 
 export type TranslateSelectionInput = {
   tabId: number;
+  requestId?: string;
   text: string;
   sourceLanguage: string;
   targetLanguage: string;
@@ -36,6 +37,8 @@ export async function translateSelection(
 
   const translationStartedAt = nowMs();
   let currentStage = "selection";
+  let resolvedSourceLanguage = input.sourceLanguage;
+  let selectedProviderId: string | undefined;
   tracePerf("selection.translate.start", {
     stage: "selection",
     sourceCharCount: sourceText.length,
@@ -54,9 +57,12 @@ export async function translateSelection(
     });
     if (!profile) {
       await sendSelectionTranslationError(
-        input.tabId,
-        sourceText,
-        "No active provider profile.",
+        input,
+        {
+          sourceText,
+          sourceLanguage: resolvedSourceLanguage,
+          errorMessage: "No active provider profile.",
+        },
         dependencies,
       );
       traceSelectionTranslationError(translationStartedAt, currentStage, {
@@ -64,6 +70,7 @@ export async function translateSelection(
       });
       return;
     }
+    selectedProviderId = profile.id;
     currentStage = "detectLanguage";
     const detectStartedAt = nowMs();
     const sourceLanguage = await resolveSelectionSourceLanguage(
@@ -72,6 +79,7 @@ export async function translateSelection(
       profile,
       dependencies,
     );
+    resolvedSourceLanguage = sourceLanguage;
     tracePerf("selection.detectLanguage.done", {
       providerType: profile.type,
       sourceLanguage,
@@ -120,7 +128,13 @@ export async function translateSelection(
     const showResultStartedAt = nowMs();
     await dependencies.sendToContent(input.tabId, {
       type: "showSelectionTranslation",
+      requestId: input.requestId ?? createSelectionTranslationRequestId(),
+      state: "translated",
       sourceText,
+      sourceLanguage,
+      targetLanguage: input.targetLanguage,
+      ...(selectedProviderId === undefined ? {} : { selectedProviderId }),
+      providerOptions: [],
       translatedText: response.translatedText,
     });
     tracePerf("selection.showResult.done", {
@@ -130,9 +144,13 @@ export async function translateSelection(
     });
   } catch (error: unknown) {
     await sendSelectionTranslationError(
-      input.tabId,
-      sourceText,
-      getSelectionTranslationErrorMessage(error),
+      input,
+      {
+        sourceText,
+        sourceLanguage: resolvedSourceLanguage,
+        selectedProviderId,
+        errorMessage: getSelectionTranslationErrorMessage(error),
+      },
       dependencies,
     );
     traceSelectionTranslationError(
@@ -184,15 +202,31 @@ function getSelectionTranslationErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Selection translation failed.";
 }
 
+function createSelectionTranslationRequestId(): string {
+  return `selection-${Date.now()}-${crypto.randomUUID()}`;
+}
+
 async function sendSelectionTranslationError(
-  tabId: number,
-  sourceText: string,
-  errorMessage: string,
+  input: TranslateSelectionInput,
+  details: {
+    sourceText: string;
+    sourceLanguage: string;
+    selectedProviderId?: string;
+    errorMessage: string;
+  },
   dependencies: Pick<TranslateSelectionDependencies, "sendToContent">,
 ): Promise<void> {
-  await dependencies.sendToContent(tabId, {
+  await dependencies.sendToContent(input.tabId, {
     type: "showSelectionTranslation",
-    sourceText,
-    errorMessage,
+    requestId: input.requestId ?? createSelectionTranslationRequestId(),
+    state: "failed",
+    sourceText: details.sourceText,
+    sourceLanguage: details.sourceLanguage,
+    targetLanguage: input.targetLanguage,
+    ...(details.selectedProviderId === undefined
+      ? {}
+      : { selectedProviderId: details.selectedProviderId }),
+    providerOptions: [],
+    errorMessage: details.errorMessage,
   });
 }

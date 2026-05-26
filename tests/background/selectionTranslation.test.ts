@@ -32,6 +32,10 @@ const chromeBuiltInProfile = {
   type: "chrome-built-in-ai",
 } satisfies ProviderProfile;
 
+function selectionRequestIdMatcher(): RegExp {
+  return /^selection-\d+-[0-9a-f-]+$/;
+}
+
 describe("translateSelection", () => {
   const translateText = vi.fn<TranslationProvider["translateText"]>();
   const sendToContent = vi.fn<TranslateSelectionDependencies["sendToContent"]>();
@@ -99,11 +103,20 @@ describe("translateSelection", () => {
       },
     });
     expect(prepareChromeBuiltInAi).not.toHaveBeenCalled();
-    expect(sendToContent).toHaveBeenCalledWith(42, {
-      type: "showSelectionTranslation",
-      sourceText: "Hello",
-      translatedText: "你好",
-    });
+    expect(sendToContent).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        type: "showSelectionTranslation",
+        requestId: expect.stringMatching(selectionRequestIdMatcher()),
+        state: "translated",
+        sourceText: "Hello",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+        selectedProviderId: "provider-1",
+        providerOptions: [],
+        translatedText: "你好",
+      }),
+    );
   });
 
   it("traces normal openAI selection translation without raw text", async () => {
@@ -203,11 +216,19 @@ describe("translateSelection", () => {
     );
 
     expect(getTranslationProvider).not.toHaveBeenCalled();
-    expect(sendToContent).toHaveBeenCalledWith(42, {
-      type: "showSelectionTranslation",
-      sourceText: "Private selected text",
-      errorMessage: "No active provider profile.",
-    });
+    expect(sendToContent).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        type: "showSelectionTranslation",
+        requestId: expect.stringMatching(selectionRequestIdMatcher()),
+        state: "failed",
+        sourceText: "Private selected text",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+        providerOptions: [],
+        errorMessage: "No active provider profile.",
+      }),
+    );
     expect(infoSpy).toHaveBeenCalledWith(
       "[yoyo:perf] selection.translate.error",
       expect.objectContaining({
@@ -237,11 +258,20 @@ describe("translateSelection", () => {
       dependencies(),
     );
 
-    expect(sendToContent).toHaveBeenCalledWith(42, {
-      type: "showSelectionTranslation",
-      sourceText: "Hello",
-      errorMessage: "Provider failed",
-    });
+    expect(sendToContent).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        type: "showSelectionTranslation",
+        requestId: expect.stringMatching(selectionRequestIdMatcher()),
+        state: "failed",
+        sourceText: "Hello",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+        selectedProviderId: "provider-1",
+        providerOptions: [],
+        errorMessage: "Provider failed",
+      }),
+    );
   });
 
   it("traces provider selection errors with the failing stage", async () => {
@@ -293,12 +323,21 @@ describe("translateSelection", () => {
       dependencies(),
     );
 
-    expect(sendToContent).toHaveBeenCalledWith(42, {
-      type: "showSelectionTranslation",
-      sourceText: "Hello",
-      errorMessage:
-        "Chrome Built-in AI is not available for this language pair. No remote provider was used.",
-    });
+    expect(sendToContent).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        type: "showSelectionTranslation",
+        requestId: expect.stringMatching(selectionRequestIdMatcher()),
+        state: "failed",
+        sourceText: "Hello",
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        selectedProviderId: "provider-1",
+        providerOptions: [],
+        errorMessage:
+          "Chrome Built-in AI is not available for this language pair. No remote provider was used.",
+      }),
+    );
   });
 
   it("detects source language before calling Chrome Built-in AI for auto selections", async () => {
@@ -331,11 +370,20 @@ describe("translateSelection", () => {
         sourceCharCount: 5,
       },
     });
-    expect(sendToContent).toHaveBeenCalledWith(42, {
-      type: "showSelectionTranslation",
-      sourceText: "Hello",
-      translatedText: "你好",
-    });
+    expect(sendToContent).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        type: "showSelectionTranslation",
+        requestId: expect.stringMatching(selectionRequestIdMatcher()),
+        state: "translated",
+        sourceText: "Hello",
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        selectedProviderId: "chrome-built-in-ai",
+        providerOptions: [],
+        translatedText: "你好",
+      }),
+    );
   });
 
   it("sends a local-only error when Chrome Built-in AI cannot detect selection language", async () => {
@@ -354,12 +402,21 @@ describe("translateSelection", () => {
 
     expect(getTranslationProvider).not.toHaveBeenCalled();
     expect(prepareChromeBuiltInAi).not.toHaveBeenCalled();
-    expect(sendToContent).toHaveBeenCalledWith(42, {
-      type: "showSelectionTranslation",
-      sourceText: "Hello",
-      errorMessage:
-        "Chrome Built-in AI could not detect the selected text language. No remote provider was used.",
-    });
+    expect(sendToContent).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        type: "showSelectionTranslation",
+        requestId: expect.stringMatching(selectionRequestIdMatcher()),
+        state: "failed",
+        sourceText: "Hello",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+        selectedProviderId: "chrome-built-in-ai",
+        providerOptions: [],
+        errorMessage:
+          "Chrome Built-in AI could not detect the selected text language. No remote provider was used.",
+      }),
+    );
   });
 
   it("sends a local-only error when Chrome Built-in AI warm-up fails", async () => {
@@ -379,11 +436,20 @@ describe("translateSelection", () => {
     );
 
     expect(translateText).not.toHaveBeenCalled();
-    expect(sendToContent).toHaveBeenCalledWith(42, {
-      type: "showSelectionTranslation",
-      sourceText: "Hello",
-      errorMessage:
-        "Chrome Built-in AI is not available in this browser. No remote provider was used.",
-    });
+    expect(sendToContent).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        type: "showSelectionTranslation",
+        requestId: expect.stringMatching(selectionRequestIdMatcher()),
+        state: "failed",
+        sourceText: "Hello",
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        selectedProviderId: "chrome-built-in-ai",
+        providerOptions: [],
+        errorMessage:
+          "Chrome Built-in AI is not available in this browser. No remote provider was used.",
+      }),
+    );
   });
 });

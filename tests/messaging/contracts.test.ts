@@ -62,12 +62,36 @@ describe("messaging contracts", () => {
       { type: "collectSummarySource" },
       {
         type: "showSelectionTranslation",
+        requestId: "selection-request-1",
+        state: "translated",
         sourceText: "Hello",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+        selectedProviderId: "provider-1",
+        providerOptions: [
+          {
+            id: "provider-1",
+            label: "DeepSeek / deepseek-v4-flash",
+            providerMode: "remote",
+          },
+        ],
         translatedText: "你好",
       },
       {
         type: "showSelectionTranslation",
+        requestId: "selection-request-2",
+        state: "failed",
         sourceText: "Hello",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+        selectedProviderId: "provider-1",
+        providerOptions: [
+          {
+            id: "provider-1",
+            label: "DeepSeek / deepseek-v4-flash",
+            providerMode: "remote",
+          },
+        ],
         errorMessage: "Selection translation failed.",
       },
       {
@@ -115,6 +139,121 @@ describe("messaging contracts", () => {
       sourceLanguage: "auto",
       targetLanguage: "zh-CN",
     });
+  });
+
+  it("supports selection translation popup configuration", () => {
+    const request = {
+      type: "getSelectionTranslationConfig",
+    } satisfies BackgroundRequest;
+
+    const response = {
+      type: "selectionTranslationConfig",
+      configured: true,
+      targetLanguage: "zh-CN",
+      selectedProviderId: "provider-1",
+      providerOptions: [
+        {
+          id: "provider-1",
+          label: "DeepSeek / deepseek-v4-flash",
+          providerMode: "remote",
+        },
+        {
+          id: "chrome-built-in-ai",
+          label: "Chrome Built-in AI",
+          providerMode: "local-only",
+        },
+      ],
+    } satisfies BackgroundResponse;
+    const missingProviderResponse = {
+      type: "selectionTranslationConfig",
+      configured: false,
+      targetLanguage: "zh-CN",
+      providerOptions: [],
+      message: "No translation provider is configured.",
+    } satisfies BackgroundResponse;
+
+    expect(request.type).toBe("getSelectionTranslationConfig");
+    expect(response.providerOptions[0]?.label).toBe(
+      "DeepSeek / deepseek-v4-flash",
+    );
+    expect(missingProviderResponse.configured).toBe(false);
+    expect(missingProviderResponse.providerOptions).toEqual([]);
+  });
+
+  it("supports saving the selection translation provider", () => {
+    const request = {
+      type: "setSelectionTranslationProvider",
+      providerId: "provider-1",
+    } satisfies BackgroundRequest;
+
+    expect(request).toEqual({
+      type: "setSelectionTranslationProvider",
+      providerId: "provider-1",
+    });
+  });
+
+  it("supports provider-specific selection translation requests", () => {
+    const request = {
+      type: "translateSelectionWithProvider",
+      requestId: "selection-request-1",
+      text: "Hello",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+      providerId: "provider-1",
+    } satisfies BackgroundRequest;
+
+    const result = {
+      type: "selectionTranslationResult",
+      requestId: "selection-request-1",
+      providerId: "provider-1",
+      translatedText: "你好",
+    } satisfies BackgroundResponse;
+
+    const error = {
+      type: "selectionTranslationError",
+      requestId: "selection-request-2",
+      providerId: "provider-1",
+      message: "Provider failed.",
+    } satisfies BackgroundResponse;
+
+    expect(request.providerId).toBe("provider-1");
+    expect(result.translatedText).toBe("你好");
+    expect(error.message).toBe("Provider failed.");
+  });
+
+  it("supports selection translation popup states in content messages", () => {
+    const loading = {
+      type: "showSelectionTranslation",
+      requestId: "selection-request-1",
+      state: "loading",
+      sourceText: "Hello",
+      sourceLanguage: "auto",
+      targetLanguage: "zh-CN",
+      selectedProviderId: "provider-1",
+      providerOptions: [
+        {
+          id: "provider-1",
+          label: "DeepSeek / deepseek-v4-flash",
+          providerMode: "remote",
+        },
+      ],
+    } satisfies ContentRequest;
+
+    const translated = {
+      ...loading,
+      state: "translated",
+      translatedText: "你好",
+    } satisfies ContentRequest;
+
+    const failed = {
+      ...loading,
+      state: "failed",
+      errorMessage: "Provider failed.",
+    } satisfies ContentRequest;
+
+    expect(loading.state).toBe("loading");
+    expect(translated.translatedText).toBe("你好");
+    expect(failed.errorMessage).toBe("Provider failed.");
   });
 
   it("supports page summary requests to the background", () => {

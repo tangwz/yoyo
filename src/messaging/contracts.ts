@@ -21,6 +21,12 @@ export type OptionsOpenSource = "first-run" | "popup" | "manual";
 
 export type ProviderMode = "remote" | "local-only";
 
+export type SelectionTranslationProviderOption = {
+  id: string;
+  label: string;
+  providerMode: ProviderMode;
+};
+
 export type PageTranslationEstimate = {
   canTranslate: boolean;
   estimatedSegments: number;
@@ -78,15 +84,35 @@ export type ContentRequest =
     }
   | {
       type: "showSelectionTranslation";
+      requestId: string;
+      state: "loading";
       sourceText: string;
-      translatedText: string;
-      errorMessage?: never;
+      sourceLanguage: string;
+      targetLanguage: string;
+      selectedProviderId?: string;
+      providerOptions: SelectionTranslationProviderOption[];
     }
   | {
       type: "showSelectionTranslation";
+      requestId: string;
+      state: "translated";
       sourceText: string;
+      sourceLanguage: string;
+      targetLanguage: string;
+      selectedProviderId?: string;
+      providerOptions: SelectionTranslationProviderOption[];
+      translatedText: string;
+    }
+  | {
+      type: "showSelectionTranslation";
+      requestId: string;
+      state: "failed";
+      sourceText: string;
+      sourceLanguage: string;
+      targetLanguage: string;
+      selectedProviderId?: string;
+      providerOptions: SelectionTranslationProviderOption[];
       errorMessage: string;
-      translatedText?: never;
     };
 
 export type ContentResponse =
@@ -127,6 +153,19 @@ export type BackgroundRequest =
       text: string;
       sourceLanguage: string;
       targetLanguage: string;
+    }
+  | { type: "getSelectionTranslationConfig" }
+  | {
+      type: "setSelectionTranslationProvider";
+      providerId: string;
+    }
+  | {
+      type: "translateSelectionWithProvider";
+      requestId: string;
+      text: string;
+      sourceLanguage: string;
+      targetLanguage: string;
+      providerId: string;
     }
   | {
       type: "summarizePage";
@@ -206,6 +245,33 @@ export type BackgroundResponse =
       readiness: ProviderReadiness;
       providerLabel: string;
       providerMode: ProviderMode;
+    }
+  | {
+      type: "selectionTranslationConfig";
+      configured: true;
+      targetLanguage: string;
+      selectedProviderId: string;
+      providerOptions: SelectionTranslationProviderOption[];
+    }
+  | {
+      type: "selectionTranslationConfig";
+      configured: false;
+      targetLanguage: string;
+      selectedProviderId?: never;
+      providerOptions: SelectionTranslationProviderOption[];
+      message: string;
+    }
+  | {
+      type: "selectionTranslationResult";
+      requestId: string;
+      providerId: string;
+      translatedText: string;
+    }
+  | {
+      type: "selectionTranslationError";
+      requestId: string;
+      providerId?: string;
+      message: string;
     }
   | { type: "backgroundActionResult"; success: true }
   | { type: "backgroundError"; message: string }

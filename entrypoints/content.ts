@@ -487,7 +487,18 @@ export default defineContentScript({
               ContentRequest,
               { type: "showSelectionTranslation" }
             >;
-            showSelectionTranslation(request);
+            showSelectionTranslation(
+              request.state === "failed"
+                ? {
+                    sourceText: request.sourceText,
+                    errorMessage: request.errorMessage,
+                  }
+                : {
+                    sourceText: request.sourceText,
+                    translatedText:
+                      request.state === "translated" ? request.translatedText : "",
+                  },
+            );
             return { type: "contentActionResult", success: true };
           }
           case "showPageSummary": {
