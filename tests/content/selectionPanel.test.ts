@@ -51,6 +51,27 @@ function renderedConsoleOutput(calls: unknown[][]): string {
     .join("\n");
 }
 
+function mockSelectionRect(rect: Partial<DOMRect>): void {
+  const range = {
+    getBoundingClientRect: vi.fn(
+      () =>
+        ({
+          left: rect.left ?? 0,
+          top: rect.top ?? 0,
+          right: rect.right ?? (rect.left ?? 0) + (rect.width ?? 0),
+          bottom: rect.bottom ?? (rect.top ?? 0) + (rect.height ?? 0),
+          width: rect.width ?? 0,
+          height: rect.height ?? 0,
+        }) as DOMRect,
+    ),
+  };
+
+  vi.spyOn(window, "getSelection").mockReturnValue({
+    rangeCount: 1,
+    getRangeAt: vi.fn(() => range as unknown as Range),
+  } as unknown as Selection);
+}
+
 describe("selection panel", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
@@ -140,18 +161,18 @@ describe("selection panel", () => {
   it("ignores terminal results from stale selection requests", () => {
     showSelectionTranslation({
       ...translatedInput,
-      requestId: "selection-request-1",
+      requestId: "stale-terminal-request-1",
       state: "loading",
     });
     showSelectionTranslation({
       ...translatedInput,
-      requestId: "selection-request-2",
+      requestId: "stale-terminal-request-2",
       state: "loading",
       sourceText: "Good morning",
     });
     showSelectionTranslation({
       ...translatedInput,
-      requestId: "selection-request-1",
+      requestId: "stale-terminal-request-1",
       translatedText: "Stale translation",
     });
 
@@ -161,18 +182,84 @@ describe("selection panel", () => {
     expect(panel.textContent).not.toContain("Good morning");
   });
 
+  it("ignores loading updates from stale selection requests", () => {
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "stale-loading-request-1",
+      state: "loading",
+    });
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "stale-loading-request-2",
+      state: "loading",
+    });
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "stale-loading-request-2",
+      translatedText: "Fresh translation",
+    });
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "stale-loading-request-1",
+      state: "loading",
+      sourceText: "Older source",
+    });
+
+    const panel = getPanel();
+    expect(panel.textContent).toContain("Fresh translation");
+    expect(panel.textContent).not.toContain("Translating...");
+    expect(panel.textContent).not.toContain("Older source");
+  });
+
+  it("keeps the initial selection anchor for later states of the same request", () => {
+    mockSelectionRect({
+      left: 200,
+      top: 220,
+      bottom: 240,
+      width: 40,
+      height: 20,
+    });
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "anchored-request-1",
+      state: "loading",
+    });
+
+    const initialPanel = getPanel();
+    const initialLeft = initialPanel.style.left;
+    const initialTop = initialPanel.style.top;
+
+    mockSelectionRect({
+      left: 600,
+      top: 20,
+      bottom: 40,
+      width: 80,
+      height: 20,
+    });
+    showSelectionTranslation({
+      ...translatedInput,
+      requestId: "anchored-request-1",
+      translatedText: "Anchored translation",
+    });
+
+    const translatedPanel = getPanel();
+    expect(translatedPanel.style.left).toBe(initialLeft);
+    expect(translatedPanel.style.top).toBe(initialTop);
+    expect(translatedPanel.textContent).toContain("Anchored translation");
+  });
+
   it("shows a new failed result after its loading state replaces an older popup", () => {
     showSelectionTranslation(translatedInput);
     showSelectionTranslation({
       ...translatedInput,
-      requestId: "selection-request-2",
+      requestId: "new-failed-request-1",
       state: "loading",
       sourceText: "Good morning",
       providerOptions: [],
     });
     showSelectionTranslation({
       type: "showSelectionTranslation",
-      requestId: "selection-request-2",
+      requestId: "new-failed-request-1",
       state: "failed",
       sourceText: "Good morning",
       sourceLanguage: "auto",
@@ -310,6 +397,52 @@ describe("selection panel", () => {
       },
     ]);
     expect(getPanel().textContent).toContain("Provider two translation");
+  });
+
+  it("uses the actual provider id returned by provider switch translation", async () => {
+    const sendBackgroundMessage = vi.fn(
+      async (message: BackgroundRequest): Promise<BackgroundResponse> => {
+        if (message.type === "setSelectionTranslationProvider") {
+          return { type: "backgroundActionResult", success: true };
+        }
+        return {
+          type: "selectionTranslationResult",
+          requestId: "selection-request-2",
+          providerId: "provider-1",
+          translatedText: "Fallback provider translation",
+        };
+      },
+    );
+
+    showSelectionTranslation(
+      {
+        ...translatedInput,
+        providerOptions: [
+          ...translatedInput.providerOptions,
+          {
+            id: "provider-2",
+            label: "OpenAI / gpt-4.1-mini",
+            providerMode: "remote",
+          },
+        ],
+      },
+      {
+        createRequestId: () => "selection-request-2",
+        sendBackgroundMessage,
+      },
+    );
+
+    const select = getPanel().querySelector("select") as HTMLSelectElement;
+    select.value = "provider-2";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(getPanel().textContent).toContain("Fallback provider translation");
+    });
+
+    expect((getPanel().querySelector("select") as HTMLSelectElement).value).toBe(
+      "provider-1",
+    );
   });
 
   it("ignores stale provider switch results", async () => {
@@ -507,6 +640,53 @@ describe("selection panel", () => {
       expect(getPanel().textContent).toContain("Translation failed in background.");
     });
 
+    expect(getPanel().getAttribute("role")).toBe("alert");
+  });
+
+  it("uses the actual provider id returned by provider switch failure", async () => {
+    const sendBackgroundMessage = vi.fn(
+      async (message: BackgroundRequest): Promise<BackgroundResponse> => {
+        if (message.type === "setSelectionTranslationProvider") {
+          return { type: "backgroundActionResult", success: true };
+        }
+        return {
+          type: "selectionTranslationError",
+          requestId: "selection-request-2",
+          providerId: "provider-1",
+          message: "Fallback provider failed.",
+        };
+      },
+    );
+
+    showSelectionTranslation(
+      {
+        ...translatedInput,
+        providerOptions: [
+          ...translatedInput.providerOptions,
+          {
+            id: "provider-2",
+            label: "OpenAI / gpt-4.1-mini",
+            providerMode: "remote",
+          },
+        ],
+      },
+      {
+        createRequestId: () => "selection-request-2",
+        sendBackgroundMessage,
+      },
+    );
+
+    const select = getPanel().querySelector("select") as HTMLSelectElement;
+    select.value = "provider-2";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(getPanel().textContent).toContain("Fallback provider failed.");
+    });
+
+    expect((getPanel().querySelector("select") as HTMLSelectElement).value).toBe(
+      "provider-1",
+    );
     expect(getPanel().getAttribute("role")).toBe("alert");
   });
 

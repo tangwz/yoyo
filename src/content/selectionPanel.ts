@@ -37,11 +37,19 @@ const copyFailedLabel = "Copy failed";
 const copyResetDelayMs = 1600;
 const svgNamespace = "http://www.w3.org/2000/svg";
 const maxDismissedRequestIds = 32;
+const maxTrackedRequestIds = 64;
 
 let currentInput: SelectionTranslationPanelInput | undefined;
 let currentDependencies: ResolvedSelectionPanelDependencies | undefined;
 let copyResetTimer: number | undefined;
 const dismissedRequestIds = new Set<string>();
+const seenRequestIds = new Set<string>();
+const requestAnchors = new Map<string, PanelAnchorRect | undefined>();
+
+type PanelAnchorRect = Pick<
+  DOMRect,
+  "bottom" | "height" | "left" | "top" | "width"
+>;
 
 function resolveDependencies(
   dependencies: SelectionPanelDependencies = {},
@@ -77,13 +85,26 @@ function closePanel(): void {
 }
 
 function rememberDismissedRequestId(requestId: string): void {
-  dismissedRequestIds.add(requestId);
-  while (dismissedRequestIds.size > maxDismissedRequestIds) {
-    const oldestRequestId = dismissedRequestIds.values().next().value;
+  rememberRequestId(dismissedRequestIds, requestId, maxDismissedRequestIds);
+}
+
+function rememberSeenRequestId(requestId: string): void {
+  rememberRequestId(seenRequestIds, requestId, maxTrackedRequestIds);
+}
+
+function rememberRequestId(
+  requestIds: Set<string>,
+  requestId: string,
+  maxSize: number,
+): void {
+  requestIds.add(requestId);
+  while (requestIds.size > maxSize) {
+    const oldestRequestId = requestIds.values().next().value;
     if (oldestRequestId === undefined) {
       return;
     }
-    dismissedRequestIds.delete(oldestRequestId);
+    requestIds.delete(oldestRequestId);
+    requestAnchors.delete(oldestRequestId);
   }
 }
 
@@ -261,7 +282,7 @@ function renderPanel(input: SelectionTranslationPanelInput): void {
 
   panel.append(createHeader(input), createBody(input));
   document.body.append(panel);
-  positionPanel(panel);
+  positionPanel(panel, input.requestId);
 
   tracePerf("content.selectionPanel.done", {
     stage: "selection",
@@ -272,8 +293,8 @@ function renderPanel(input: SelectionTranslationPanelInput): void {
   });
 }
 
-function positionPanel(panel: HTMLElement): void {
-  const selectionRect = getSelectionRect();
+function positionPanel(panel: HTMLElement, requestId: string): void {
+  const selectionRect = getOrCreateRequestAnchor(requestId);
   const panelRect = panel.getBoundingClientRect();
   const panelWidth = panelRect.width || 360;
   const panelHeight = panelRect.height || 120;
@@ -298,7 +319,25 @@ function positionPanel(panel: HTMLElement): void {
   panel.style.top = `${clamp(top, panelMargin, viewportHeight - panelHeight - panelMargin)}px`;
 }
 
-function getSelectionRect(): DOMRect | undefined {
+function getOrCreateRequestAnchor(requestId: string): PanelAnchorRect | undefined {
+  if (requestAnchors.has(requestId)) {
+    return requestAnchors.get(requestId);
+  }
+
+  const selectionRect = getSelectionRect();
+  requestAnchors.set(requestId, selectionRect);
+  return selectionRect;
+}
+
+function copyRequestAnchor(sourceRequestId: string, targetRequestId: string): void {
+  if (!requestAnchors.has(sourceRequestId) || requestAnchors.has(targetRequestId)) {
+    return;
+  }
+
+  requestAnchors.set(targetRequestId, requestAnchors.get(sourceRequestId));
+}
+
+function getSelectionRect(): PanelAnchorRect | undefined {
   const selection = window.getSelection?.();
   if (!selection || selection.rangeCount === 0) {
     return undefined;
@@ -309,7 +348,13 @@ function getSelectionRect(): DOMRect | undefined {
     return undefined;
   }
 
-  return rect;
+  return {
+    bottom: rect.bottom,
+    height: rect.height,
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -327,6 +372,7 @@ async function switchProvider(providerId: string): Promise<void> {
   const sourceInput = currentInput;
   const dependencies = currentDependencies;
   const requestId = dependencies.createRequestId();
+  copyRequestAnchor(sourceInput.requestId, requestId);
   const loadingInput: SelectionTranslationPanelInput = {
     type: "showSelectionTranslation",
     requestId,
@@ -388,6 +434,7 @@ async function switchProvider(providerId: string): Promise<void> {
     ) {
       const translatedInput: SelectionTranslationPanelInput = {
         ...loadingInput,
+        selectedProviderId: response.providerId,
         state: "translated",
         translatedText: response.translatedText,
       };
@@ -400,7 +447,7 @@ async function switchProvider(providerId: string): Promise<void> {
       response.type === "selectionTranslationError" &&
       response.requestId === requestId
     ) {
-      renderFailed(loadingInput, response.message);
+      renderFailed(loadingInput, response.message, response.providerId);
       return;
     }
 
@@ -428,9 +475,11 @@ function messageForBackgroundResponse(
 function renderFailed(
   baseInput: Extract<SelectionTranslationPanelInput, { state: "loading" }>,
   errorMessage: string,
+  selectedProviderId = baseInput.selectedProviderId,
 ): void {
   const failedInput: SelectionTranslationPanelInput = {
     ...baseInput,
+    ...(selectedProviderId === undefined ? {} : { selectedProviderId }),
     state: "failed",
     errorMessage,
   };
@@ -490,14 +539,15 @@ export function showSelectionTranslation(
   if (dismissedRequestIds.has(input.requestId)) {
     return;
   } else if (
-    input.state !== "loading" &&
     currentInput &&
     currentInput.requestId !== input.requestId &&
+    (input.state !== "loading" || seenRequestIds.has(input.requestId)) &&
     document.getElementById(panelId) !== null
   ) {
     return;
   }
 
+  rememberSeenRequestId(input.requestId);
   currentInput = input;
   currentDependencies = resolveDependencies(dependencies);
   renderPanel(input);
