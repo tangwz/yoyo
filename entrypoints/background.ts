@@ -17,7 +17,10 @@ import {
   getStoredProviderState,
   selectReadyProviderProfile,
 } from "@/background/providerStatus";
-import { translateSelection } from "@/background/selectionTranslation";
+import {
+  buildSelectionTranslationConfig,
+  translateSelection,
+} from "@/background/selectionTranslation";
 import { createAiSubtitleSegmentationService } from "@/background/youtubeSubtitle/aiSegmentation";
 import { createSubtitleTranslationService } from "@/background/youtubeSubtitle/service";
 import { TranslationTaskOrchestrator } from "@/background/taskOrchestrator";
@@ -369,6 +372,84 @@ export default defineBackground(() => {
               sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
           });
           return { type: "backgroundActionResult", success: true };
+        case "getSelectionTranslationConfig": {
+          const [targetLanguage, providerState, savedProviderId] = await Promise.all([
+            getStoredTargetLanguage(),
+            loadStoredProviderState(),
+            getSelectionProviderId(),
+          ]);
+
+          return buildSelectionTranslationConfig({
+            providerState,
+            savedProviderId,
+            targetLanguage,
+          });
+        }
+        case "setSelectionTranslationProvider":
+          await storage.selectionTranslationPreferences.save({
+            providerId: request.providerId,
+          });
+          return { type: "backgroundActionResult", success: true };
+        case "translateSelectionWithProvider": {
+          const tabId = sender.tab?.id;
+          if (tabId === undefined) {
+            return {
+              type: "selectionTranslationError",
+              requestId: request.requestId,
+              providerId: request.providerId,
+              message: "Cannot translate selection without a sender tab id.",
+            };
+          }
+
+          let latestMessage:
+            | Extract<ContentRequest, { type: "showSelectionTranslation" }>
+            | undefined;
+          await translateSelection(
+            {
+              tabId,
+              requestId: request.requestId,
+              providerId: request.providerId,
+              text: request.text,
+              sourceLanguage: request.sourceLanguage,
+              targetLanguage: request.targetLanguage,
+            },
+            {
+              getProviderState: loadStoredProviderState,
+              getSelectionProviderId,
+              getTranslationProvider: (profile) =>
+                translationProviderResolver.getTranslationProvider(profile),
+              detectSourceLanguage: (sourceText) =>
+                getChromeBuiltInAiOffscreenClient().detectLanguage(sourceText),
+              prepareChromeBuiltInAi,
+              sendToContent: async (_targetTabId, message) => {
+                if (message.type === "showSelectionTranslation") {
+                  latestMessage = message;
+                }
+
+                return { type: "contentActionResult", success: true };
+              },
+            },
+          );
+
+          if (latestMessage?.state === "translated") {
+            return {
+              type: "selectionTranslationResult",
+              requestId: latestMessage.requestId,
+              providerId: latestMessage.selectedProviderId ?? request.providerId,
+              translatedText: latestMessage.translatedText,
+            };
+          }
+
+          return {
+            type: "selectionTranslationError",
+            requestId: request.requestId,
+            providerId: latestMessage?.selectedProviderId ?? request.providerId,
+            message:
+              latestMessage?.state === "failed"
+                ? latestMessage.errorMessage
+                : "Selection translation failed.",
+          };
+        }
         case "summarizePage":
           await summarizePage(request, {
             getActiveProfile,

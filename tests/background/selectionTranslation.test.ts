@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  buildSelectionTranslationConfig,
   translateSelection,
   type TranslateSelectionDependencies,
 } from "@/background/selectionTranslation";
@@ -94,6 +95,56 @@ describe("translateSelection", () => {
       sendToContent,
     };
   }
+
+  it("builds configured selection popup config from ready providers", async () => {
+    vi.stubGlobal("Translator", {});
+    vi.stubGlobal("LanguageDetector", {});
+    vi.stubGlobal("navigator", { userAgent: "Chrome/138.0.0.0" });
+
+    const config = buildSelectionTranslationConfig({
+      providerState: {
+        profiles: [openAiProfile, chromeBuiltInProfile],
+        activeProviderId: "chrome-built-in-ai",
+      },
+      savedProviderId: "provider-1",
+      targetLanguage: "zh-CN",
+    });
+
+    expect(config).toEqual({
+      type: "selectionTranslationConfig",
+      configured: true,
+      targetLanguage: "zh-CN",
+      selectedProviderId: "provider-1",
+      providerOptions: [
+        {
+          id: "provider-1",
+          label: "Work Provider / gpt-5-mini",
+          providerMode: "remote",
+        },
+        {
+          id: "chrome-built-in-ai",
+          label: "Chrome Built-in AI",
+          providerMode: "local-only",
+        },
+      ],
+    });
+  });
+
+  it("builds missing provider config when no ready providers exist", async () => {
+    const config = buildSelectionTranslationConfig({
+      providerState: { profiles: [], activeProviderId: undefined },
+      savedProviderId: undefined,
+      targetLanguage: "zh-CN",
+    });
+
+    expect(config).toEqual({
+      type: "selectionTranslationConfig",
+      configured: false,
+      targetLanguage: "zh-CN",
+      providerOptions: [],
+      message: "No translation provider is configured.",
+    });
+  });
 
   it("calls the active provider and sends the translated selection to content", async () => {
     await translateSelection(

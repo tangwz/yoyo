@@ -1,4 +1,5 @@
 import type {
+  BackgroundResponse,
   ContentRequest,
   ContentResponse,
   SelectionTranslationProviderOption,
@@ -198,6 +199,37 @@ export function buildSelectionProviderOptions(
   });
 }
 
+export function buildSelectionTranslationConfig(input: {
+  providerState: TranslateSelectionProviderState;
+  savedProviderId: string | undefined;
+  targetLanguage: string;
+}): Extract<BackgroundResponse, { type: "selectionTranslationConfig" }> {
+  const providerOptions = buildSelectionProviderOptions(input.providerState.profiles);
+  const selectedProfile = selectSelectionProviderFromState({
+    providerState: input.providerState,
+    requestedProviderId: undefined,
+    savedProviderId: input.savedProviderId,
+  });
+
+  if (!selectedProfile) {
+    return {
+      type: "selectionTranslationConfig",
+      configured: false,
+      targetLanguage: input.targetLanguage,
+      providerOptions,
+      message: "No translation provider is configured.",
+    };
+  }
+
+  return {
+    type: "selectionTranslationConfig",
+    configured: true,
+    targetLanguage: input.targetLanguage,
+    selectedProviderId: selectedProfile.id,
+    providerOptions,
+  };
+}
+
 async function selectSelectionProvider(
   input: TranslateSelectionInput,
   dependencies: TranslateSelectionDependencies,
@@ -209,12 +241,28 @@ async function selectSelectionProvider(
     dependencies.getProviderState(),
     dependencies.getSelectionProviderId(),
   ]);
-  const readyProfiles = getReadySelectionProfiles(providerState.profiles);
   const providerOptions = buildSelectionProviderOptions(providerState.profiles);
+
+  return {
+    profile: selectSelectionProviderFromState({
+      providerState,
+      requestedProviderId: input.providerId,
+      savedProviderId,
+    }),
+    providerOptions,
+  };
+}
+
+function selectSelectionProviderFromState(input: {
+  providerState: TranslateSelectionProviderState;
+  requestedProviderId: string | undefined;
+  savedProviderId: string | undefined;
+}): ProviderProfile | undefined {
+  const readyProfiles = getReadySelectionProfiles(input.providerState.profiles);
   const selectedProviderId = [
-    input.providerId,
-    savedProviderId,
-    providerState.activeProviderId,
+    input.requestedProviderId,
+    input.savedProviderId,
+    input.providerState.activeProviderId,
     readyProfiles[0]?.id,
   ].find(
     (providerId): providerId is string =>
@@ -222,10 +270,7 @@ async function selectSelectionProvider(
       readyProfiles.some((profile) => profile.id === providerId),
   );
 
-  return {
-    profile: readyProfiles.find((profile) => profile.id === selectedProviderId),
-    providerOptions,
-  };
+  return readyProfiles.find((profile) => profile.id === selectedProviderId);
 }
 
 function getReadySelectionProfiles(profiles: ProviderProfile[]): ProviderProfile[] {
