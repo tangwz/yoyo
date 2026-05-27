@@ -232,7 +232,7 @@ describe("options app", () => {
       "lazyViewport",
     );
     expect(screen.getByRole("combobox", { name: "界面语言" })).toHaveValue("zh-CN");
-    expect(screen.getByRole("spinbutton", { name: "超时时间" })).toHaveValue(30000);
+    expect(screen.getByRole("spinbutton", { name: "超时时间（毫秒）" })).toHaveValue(30000);
     expect(screen.getByRole("spinbutton", { name: "温度" })).toHaveAttribute(
       "step",
       "0.1",
@@ -273,7 +273,7 @@ describe("options app", () => {
     expect(screen.getByRole("radio", { name: "Chrome Built-in AI" })).toBeChecked();
     expect(screen.queryByRole("combobox", { name: "服务预设" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("访问密钥")).not.toBeInTheDocument();
-    expect(screen.queryByRole("spinbutton", { name: "超时时间" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "超时时间（毫秒）" })).not.toBeInTheDocument();
     expect(screen.queryByRole("spinbutton", { name: "温度" })).not.toBeInTheDocument();
     expect(screen.queryByRole("spinbutton", { name: "最大输出长度" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Chrome Built-in AI" })).toBeVisible();
@@ -309,7 +309,7 @@ describe("options app", () => {
     expect(screen.getByText("当前浏览器不可使用 Chrome Built-in AI。")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Chrome Built-in AI" })).toBeVisible();
     expect(screen.queryByRole("combobox", { name: "服务预设" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("spinbutton", { name: "超时时间" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "超时时间（毫秒）" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "测试连接" })).not.toBeInTheDocument();
   });
 
@@ -540,7 +540,7 @@ describe("options app", () => {
     expect(screen.getByRole("textbox", { name: "视觉模型" })).toHaveValue(
       "custom-vision-model",
     );
-    expect(screen.getByRole("spinbutton", { name: "超时时间" })).toHaveValue(60000);
+    expect(screen.getByRole("spinbutton", { name: "超时时间（毫秒）" })).toHaveValue(60000);
     expect(screen.getByRole("spinbutton", { name: "温度" })).toHaveValue(0.2);
     expect(screen.getByRole("spinbutton", { name: "最大输出长度" })).toHaveValue(8192);
   });
@@ -645,7 +645,7 @@ describe("options app", () => {
     await fireEvent.update(screen.getByLabelText("访问密钥"), "secret-key");
     await fireEvent.update(getTextModelInput(), "deepseek-chat");
     await fireEvent.update(screen.getByRole("textbox", { name: "视觉模型" }), "");
-    await fireEvent.update(screen.getByRole("spinbutton", { name: "超时时间" }), "45000");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "超时时间（毫秒）" }), "45000");
     await fireEvent.update(screen.getByRole("spinbutton", { name: "温度" }), "0.7");
     await fireEvent.update(screen.getByRole("spinbutton", { name: "最大输出长度" }), "2048");
 
@@ -705,7 +705,7 @@ describe("options app", () => {
     await fireEvent.update(screen.getByRole("textbox", { name: "接口地址" }), "https://api.example.com/v1");
     await fireEvent.update(screen.getByLabelText("访问密钥"), "secret-key");
     await fireEvent.update(getTextModelInput(), "deepseek-chat");
-    await fireEvent.update(screen.getByRole("spinbutton", { name: "超时时间" }), "45000");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "超时时间（毫秒）" }), "45000");
     await fireEvent.update(screen.getByRole("spinbutton", { name: "温度" }), "0.7");
     await fireEvent.update(screen.getByRole("spinbutton", { name: "最大输出长度" }), "2048");
 
@@ -960,7 +960,7 @@ describe("options app", () => {
   it("normalizes blank numeric request params before saving", async () => {
     await renderReady();
 
-    await fireEvent.update(screen.getByRole("spinbutton", { name: "超时时间" }), "");
+    await fireEvent.update(screen.getByRole("spinbutton", { name: "超时时间（毫秒）" }), "");
     await fireEvent.update(screen.getByRole("spinbutton", { name: "温度" }), "");
     await fireEvent.update(screen.getByRole("spinbutton", { name: "最大输出长度" }), "");
 
