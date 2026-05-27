@@ -6,6 +6,7 @@ describe("collectPageSegments", () => {
   const originalInnerHeight = window.innerHeight;
   const originalDocumentLanguage = document.documentElement.getAttribute("lang");
   const originalBodyLanguage = document.body.getAttribute("lang");
+  const originalDocumentContentType = document.contentType;
 
   beforeEach(() => {
     document.body.innerHTML = "";
@@ -30,6 +31,10 @@ describe("collectPageSegments", () => {
     } else {
       document.body.setAttribute("lang", originalBodyLanguage);
     }
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: originalDocumentContentType,
+    });
   });
 
   it("extracts leaf readable blocks without parent duplicates", async () => {
@@ -409,6 +414,28 @@ describe("collectPageSegments", () => {
     expect(result.segments.map((segment) => segment.sourceText)).toEqual([
       "Readable paragraph.",
     ]);
+  });
+
+  it("extracts browser-rendered plain text documents from the generated pre", async () => {
+    const rawText = [
+      "# CLAUDE.md",
+      "",
+      "This file provides guidance to Claude Code when working with code in this repository.",
+    ].join("\n");
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `<pre style="word-wrap: break-word; white-space: pre-wrap;">${rawText}</pre>`;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "# CLAUDE.md This file provides guidance to Claude Code when working with code in this repository.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelector("pre"),
+    );
   });
 
   it("extracts generic readable blocks only when they have no readable child", async () => {

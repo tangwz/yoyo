@@ -105,6 +105,27 @@ const feedLowValueSelector = [
   "[data-testid='like']",
 ].join(",");
 
+function isPlainTextDocument(): boolean {
+  return document.contentType.toLowerCase().split(";")[0]?.trim() === "text/plain";
+}
+
+function isBrowserGeneratedPlainTextPre(element: Element): boolean {
+  if (!isPlainTextDocument()) return false;
+  if (element.tagName !== "PRE") return false;
+  if (element.parentElement !== document.body) return false;
+
+  return [...document.body.children].every(
+    (child) =>
+      child === element ||
+      child.hasAttribute("data-yoyo-translation") ||
+      child.hasAttribute("data-yoyo-extension"),
+  );
+}
+
+function isElementSkippedForExtraction(element: Element): boolean {
+  return isElementSkippable(element) && !isBrowserGeneratedPlainTextPre(element);
+}
+
 function discoverRoots(): Element[] {
   const discoveredRoots: DiscoveredRootCandidate[] = [];
 
@@ -113,7 +134,7 @@ function discoverRoots(): Element[] {
     if (!candidate) continue;
     const root = candidate.element;
     if (root === document.documentElement || root === document.body) continue;
-    if (isElementSkippable(root)) continue;
+    if (isElementSkippedForExtraction(root)) continue;
     if (isInsideGenericChrome(root)) continue;
 
     const existingIndex = discoveredRoots.findIndex((existing) =>
@@ -200,7 +221,7 @@ function hasMeaningfulNonEditableContent(element: Element): boolean {
     if (child.nodeType !== elementNodeType) continue;
 
     const childElement = child as Element;
-    if (isElementSkippable(childElement)) continue;
+    if (isElementSkippedForExtraction(childElement)) continue;
     if (hasMeaningfulNonEditableContent(childElement)) return true;
   }
 
@@ -517,7 +538,7 @@ function hasHighConfidenceReadableChild(
   textCache?: TextNormalizationCache,
 ): boolean {
   return [...element.children].some((child) => {
-    if (isElementSkippable(child) || isLowValueElement(child, textCache)) {
+    if (isElementSkippedForExtraction(child) || isLowValueElement(child, textCache)) {
       return false;
     }
     return (
@@ -543,7 +564,7 @@ function hasReadableChildCandidate(
   textCache?: TextNormalizationCache,
 ): boolean {
   for (const child of [...element.children]) {
-    if (isElementSkippable(child)) continue;
+    if (isElementSkippedForExtraction(child)) continue;
     if (isLowValueElement(child, textCache)) continue;
     if (isDirectReadableCandidate(child)) return true;
     if (hasReadableChildCandidate(child, textCache)) return true;
@@ -612,7 +633,7 @@ function collectRawTextStream(
     if (child.nodeType !== elementNodeType) continue;
 
     const childElement = child as Element;
-    if (isElementSkippable(childElement)) continue;
+    if (isElementSkippedForExtraction(childElement)) continue;
     if (isFeedPageChromeElement(childElement)) continue;
     if (isPageChromeDescendantOutsideArticle(childElement)) continue;
     if (isWeakTextHintInPageChrome(childElement)) continue;
@@ -630,7 +651,7 @@ function shouldExtractElement(
   element: Element,
   textCache?: TextNormalizationCache,
 ): boolean {
-  if (isElementSkippable(element)) return false;
+  if (isElementSkippedForExtraction(element)) return false;
   if (isLowValueElement(element, textCache)) return false;
   if (isDirectReadableCandidate(element)) return true;
   if (
@@ -726,7 +747,7 @@ export async function collectPageSegments(
   async function walk(element: Element): Promise<void> {
     if (seenNodes.has(element)) return;
     seenNodes.add(element);
-    if (isElementSkippable(element)) return;
+    if (isElementSkippedForExtraction(element)) return;
     if (isLowValueElement(element, textCache)) return;
     if (options.visibleRangeOnly && element !== document.body && isOutsideVisibleCollectionRange(element)) {
       return;
