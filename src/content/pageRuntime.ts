@@ -1,4 +1,4 @@
-import { AnchorRegistry, type SegmentRuntimeAnchor } from "@/content/anchors";
+import { AnchorRegistry } from "@/content/anchors";
 import {
   type SegmentCollection,
   collectPageSegments,
@@ -300,14 +300,6 @@ function observeCurrentSegments(taskId: string): void {
   }
 }
 
-function priorityForAnchor(anchor: SegmentRuntimeAnchor): PageSegment["priority"] {
-  if (anchor.priority) {
-    return anchor.priority;
-  }
-
-  return priorityForElement(anchor.sourceNode);
-}
-
 function startVisibilityObserver(taskId: string): void {
   stopVisibilityObserver();
 
@@ -331,7 +323,7 @@ function startVisibilityObserver(taskId: string): void {
           continue;
         }
 
-        const priority = priorityForAnchor(anchor);
+        const priority = priorityForElement(anchor.sourceNode);
         if (priority === "normal") {
           continue;
         }
@@ -640,7 +632,7 @@ async function reportVisibleLazySegments(
         return false;
       }
 
-      return !anchor.sourceNode.isConnected || priorityForAnchor(anchor) !== "normal";
+      return !anchor.sourceNode.isConnected || priorityForElement(anchor.sourceNode) !== "normal";
     });
   const segmentIds = reportableAnchors
     .filter((anchor) => anchor.sourceNode.isConnected)
@@ -731,7 +723,7 @@ function startLazySegmentReporting(
   reportedLazySegmentIds = new Set(
     currentAnchors
       .listByTask(taskId)
-      .filter((anchor) => priorityForAnchor(anchor) !== "normal")
+      .filter((anchor) => priorityForElement(anchor.sourceNode) !== "normal")
       .map((anchor) => anchor.segmentId),
   );
   if (options.deferReporting) {

@@ -523,11 +523,11 @@ describe("collectPageSegments", () => {
     expect(new Set(result.segments.map((segment) => segment.id)).size).toBe(
       result.segments.length,
     );
-    expect(
-      result.anchors.listByTask("task-1").every((anchor) =>
-        anchor.sourceNode === document.querySelector("pre"),
-      ),
-    ).toBe(true);
+    const sourceNodes = result.anchors
+      .listByTask("task-1")
+      .map((anchor) => anchor.sourceNode);
+    expect(new Set(sourceNodes).size).toBe(result.segments.length);
+    expect(sourceNodes.every((node) => node.tagName === "PRE")).toBe(true);
   });
 
   it("collects only the first visible chunk from large plain text documents in visible-range mode", async () => {
@@ -559,10 +559,11 @@ describe("collectPageSegments", () => {
     const result = await collectPageSegments("task-1", { visibleRangeOnly: true });
 
     expect(result.segments).toHaveLength(1);
-    expect(result.segments[0].priority).toBe("viewport");
+    expect(["viewport", "nearViewport"]).toContain(result.segments[0].priority);
     expect(result.segments[0].sourceText.length).toBeLessThanOrEqual(1_800);
     expect(result.segments[0].sourceText).toContain(paragraphs[0]);
     expect(result.segments[0].sourceText).not.toContain(paragraphs.at(-1));
+    expect(document.querySelectorAll("pre").length).toBeGreaterThan(1);
   });
 
   it("extracts generic readable blocks only when they have no readable child", async () => {

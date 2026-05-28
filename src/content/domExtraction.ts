@@ -793,6 +793,24 @@ function splitPlainTextSource(sourceText: string): string[] {
   return chunks;
 }
 
+function materializePlainTextChunks(element: Element): HTMLElement[] {
+  const chunks = splitPlainTextSource(element.textContent ?? "");
+  if (chunks.length === 0) return [];
+
+  if (chunks.length === 1) {
+    element.textContent = chunks[0];
+    return [element as HTMLElement];
+  }
+
+  const chunkElements = chunks.map((chunk) => {
+    const chunkElement = element.cloneNode(false) as HTMLElement;
+    chunkElement.textContent = chunk;
+    return chunkElement;
+  });
+  element.replaceWith(...chunkElements);
+  return chunkElements;
+}
+
 export async function collectPageSegments(
   taskId: string,
   options: SegmentCollectionOptions = {},
@@ -806,10 +824,7 @@ export async function collectPageSegments(
   async function addSegment(
     element: Element,
     sourceText: string,
-    addOptions: {
-      preserveSourceText?: boolean;
-      priority?: SegmentPriority;
-    } = {},
+    addOptions: { preserveSourceText?: boolean } = {},
   ): Promise<void> {
     const normalizedText = normalizeSourceText(sourceText);
     if (!normalizedText) {
@@ -819,7 +834,7 @@ export async function collectPageSegments(
       ? sourceText
       : normalizedText;
 
-    const priority = addOptions.priority ?? priorityForElement(element);
+    const priority = priorityForElement(element);
     if (options.visibleRangeOnly && priority === "normal") {
       return;
     }
@@ -838,7 +853,6 @@ export async function collectPageSegments(
       segmentId,
       sourceNode: element,
       taskId,
-      priority: addOptions.priority,
     });
     order += 1;
   }
@@ -860,12 +874,13 @@ export async function collectPageSegments(
     }
 
     if (isBrowserGeneratedPlainTextPre(element)) {
-      const priority = priorityForElement(element);
-      const chunks = splitPlainTextSource(element.textContent ?? "");
-      for (const [index, sourceText] of chunks.entries()) {
-        await addSegment(element, sourceText, {
+      const chunkElements = materializePlainTextChunks(element);
+      for (const [index, chunkElement] of chunkElements.entries()) {
+        if (options.visibleRangeOnly && index > 0) {
+          break;
+        }
+        await addSegment(chunkElement, chunkElement.textContent ?? "", {
           preserveSourceText: true,
-          priority: index === 0 ? priority : "normal",
         });
       }
       return;
