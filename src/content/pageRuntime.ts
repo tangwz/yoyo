@@ -76,7 +76,8 @@ function joinSummarySourceText(segments: PageSegment[]): string {
   let sourceText = "";
 
   for (const segment of segments) {
-    const separator = sourceText.length > 0 ? "\n\n" : "";
+    const separator =
+      sourceText.length > 0 && !segment.preserveWhitespace ? "\n\n" : "";
     const nextText = `${separator}${segment.sourceText}`;
     const remainingChars = maxSummarySourceChars - sourceText.length;
     if (remainingChars <= 0) {
@@ -515,7 +516,10 @@ async function rescanDirtyMutationRoots(): Promise<void> {
       continue;
     }
 
-    const collection = await collectPageSegments(context.taskId, { root });
+    const collection = await collectPageSegments(context.taskId, {
+      root,
+      materializePlainTextChunks: true,
+    });
     if (translationQueueContext !== context) {
       return;
     }
@@ -753,7 +757,9 @@ async function collectDeferredLazySegments(taskId: string): Promise<void> {
     return;
   }
 
-  const collection = await collectPageSegments(taskId);
+  const collection = await collectPageSegments(taskId, {
+    materializePlainTextChunks: true,
+  });
   if (activeTaskId !== taskId || lazyReportTaskId !== taskId) {
     return;
   }
@@ -899,7 +905,9 @@ export async function collectSegments(
   const startedAt = nowMs();
   const { segments, anchors } = await collectPageSegments(
     taskId,
-    translationMode === "lazyViewport" ? { visibleRangeOnly: true } : undefined,
+    translationMode === "lazyViewport"
+      ? { visibleRangeOnly: true, materializePlainTextChunks: true }
+      : { materializePlainTextChunks: true },
   );
   if (generation !== collectionGeneration) {
     throw new Error("Translation collection was superseded.");

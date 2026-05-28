@@ -18,6 +18,7 @@ export type SegmentCollection = {
 export type SegmentCollectionOptions = {
   visibleRangeOnly?: boolean;
   root?: Element;
+  materializePlainTextChunks?: boolean;
 };
 
 type TextNormalizationCache = WeakMap<Element, string>;
@@ -715,62 +716,38 @@ function isOutsideVisibleCollectionRange(element: Element): boolean {
 }
 
 function normalizePlainTextSource(sourceText: string): string {
-  return sourceText
-    .replace(/\r\n?/g, "\n")
-    .replace(/\u00A0/g, " ")
-    .replace(/^\n+|\n+$/g, "");
+  return sourceText.replace(/\r\n?/g, "\n");
 }
 
-function splitLongPlainTextLine(line: string): string[] {
-  if (line.length <= plainTextSegmentMaxLength) return [line];
+function plainTextBreakIndex(text: string, start: number): number {
+  const maxEnd = Math.min(text.length, start + plainTextSegmentMaxLength);
+  if (maxEnd === text.length) return text.length;
 
-  const chunks: string[] = [];
-  let remaining = line;
-  while (remaining.length > plainTextSegmentMaxLength) {
-    const candidate = remaining.slice(0, plainTextSegmentMaxLength + 1);
-    const whitespaceBreak = Math.max(
-      candidate.lastIndexOf(" "),
-      candidate.lastIndexOf("\t"),
-    );
-    const breakIndex =
-      whitespaceBreak > plainTextSegmentMaxLength * 0.5
-        ? whitespaceBreak
-        : plainTextSegmentMaxLength;
-
-    chunks.push(remaining.slice(0, breakIndex).trimEnd());
-    remaining = remaining.slice(breakIndex).trimStart();
-  }
-
-  if (remaining.length > 0) {
-    chunks.push(remaining);
-  }
-
-  return chunks;
-}
-
-function splitPlainTextBlock(block: string): string[] {
-  if (block.length <= plainTextSegmentMaxLength) return [block];
-
-  const chunks: string[] = [];
-  let current = "";
-  for (const lineChunk of block.split("\n").flatMap(splitLongPlainTextLine)) {
-    const separator = current.length > 0 ? "\n" : "";
-    if (
-      current.length > 0 &&
-      current.length + separator.length + lineChunk.length > plainTextSegmentMaxLength
-    ) {
-      chunks.push(current);
-      current = "";
+  const candidate = text.slice(start, maxEnd + 1);
+  const minimumUsefulBreak = plainTextSegmentMaxLength * 0.5;
+  const paragraphBreak = candidate.lastIndexOf("\n\n");
+  if (paragraphBreak > minimumUsefulBreak) {
+    let end = start + paragraphBreak;
+    while (end < text.length && text[end] === "\n") {
+      end += 1;
     }
-
-    current += `${current.length > 0 ? "\n" : ""}${lineChunk}`;
+    return end;
   }
 
-  if (current.length > 0) {
-    chunks.push(current);
+  const lineBreak = candidate.lastIndexOf("\n");
+  if (lineBreak > minimumUsefulBreak) {
+    return start + lineBreak + 1;
   }
 
-  return chunks;
+  const whitespaceBreak = Math.max(
+    candidate.lastIndexOf(" "),
+    candidate.lastIndexOf("\t"),
+  );
+  if (whitespaceBreak > minimumUsefulBreak) {
+    return start + whitespaceBreak + 1;
+  }
+
+  return maxEnd;
 }
 
 function splitPlainTextSource(sourceText: string): string[] {
@@ -778,35 +755,39 @@ function splitPlainTextSource(sourceText: string): string[] {
   if (!normalizeSourceText(text)) return [];
 
   const chunks: string[] = [];
-  let current = "";
-
-  for (const block of text.split(/\n{2,}/).flatMap(splitPlainTextBlock)) {
-    const separator = current.length > 0 ? "\n\n" : "";
-    if (
-      current.length > 0 &&
-      current.length + separator.length + block.length > plainTextSegmentMaxLength
-    ) {
-      chunks.push(current);
-      current = "";
+  let start = 0;
+  while (start < text.length) {
+    const end = plainTextBreakIndex(text, start);
+    const chunk = text.slice(start, end);
+    if (normalizeSourceText(chunk)) {
+      chunks.push(chunk);
     }
-
-    current += `${current.length > 0 ? "\n\n" : ""}${block}`;
-  }
-
-  if (current.length > 0) {
-    chunks.push(current);
+    start = end;
   }
 
   return chunks;
 }
 
-function materializePlainTextChunks(element: Element): HTMLElement[] {
+function plainTextChunkElements(
+  element: Element,
+  options: { materialize: boolean },
+): HTMLElement[] {
   const chunks = splitPlainTextSource(element.textContent ?? "");
   if (chunks.length === 0) return [];
 
   if (chunks.length === 1) {
-    element.textContent = chunks[0];
+    if (options.materialize) {
+      element.textContent = chunks[0];
+    }
     return [element as HTMLElement];
+  }
+
+  if (!options.materialize) {
+    return chunks.map((chunk) => {
+      const chunkElement = element.cloneNode(false) as HTMLElement;
+      chunkElement.textContent = chunk;
+      return chunkElement;
+    });
   }
 
   const computedStyle = window.getComputedStyle(element);
@@ -894,8 +875,13 @@ export async function collectPageSegments(
     }
 
     if (isBrowserGeneratedPlainTextPre(element)) {
-      const chunkElements = materializePlainTextChunks(element);
-      for (const chunkElement of chunkElements) {
+      const chunkElements = plainTextChunkElements(element, {
+        materialize: options.materializePlainTextChunks === true,
+      });
+      for (const [index, chunkElement] of chunkElements.entries()) {
+        if (options.visibleRangeOnly && index > 0) {
+          break;
+        }
         await addSegment(chunkElement, chunkElement.textContent ?? "", {
           preserveSourceText: true,
         });

@@ -196,6 +196,36 @@ describe("page runtime", () => {
     expect(document.querySelector("[data-yoyo-translation]")).toBeNull();
   });
 
+  it("estimates and summarizes plain text without rewriting the source pre", async () => {
+    const originalContentType = document.contentType;
+    const paragraphs = Array.from(
+      { length: 6 },
+      (_, index) =>
+        `Paragraph ${index + 1} ${"describes a raw text section ".repeat(20).trim()}.`,
+    );
+    const rawText = paragraphs.join("\n\n");
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `<pre style="word-wrap: break-word; white-space: pre-wrap;">${rawText}</pre>`;
+
+    try {
+      await estimatePage();
+      const summary = await collectSummarySource();
+
+      expect(summary.sourceText).toBe(rawText);
+      expect(document.querySelectorAll("pre")).toHaveLength(1);
+      expect(document.querySelector("pre")?.textContent).toBe(rawText);
+      expect(document.querySelector("[data-yoyo-translation]")).toBeNull();
+    } finally {
+      Object.defineProperty(document, "contentType", {
+        configurable: true,
+        value: originalContentType,
+      });
+    }
+  });
+
   it("limits summary source length and reports the truncated character count", async () => {
     const firstParagraph = "A".repeat(16_000);
     const secondParagraph = "B".repeat(10_000);

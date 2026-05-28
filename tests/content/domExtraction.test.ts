@@ -534,7 +534,7 @@ describe("collectPageSegments", () => {
     expect(result.segments.every((segment) => segment.sourceText.length <= 1_800)).toBe(
       true,
     );
-    expect(result.segments.map((segment) => segment.sourceText).join("\n\n")).toBe(
+    expect(result.segments.map((segment) => segment.sourceText).join("")).toBe(
       rawText,
     );
     expect(new Set(result.segments.map((segment) => segment.id)).size).toBe(
@@ -545,16 +545,40 @@ describe("collectPageSegments", () => {
       .map((anchor) => anchor.sourceNode);
     expect(new Set(sourceNodes).size).toBe(result.segments.length);
     expect(sourceNodes.every((node) => node.tagName === "PRE")).toBe(true);
-    expect(
-      [...document.querySelectorAll<HTMLElement>("pre")].every(
-        (node, index, nodes) =>
-          node.style.marginTop === (index === 0 ? node.style.marginTop : "0px") &&
-          node.style.marginBottom ===
-            (index === nodes.length - 1 ? node.style.marginBottom : "0px"),
-      ),
-    ).toBe(true);
+    expect(document.querySelectorAll("pre")).toHaveLength(1);
+    expect(document.querySelector("pre")?.textContent).toBe(rawText);
     expect(result.segments.every((segment) => segment.preserveWhitespace)).toBe(
       true,
+    );
+  });
+
+  it("preserves raw text whitespace while chunking", async () => {
+    const rawText = [
+      `Alpha\u00A0Beta`,
+      "",
+      "",
+      `${"x".repeat(900)}  ${"y".repeat(950)}`,
+    ].join("\n");
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `<pre style="word-wrap: break-word; white-space: pre-wrap;">${rawText}</pre>`;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.length).toBeGreaterThan(1);
+    expect(result.segments.map((segment) => segment.sourceText).join("")).toBe(
+      rawText,
+    );
+    expect(result.segments.some((segment) => segment.sourceText.includes("\u00A0"))).toBe(
+      true,
+    );
+    expect(result.segments.map((segment) => segment.sourceText).join("")).toContain(
+      "\n\n\n",
+    );
+    expect(result.segments.map((segment) => segment.sourceText).join("")).toContain(
+      "  ",
     );
   });
 
@@ -608,7 +632,7 @@ describe("collectPageSegments", () => {
     expect(result.segments[0].sourceText.length).toBeLessThanOrEqual(1_800);
     expect(result.segments[0].sourceText).toContain(paragraphs[2]);
     expect(result.segments[0].sourceText).not.toContain(paragraphs.at(-1));
-    expect(document.querySelectorAll("pre").length).toBeGreaterThan(1);
+    expect(document.querySelectorAll("pre")).toHaveLength(1);
   });
 
   it("extracts generic readable blocks only when they have no readable child", async () => {
