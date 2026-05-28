@@ -1,4 +1,4 @@
-import { AnchorRegistry } from "@/content/anchors";
+import { AnchorRegistry, type SegmentRuntimeAnchor } from "@/content/anchors";
 import {
   type SegmentCollection,
   collectPageSegments,
@@ -300,6 +300,14 @@ function observeCurrentSegments(taskId: string): void {
   }
 }
 
+function priorityForAnchor(anchor: SegmentRuntimeAnchor): PageSegment["priority"] {
+  if (anchor.priority) {
+    return anchor.priority;
+  }
+
+  return priorityForElement(anchor.sourceNode);
+}
+
 function startVisibilityObserver(taskId: string): void {
   stopVisibilityObserver();
 
@@ -318,13 +326,19 @@ function startVisibilityObserver(taskId: string): void {
 
         const segmentId = observedSegmentIdsByElement.get(entry.target);
         const segment = segmentId ? currentSegmentsById.get(segmentId) : undefined;
-        if (!segment) {
+        const anchor = segmentId ? currentAnchors.get(segmentId) : undefined;
+        if (!segment || !anchor) {
+          continue;
+        }
+
+        const priority = priorityForAnchor(anchor);
+        if (priority === "normal") {
           continue;
         }
 
         newlyVisible.push({
           ...segment,
-          priority: priorityForElement(entry.target as Element),
+          priority,
         });
       }
 
@@ -626,7 +640,7 @@ async function reportVisibleLazySegments(
         return false;
       }
 
-      return !anchor.sourceNode.isConnected || priorityForElement(anchor.sourceNode) !== "normal";
+      return !anchor.sourceNode.isConnected || priorityForAnchor(anchor) !== "normal";
     });
   const segmentIds = reportableAnchors
     .filter((anchor) => anchor.sourceNode.isConnected)
@@ -717,7 +731,7 @@ function startLazySegmentReporting(
   reportedLazySegmentIds = new Set(
     currentAnchors
       .listByTask(taskId)
-      .filter((anchor) => priorityForElement(anchor.sourceNode) !== "normal")
+      .filter((anchor) => priorityForAnchor(anchor) !== "normal")
       .map((anchor) => anchor.segmentId),
   );
   if (options.deferReporting) {
@@ -761,15 +775,17 @@ function mergeLazySegmentCollection(
   taskId: string,
   collection: SegmentCollection,
 ): PageSegment[] {
-  const existingAnchorsByNode = new Map(
-    currentAnchors
-      .listByTask(taskId)
-      .map((anchor) => [anchor.sourceNode, anchor]),
-  );
+  const existingAnchorsByNode = new Map<Element, ReturnType<AnchorRegistry["listByTask"]>>();
+  for (const anchor of currentAnchors.listByTask(taskId)) {
+    const anchors = existingAnchorsByNode.get(anchor.sourceNode) ?? [];
+    anchors.push(anchor);
+    existingAnchorsByNode.set(anchor.sourceNode, anchors);
+  }
   const nextSegmentsById = new Map(currentSegmentsById);
   const existingSegmentIds = new Set(nextSegmentsById.keys());
   const newSegmentIds: string[] = [];
   const usedSegmentIds = new Set(nextSegmentsById.keys());
+  const matchedExistingSegmentIds = new Set<string>();
   let nextSegmentOrdinal = nextAvailableSegmentOrdinal(usedSegmentIds);
 
   const allocateSegmentId = (preferredSegmentId: string): string => {
@@ -794,34 +810,46 @@ function mergeLazySegmentCollection(
       continue;
     }
 
-    const existingAnchor = existingAnchorsByNode.get(anchor.sourceNode);
-    if (existingAnchor) {
-      const previousSegment = nextSegmentsById.get(existingAnchor.segmentId);
-      if (
-        previousSegment &&
-        (previousSegment.textHash !== segment.textHash ||
-          previousSegment.sourceText !== segment.sourceText)
-      ) {
-        const segmentId = allocateSegmentId(segment.id);
-        dropRuntimeSegment(existingAnchor.segmentId);
-        currentAnchors.set({
-          ...anchor,
-          segmentId,
-        });
-        nextSegmentsById.delete(existingAnchor.segmentId);
-        nextSegmentsById.set(segmentId, {
-          ...segment,
-          id: segmentId,
-        });
-        newSegmentIds.push(segmentId);
-        continue;
+    const existingAnchors = existingAnchorsByNode.get(anchor.sourceNode) ?? [];
+    const existingAnchor = existingAnchors.find((candidate) => {
+      if (matchedExistingSegmentIds.has(candidate.segmentId)) {
+        return false;
       }
-
+      const existingSegment = nextSegmentsById.get(candidate.segmentId);
+      return (
+        existingSegment?.textHash === segment.textHash &&
+        existingSegment.sourceText === segment.sourceText
+      );
+    });
+    if (existingAnchor) {
+      matchedExistingSegmentIds.add(existingAnchor.segmentId);
       nextSegmentsById.set(existingAnchor.segmentId, {
         ...segment,
         id: existingAnchor.segmentId,
       });
       usedSegmentIds.add(existingAnchor.segmentId);
+      continue;
+    }
+
+    const unmatchedExistingAnchor =
+      existingAnchors.length === 1 &&
+      !matchedExistingSegmentIds.has(existingAnchors[0].segmentId)
+        ? existingAnchors[0]
+        : undefined;
+    if (unmatchedExistingAnchor) {
+      const segmentId = allocateSegmentId(segment.id);
+      dropRuntimeSegment(unmatchedExistingAnchor.segmentId);
+      matchedExistingSegmentIds.add(unmatchedExistingAnchor.segmentId);
+      currentAnchors.set({
+        ...anchor,
+        segmentId,
+      });
+      nextSegmentsById.delete(unmatchedExistingAnchor.segmentId);
+      nextSegmentsById.set(segmentId, {
+        ...segment,
+        id: segmentId,
+      });
+      newSegmentIds.push(segmentId);
       continue;
     }
 

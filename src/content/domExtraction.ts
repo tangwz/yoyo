@@ -26,7 +26,7 @@ const leafReadableTags = new Set(["P", "LI", "BLOCKQUOTE"]);
 const headingTags = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
 const listTags = new Set(["UL", "OL"]);
 const genericMinimumTextLength = 80;
-const plainTextSegmentMaxLength = 3_000;
+const plainTextSegmentMaxLength = 1_800;
 const textNodeType = 3;
 const elementNodeType = 1;
 
@@ -806,7 +806,10 @@ export async function collectPageSegments(
   async function addSegment(
     element: Element,
     sourceText: string,
-    addOptions: { preserveSourceText?: boolean } = {},
+    addOptions: {
+      preserveSourceText?: boolean;
+      priority?: SegmentPriority;
+    } = {},
   ): Promise<void> {
     const normalizedText = normalizeSourceText(sourceText);
     if (!normalizedText) {
@@ -816,7 +819,7 @@ export async function collectPageSegments(
       ? sourceText
       : normalizedText;
 
-    const priority = priorityForElement(element);
+    const priority = addOptions.priority ?? priorityForElement(element);
     if (options.visibleRangeOnly && priority === "normal") {
       return;
     }
@@ -831,7 +834,12 @@ export async function collectPageSegments(
       pathHint: pathHintFor(element),
       textHash: await hashNormalizedText(segmentSourceText),
     });
-    anchors.set({ segmentId, sourceNode: element, taskId });
+    anchors.set({
+      segmentId,
+      sourceNode: element,
+      taskId,
+      priority: addOptions.priority,
+    });
     order += 1;
   }
 
@@ -852,8 +860,13 @@ export async function collectPageSegments(
     }
 
     if (isBrowserGeneratedPlainTextPre(element)) {
-      for (const sourceText of splitPlainTextSource(element.textContent ?? "")) {
-        await addSegment(element, sourceText, { preserveSourceText: true });
+      const priority = priorityForElement(element);
+      const chunks = splitPlainTextSource(element.textContent ?? "");
+      for (const [index, sourceText] of chunks.entries()) {
+        await addSegment(element, sourceText, {
+          preserveSourceText: true,
+          priority: index === 0 ? priority : "normal",
+        });
       }
       return;
     }

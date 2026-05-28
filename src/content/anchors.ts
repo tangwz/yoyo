@@ -1,8 +1,11 @@
+import type { SegmentPriority } from "@/translation/types";
+
 export type SegmentRuntimeAnchor = {
   segmentId: string;
   sourceNode: Element;
   taskId: string;
   insertedNode?: HTMLElement;
+  priority?: SegmentPriority;
 };
 
 export class AnchorRegistry {

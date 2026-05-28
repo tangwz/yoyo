@@ -514,7 +514,7 @@ describe("collectPageSegments", () => {
     const result = await collectPageSegments("task-1");
 
     expect(result.segments.length).toBeGreaterThan(1);
-    expect(result.segments.every((segment) => segment.sourceText.length <= 3_500)).toBe(
+    expect(result.segments.every((segment) => segment.sourceText.length <= 1_800)).toBe(
       true,
     );
     expect(result.segments.map((segment) => segment.sourceText).join("\n\n")).toBe(
@@ -528,6 +528,41 @@ describe("collectPageSegments", () => {
         anchor.sourceNode === document.querySelector("pre"),
       ),
     ).toBe(true);
+  });
+
+  it("collects only the first visible chunk from large plain text documents in visible-range mode", async () => {
+    const paragraphs = Array.from(
+      { length: 4 },
+      (_, index) =>
+        `Paragraph ${index + 1} ${"describes a raw text section ".repeat(20).trim()}.`,
+    );
+    const rawText = paragraphs.join("\n\n");
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `<pre style="word-wrap: break-word; white-space: pre-wrap;">${rawText}</pre>`;
+    const pre = document.querySelector("pre") as HTMLElement;
+    pre.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 10,
+        top: 10,
+        bottom: 90,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 80,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    const result = await collectPageSegments("task-1", { visibleRangeOnly: true });
+
+    expect(result.segments).toHaveLength(1);
+    expect(result.segments[0].priority).toBe("viewport");
+    expect(result.segments[0].sourceText.length).toBeLessThanOrEqual(1_800);
+    expect(result.segments[0].sourceText).toContain(paragraphs[0]);
+    expect(result.segments[0].sourceText).not.toContain(paragraphs.at(-1));
   });
 
   it("extracts generic readable blocks only when they have no readable child", async () => {

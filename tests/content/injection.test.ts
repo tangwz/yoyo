@@ -103,6 +103,29 @@ describe("translation injection", () => {
     expect(all[0].textContent).toBe("Second");
   });
 
+  it("preserves order when multiple segments share the same source node", () => {
+    document.body.innerHTML = `<article><pre id="source">Chunk 1\n\nChunk 2</pre></article>`;
+    const source = document.querySelector("#source") as HTMLElement;
+    const anchors = new AnchorRegistry();
+    anchors.set({ segmentId: "seg_1", sourceNode: source, taskId: "task-1" });
+    anchors.set({ segmentId: "seg_2", sourceNode: source, taskId: "task-1" });
+
+    const result = applyTranslations(anchors, "task-1", [
+      { segmentId: "seg_1", translatedText: "Translated chunk 1" },
+      { segmentId: "seg_2", translatedText: "Translated chunk 2" },
+    ]);
+
+    expect(result).toEqual({
+      appliedSegmentIds: ["seg_1", "seg_2"],
+      failedSegmentIds: [],
+    });
+    expect(
+      [...document.querySelectorAll("[data-yoyo-translation]")].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["Translated chunk 1", "Translated chunk 2"]);
+  });
+
   it("filters injection and visibility actions by task", () => {
     document.body.innerHTML = `
       <article>
