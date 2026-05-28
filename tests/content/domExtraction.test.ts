@@ -438,6 +438,43 @@ describe("collectPageSegments", () => {
     );
   });
 
+  it("extracts short browser-rendered plain text documents from the generated pre", async () => {
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `<pre style="word-wrap: break-word; white-space: pre-wrap;">Short raw note.</pre>`;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Short raw note.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelector("pre"),
+    );
+  });
+
+  it("extracts plain text documents when another extension injects a top-level sibling", async () => {
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `
+      <div id="other-extension-root">Translate</div>
+      <pre style="word-wrap: break-word; white-space: pre-wrap;">Injected siblings should not hide raw text.</pre>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Injected siblings should not hide raw text.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelector("pre"),
+    );
+  });
+
   it("extracts generic readable blocks only when they have no readable child", async () => {
     const longText =
       "This standalone block has enough normalized text to be useful for translation extraction.";

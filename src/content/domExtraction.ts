@@ -112,14 +112,7 @@ function isPlainTextDocument(): boolean {
 function isBrowserGeneratedPlainTextPre(element: Element): boolean {
   if (!isPlainTextDocument()) return false;
   if (element.tagName !== "PRE") return false;
-  if (element.parentElement !== document.body) return false;
-
-  return [...document.body.children].every(
-    (child) =>
-      child === element ||
-      child.hasAttribute("data-yoyo-translation") ||
-      child.hasAttribute("data-yoyo-extension"),
-  );
+  return element.parentElement === document.body;
 }
 
 function isElementSkippedForExtraction(element: Element): boolean {
@@ -653,6 +646,9 @@ function shouldExtractElement(
 ): boolean {
   if (isElementSkippedForExtraction(element)) return false;
   if (isLowValueElement(element, textCache)) return false;
+  if (isBrowserGeneratedPlainTextPre(element)) {
+    return collectExtractableText(element, textCache).length > 0;
+  }
   if (isDirectReadableCandidate(element)) return true;
   if (
     !isHighConfidenceShortTextElement(element) &&
