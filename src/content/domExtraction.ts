@@ -1,6 +1,13 @@
 import { AnchorRegistry } from "@/content/anchors";
-import { isElementSkippable } from "@/content/domEligibility";
-import { hashNormalizedText, normalizeSourceText } from "@/translation/hash";
+import {
+  hasNonTagSkipReason,
+  isElementSkippable,
+} from "@/content/domEligibility";
+import {
+  hashNormalizedText,
+  hashSourceText,
+  normalizeSourceText,
+} from "@/translation/hash";
 import type { PageSegment, PageSegmentKind, SegmentPriority } from "@/translation/types";
 
 export type SegmentCollection = {
@@ -11,6 +18,7 @@ export type SegmentCollection = {
 export type SegmentCollectionOptions = {
   visibleRangeOnly?: boolean;
   root?: Element;
+  materializePlainTextChunks?: boolean;
 };
 
 type TextNormalizationCache = WeakMap<Element, string>;
@@ -23,6 +31,7 @@ const leafReadableTags = new Set(["P", "LI", "BLOCKQUOTE"]);
 const headingTags = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
 const listTags = new Set(["UL", "OL"]);
 const genericMinimumTextLength = 80;
+const plainTextSegmentMaxLength = 1_800;
 const textNodeType = 3;
 const elementNodeType = 1;
 
@@ -105,6 +114,27 @@ const feedLowValueSelector = [
   "[data-testid='like']",
 ].join(",");
 
+function isPlainTextDocument(): boolean {
+  return document.contentType.toLowerCase().split(";")[0]?.trim() === "text/plain";
+}
+
+function isBrowserGeneratedPlainTextPre(element: Element): boolean {
+  if (!isPlainTextDocument()) return false;
+  if (element.tagName !== "PRE") return false;
+  if (element.parentElement !== document.body) return false;
+
+  const style = (element as HTMLElement).style;
+  return style.whiteSpace === "pre-wrap" && style.wordWrap === "break-word";
+}
+
+function isElementSkippedForExtraction(element: Element): boolean {
+  if (isBrowserGeneratedPlainTextPre(element)) {
+    return hasNonTagSkipReason(element);
+  }
+
+  return isElementSkippable(element);
+}
+
 function discoverRoots(): Element[] {
   const discoveredRoots: DiscoveredRootCandidate[] = [];
 
@@ -113,7 +143,7 @@ function discoverRoots(): Element[] {
     if (!candidate) continue;
     const root = candidate.element;
     if (root === document.documentElement || root === document.body) continue;
-    if (isElementSkippable(root)) continue;
+    if (isElementSkippedForExtraction(root)) continue;
     if (isInsideGenericChrome(root)) continue;
 
     const existingIndex = discoveredRoots.findIndex((existing) =>
@@ -200,7 +230,7 @@ function hasMeaningfulNonEditableContent(element: Element): boolean {
     if (child.nodeType !== elementNodeType) continue;
 
     const childElement = child as Element;
-    if (isElementSkippable(childElement)) continue;
+    if (isElementSkippedForExtraction(childElement)) continue;
     if (hasMeaningfulNonEditableContent(childElement)) return true;
   }
 
@@ -517,7 +547,7 @@ function hasHighConfidenceReadableChild(
   textCache?: TextNormalizationCache,
 ): boolean {
   return [...element.children].some((child) => {
-    if (isElementSkippable(child) || isLowValueElement(child, textCache)) {
+    if (isElementSkippedForExtraction(child) || isLowValueElement(child, textCache)) {
       return false;
     }
     return (
@@ -543,7 +573,7 @@ function hasReadableChildCandidate(
   textCache?: TextNormalizationCache,
 ): boolean {
   for (const child of [...element.children]) {
-    if (isElementSkippable(child)) continue;
+    if (isElementSkippedForExtraction(child)) continue;
     if (isLowValueElement(child, textCache)) continue;
     if (isDirectReadableCandidate(child)) return true;
     if (hasReadableChildCandidate(child, textCache)) return true;
@@ -612,7 +642,7 @@ function collectRawTextStream(
     if (child.nodeType !== elementNodeType) continue;
 
     const childElement = child as Element;
-    if (isElementSkippable(childElement)) continue;
+    if (isElementSkippedForExtraction(childElement)) continue;
     if (isFeedPageChromeElement(childElement)) continue;
     if (isPageChromeDescendantOutsideArticle(childElement)) continue;
     if (isWeakTextHintInPageChrome(childElement)) continue;
@@ -630,7 +660,7 @@ function shouldExtractElement(
   element: Element,
   textCache?: TextNormalizationCache,
 ): boolean {
-  if (isElementSkippable(element)) return false;
+  if (isElementSkippedForExtraction(element)) return false;
   if (isLowValueElement(element, textCache)) return false;
   if (isDirectReadableCandidate(element)) return true;
   if (
@@ -685,6 +715,100 @@ function isOutsideVisibleCollectionRange(element: Element): boolean {
   return rect.bottom <= -viewportHeight * 2 || rect.top >= viewportHeight * 3;
 }
 
+function normalizePlainTextSource(sourceText: string): string {
+  return sourceText.replace(/\r\n?/g, "\n");
+}
+
+function plainTextBreakIndex(text: string, start: number): number {
+  const maxEnd = Math.min(text.length, start + plainTextSegmentMaxLength);
+  if (maxEnd === text.length) return text.length;
+
+  const candidate = text.slice(start, maxEnd + 1);
+  const minimumUsefulBreak = plainTextSegmentMaxLength * 0.5;
+  const paragraphBreak = candidate.lastIndexOf("\n\n");
+  if (paragraphBreak > minimumUsefulBreak) {
+    let end = start + paragraphBreak;
+    while (end < text.length && text[end] === "\n") {
+      end += 1;
+    }
+    return end;
+  }
+
+  const lineBreak = candidate.lastIndexOf("\n");
+  if (lineBreak > minimumUsefulBreak) {
+    return start + lineBreak + 1;
+  }
+
+  const whitespaceBreak = Math.max(
+    candidate.lastIndexOf(" "),
+    candidate.lastIndexOf("\t"),
+  );
+  if (whitespaceBreak > minimumUsefulBreak) {
+    return start + whitespaceBreak + 1;
+  }
+
+  return maxEnd;
+}
+
+function splitPlainTextSource(sourceText: string): string[] {
+  const text = normalizePlainTextSource(sourceText);
+  if (!normalizeSourceText(text)) return [];
+
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    const end = plainTextBreakIndex(text, start);
+    const chunk = text.slice(start, end);
+    if (normalizeSourceText(chunk)) {
+      chunks.push(chunk);
+    }
+    start = end;
+  }
+
+  return chunks;
+}
+
+function plainTextChunkElements(
+  element: Element,
+  options: { materialize: boolean },
+): HTMLElement[] {
+  const chunks = splitPlainTextSource(element.textContent ?? "");
+  if (chunks.length === 0) return [];
+
+  if (chunks.length === 1) {
+    if (options.materialize) {
+      element.textContent = chunks[0];
+    }
+    return [element as HTMLElement];
+  }
+
+  if (!options.materialize) {
+    return chunks.map((chunk) => {
+      const chunkElement = element.cloneNode(false) as HTMLElement;
+      chunkElement.textContent = chunk;
+      return chunkElement;
+    });
+  }
+
+  const computedStyle = window.getComputedStyle(element);
+  const chunkElements = chunks.map((chunk) => {
+    const chunkElement = element.cloneNode(false) as HTMLElement;
+    chunkElement.textContent = chunk;
+    return chunkElement;
+  });
+  for (const [index, chunkElement] of chunkElements.entries()) {
+    chunkElement.dataset.yoyoPlainTextChunk = "true";
+    chunkElement.style.marginTop = index === 0 ? computedStyle.marginTop : "0";
+    chunkElement.style.marginBottom =
+      index === chunkElements.length - 1 ? computedStyle.marginBottom : "0";
+    chunkElement.style.marginLeft = computedStyle.marginLeft;
+    chunkElement.style.marginRight = computedStyle.marginRight;
+  }
+
+  element.replaceWith(...chunkElements);
+  return chunkElements;
+}
+
 export async function collectPageSegments(
   taskId: string,
   options: SegmentCollectionOptions = {},
@@ -698,11 +822,15 @@ export async function collectPageSegments(
   async function addSegment(
     element: Element,
     sourceText: string,
+    addOptions: { preserveSourceText?: boolean } = {},
   ): Promise<void> {
     const normalizedText = normalizeSourceText(sourceText);
     if (!normalizedText) {
       return;
     }
+    const segmentSourceText = addOptions.preserveSourceText
+      ? sourceText
+      : normalizedText;
 
     const priority = priorityForElement(element);
     if (options.visibleRangeOnly && priority === "normal") {
@@ -713,20 +841,27 @@ export async function collectPageSegments(
     segments.push({
       id: segmentId,
       order,
-      sourceText: normalizedText,
+      sourceText: segmentSourceText,
       kind: segmentKindFor(element),
       priority,
       pathHint: pathHintFor(element),
-      textHash: await hashNormalizedText(normalizedText),
+      textHash: addOptions.preserveSourceText
+        ? await hashSourceText(segmentSourceText)
+        : await hashNormalizedText(segmentSourceText),
+      preserveWhitespace: addOptions.preserveSourceText || undefined,
     });
-    anchors.set({ segmentId, sourceNode: element, taskId });
+    anchors.set({
+      segmentId,
+      sourceNode: element,
+      taskId,
+    });
     order += 1;
   }
 
   async function walk(element: Element): Promise<void> {
     if (seenNodes.has(element)) return;
     seenNodes.add(element);
-    if (isElementSkippable(element)) return;
+    if (isElementSkippedForExtraction(element)) return;
     if (isLowValueElement(element, textCache)) return;
     if (options.visibleRangeOnly && element !== document.body && isOutsideVisibleCollectionRange(element)) {
       return;
@@ -735,6 +870,21 @@ export async function collectPageSegments(
     if (element === document.body) {
       for (const child of [...element.children]) {
         await walk(child);
+      }
+      return;
+    }
+
+    if (isBrowserGeneratedPlainTextPre(element)) {
+      const chunkElements = plainTextChunkElements(element, {
+        materialize: options.materializePlainTextChunks === true,
+      });
+      for (const [index, chunkElement] of chunkElements.entries()) {
+        if (options.visibleRangeOnly && index > 0) {
+          break;
+        }
+        await addSegment(chunkElement, chunkElement.textContent ?? "", {
+          preserveSourceText: true,
+        });
       }
       return;
     }

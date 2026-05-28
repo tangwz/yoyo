@@ -1076,6 +1076,64 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("does not fan out cached translations across preserved whitespace segments", async () => {
+    const { orchestrator, translateBatch, sendToContent } = createOrchestrator();
+    const formatted = segment({
+      id: "formatted",
+      order: 1,
+      sourceText: "foo\nbar",
+      textHash: "hash-formatted",
+      preserveWhitespace: true,
+    });
+    const flattened = segment({
+      id: "flattened",
+      order: 2,
+      sourceText: "foo bar",
+      textHash: "hash-flattened",
+      preserveWhitespace: true,
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [formatted, flattened],
+        };
+      }
+      return { type: "contentActionResult", success: true };
+    });
+    translateBatch.mockResolvedValue({
+      items: [
+        { segmentId: "formatted", translatedText: "formatted translation" },
+        { segmentId: "flattened", translatedText: "flattened translation" },
+      ],
+    });
+
+    await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    expect(translateBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        segments: [
+          expect.objectContaining({ id: "formatted" }),
+          expect.objectContaining({ id: "flattened" }),
+        ],
+      }),
+    );
+    expect(sendToContent).toHaveBeenLastCalledWith(7, {
+      type: "applyTranslations",
+      taskId: "task-1",
+      items: [
+        { segmentId: "formatted", translatedText: "formatted translation" },
+        { segmentId: "flattened", translatedText: "flattened translation" },
+      ],
+    });
+  });
+
   it("deduplicates repeated normalized text within one translation task", async () => {
     const { orchestrator, translateBatch, sendToContent } = createOrchestrator();
 

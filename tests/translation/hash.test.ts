@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCacheKey,
   hashNormalizedText,
+  hashSourceText,
   serializeCacheKey,
 } from "@/translation/hash";
 
@@ -15,6 +16,12 @@ describe("translation hash helpers", () => {
   it("normalizes non-breaking spaces before hashing", async () => {
     await expect(hashNormalizedText("Hello\u00A0world")).resolves.toBe(
       await hashNormalizedText("Hello world"),
+    );
+  });
+
+  it("can hash source text without whitespace normalization", async () => {
+    await expect(hashSourceText("Hello\nworld")).resolves.not.toBe(
+      await hashSourceText("Hello world"),
     );
   });
 
@@ -41,6 +48,32 @@ describe("translation hash helpers", () => {
 
     expect(serializeCacheKey(key)).toBe(serializeCacheKey({ ...key }));
     expect(JSON.parse(serializeCacheKey(key))).toEqual(key);
+  });
+
+  it("creates formatting-sensitive cache keys for preserved whitespace", async () => {
+    const baseInput = {
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      providerId: "openai-compatible",
+      textModel: "gpt-5-mini",
+      translationStyle: "concise",
+      promptVersion: "v1",
+    };
+
+    const formattedKey = await createCacheKey({
+      ...baseInput,
+      sourceText: "foo\nbar",
+      preserveWhitespace: true,
+    });
+    const flattenedKey = await createCacheKey({
+      ...baseInput,
+      sourceText: "foo bar",
+      preserveWhitespace: true,
+    });
+
+    expect(serializeCacheKey(formattedKey)).not.toBe(
+      serializeCacheKey(flattenedKey),
+    );
   });
 
   it("separates cache identity by source language", async () => {

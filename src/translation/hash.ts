@@ -5,6 +5,7 @@ export type CreateCacheKeyInput = Omit<
   "normalizedTextHash"
 > & {
   sourceText: string;
+  preserveWhitespace?: boolean;
 };
 
 export function normalizeSourceText(sourceText: string): string {
@@ -12,10 +13,17 @@ export function normalizeSourceText(sourceText: string): string {
 }
 
 export async function hashNormalizedText(sourceText: string): Promise<string> {
-  const normalizedText = normalizeSourceText(sourceText);
+  return hashText(normalizeSourceText(sourceText));
+}
+
+export async function hashSourceText(sourceText: string): Promise<string> {
+  return hashText(sourceText);
+}
+
+async function hashText(sourceText: string): Promise<string> {
   const digest = await globalThis.crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(normalizedText),
+    new TextEncoder().encode(sourceText),
   );
 
   return [...new Uint8Array(digest)]
@@ -27,7 +35,9 @@ export async function createCacheKey(
   input: CreateCacheKeyInput,
 ): Promise<TranslationCacheKey> {
   return {
-    normalizedTextHash: await hashNormalizedText(input.sourceText),
+    normalizedTextHash: input.preserveWhitespace
+      ? await hashSourceText(input.sourceText)
+      : await hashNormalizedText(input.sourceText),
     sourceLanguage: input.sourceLanguage,
     targetLanguage: input.targetLanguage,
     providerId: input.providerId,

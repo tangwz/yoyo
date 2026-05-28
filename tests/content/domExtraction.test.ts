@@ -6,6 +6,7 @@ describe("collectPageSegments", () => {
   const originalInnerHeight = window.innerHeight;
   const originalDocumentLanguage = document.documentElement.getAttribute("lang");
   const originalBodyLanguage = document.body.getAttribute("lang");
+  const originalDocumentContentType = document.contentType;
 
   beforeEach(() => {
     document.body.innerHTML = "";
@@ -30,6 +31,10 @@ describe("collectPageSegments", () => {
     } else {
       document.body.setAttribute("lang", originalBodyLanguage);
     }
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: originalDocumentContentType,
+    });
   });
 
   it("extracts leaf readable blocks without parent duplicates", async () => {
@@ -409,6 +414,225 @@ describe("collectPageSegments", () => {
     expect(result.segments.map((segment) => segment.sourceText)).toEqual([
       "Readable paragraph.",
     ]);
+  });
+
+  it("extracts browser-rendered plain text documents from the generated pre", async () => {
+    const rawText = [
+      "# CLAUDE.md",
+      "",
+      "This file provides guidance to Claude Code when working with code in this repository.",
+    ].join("\n");
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `<pre style="word-wrap: break-word; white-space: pre-wrap;">${rawText}</pre>`;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      rawText,
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelector("pre"),
+    );
+  });
+
+  it("extracts short browser-rendered plain text documents from the generated pre", async () => {
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `<pre style="word-wrap: break-word; white-space: pre-wrap;">Short raw note.</pre>`;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Short raw note.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelector("pre"),
+    );
+  });
+
+  it("extracts plain text documents when another extension injects a top-level sibling", async () => {
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `
+      <div id="other-extension-root">Translate</div>
+      <pre style="word-wrap: break-word; white-space: pre-wrap;">Injected siblings should not hide raw text.</pre>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Injected siblings should not hide raw text.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelector("pre"),
+    );
+  });
+
+  it("does not extract unrelated injected top-level pre siblings on plain text documents", async () => {
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `
+      <pre>Injected extension UI.</pre>
+      <pre style="word-wrap: break-word; white-space: pre-wrap;">Visible raw text.</pre>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Visible raw text.",
+    ]);
+  });
+
+  it("does not extract hidden or extension-owned top-level plain text pre nodes", async () => {
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `
+      <pre hidden>Hidden raw text.</pre>
+      <pre aria-hidden="true">Aria hidden raw text.</pre>
+      <pre data-yoyo-extension="summary-panel">Extension raw text.</pre>
+      <pre style="display: none;">Display hidden raw text.</pre>
+      <pre style="word-wrap: break-word; white-space: pre-wrap;">Visible raw text.</pre>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Visible raw text.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelector("pre:last-of-type"),
+    );
+  });
+
+  it("splits large plain text documents into bounded segments", async () => {
+    const paragraphs = Array.from(
+      { length: 9 },
+      (_, index) =>
+        `Paragraph ${index + 1} ${"describes a raw text section ".repeat(20).trim()}.`,
+    );
+    const rawText = paragraphs.join("\n\n");
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `<pre style="word-wrap: break-word; white-space: pre-wrap;">${rawText}</pre>`;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.length).toBeGreaterThan(1);
+    expect(result.segments.every((segment) => segment.sourceText.length <= 1_800)).toBe(
+      true,
+    );
+    expect(result.segments.map((segment) => segment.sourceText).join("")).toBe(
+      rawText,
+    );
+    expect(new Set(result.segments.map((segment) => segment.id)).size).toBe(
+      result.segments.length,
+    );
+    const sourceNodes = result.anchors
+      .listByTask("task-1")
+      .map((anchor) => anchor.sourceNode);
+    expect(new Set(sourceNodes).size).toBe(result.segments.length);
+    expect(sourceNodes.every((node) => node.tagName === "PRE")).toBe(true);
+    expect(document.querySelectorAll("pre")).toHaveLength(1);
+    expect(document.querySelector("pre")?.textContent).toBe(rawText);
+    expect(result.segments.every((segment) => segment.preserveWhitespace)).toBe(
+      true,
+    );
+  });
+
+  it("preserves raw text whitespace while chunking", async () => {
+    const rawText = [
+      `Alpha\u00A0Beta`,
+      "",
+      "",
+      `${"x".repeat(900)}  ${"y".repeat(950)}`,
+    ].join("\n");
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `<pre style="word-wrap: break-word; white-space: pre-wrap;">${rawText}</pre>`;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.length).toBeGreaterThan(1);
+    expect(result.segments.map((segment) => segment.sourceText).join("")).toBe(
+      rawText,
+    );
+    expect(result.segments.some((segment) => segment.sourceText.includes("\u00A0"))).toBe(
+      true,
+    );
+    expect(result.segments.map((segment) => segment.sourceText).join("")).toContain(
+      "\n\n\n",
+    );
+    expect(result.segments.map((segment) => segment.sourceText).join("")).toContain(
+      "  ",
+    );
+  });
+
+  it("collects only the first visible chunk from large plain text documents in visible-range mode", async () => {
+    const paragraphs = Array.from(
+      { length: 4 },
+      (_, index) =>
+        `Paragraph ${index + 1} ${"describes a raw text section ".repeat(20).trim()}.`,
+    );
+    const rawText = paragraphs.join("\n\n");
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `<pre style="word-wrap: break-word; white-space: pre-wrap;">${rawText}</pre>`;
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      const text = this.textContent ?? "";
+      if (this.tagName === "PRE" && text.includes("Paragraph 3")) {
+        return {
+          x: 0,
+          y: 10,
+          top: 10,
+          bottom: 90,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: 80,
+          toJSON: () => ({}),
+        } as DOMRect;
+      }
+
+      return {
+        x: 0,
+        y: 500,
+        top: 500,
+        bottom: 580,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 80,
+        toJSON: () => ({}),
+      } as DOMRect;
+    };
+
+    const result = await collectPageSegments("task-1", { visibleRangeOnly: true });
+    HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+
+    expect(result.segments).toHaveLength(1);
+    expect(result.segments[0].priority).toBe("viewport");
+    expect(result.segments[0].sourceText.length).toBeLessThanOrEqual(1_800);
+    expect(result.segments[0].sourceText).toContain(paragraphs[2]);
+    expect(result.segments[0].sourceText).not.toContain(paragraphs.at(-1));
+    expect(document.querySelectorAll("pre")).toHaveLength(1);
   });
 
   it("extracts generic readable blocks only when they have no readable child", async () => {
