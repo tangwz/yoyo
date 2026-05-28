@@ -416,6 +416,112 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("extracts Hacker News style table story titles without table chrome", async () => {
+    document.body.innerHTML = `
+      <center>
+        <table id="hnmain">
+          <tbody>
+            <tr class="athing" id="1">
+              <td class="title" align="right">1.</td>
+              <td class="votelinks"><a href="vote?id=1">upvote</a></td>
+              <td class="title">
+                <span class="titleline">
+                  <a href="https://example.com/day-off">Can we have the day off?</a>
+                  <span class="sitebit comhead">(<a href="from?site=example.com">example.com</a>)</span>
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td colspan="2"></td>
+              <td class="subtext">
+                <span class="score">174 points</span>
+                by <a href="user?id=mlsu">mlsu</a>
+                <span class="age"><a href="item?id=1">47 minutes ago</a></span>
+                | <a href="hide?id=1">hide</a>
+                | <a href="item?id=1">101 comments</a>
+              </td>
+            </tr>
+            <tr class="athing" id="2">
+              <td class="title" align="right">2.</td>
+              <td class="votelinks"><a href="vote?id=2">upvote</a></td>
+              <td class="title">
+                <span class="titleline">
+                  <a href="https://example.com/ai-labels">YouTube to automatically label AI-generated videos</a>
+                  <span class="sitebit comhead">(<a href="from?site=example.com">example.com</a>)</span>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </center>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Can we have the day off?",
+      "YouTube to automatically label AI-generated videos",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelector(".titleline > a"),
+    );
+  });
+
+  it("extracts Apple Newsroom style tile headlines without merging card metadata", async () => {
+    document.body.innerHTML = `
+      <main>
+        <h1 class="visuallyhidden">Newsroom</h1>
+        <section class="everydayfeed">
+          <div class="section-content">
+            <h2 class="section-head">Latest News</h2>
+            <ul class="section-tiles" role="list">
+              <li class="tile-item item-hero" role="listitem">
+                <a class="tile tile-1up tile-hero" href="/newsroom/story-one/">
+                  <div class="tile__description" aria-hidden="true">
+                    <div class="tile__description-content">
+                      <div class="tile__head">
+                        <div class="tile__hero--eyebrow">UPDATE</div>
+                        <div class="tile__headline">
+                          <em>After the Whistle with Brendan Hunt and Rebecca Lowe</em> returns
+                        </div>
+                      </div>
+                    </div>
+                    <div class="tile__timestamp">15 h 34 min ago</div>
+                  </div>
+                </a>
+              </li>
+              <li class="tile-item item-2up" role="listitem">
+                <button class="tile tile-2up tile-quick-read" type="button">
+                  <div class="tile__description" aria-hidden="true">
+                    <div class="tile__head">
+                      <div class="tile__category">QUICK READ</div>
+                      <div class="tile__headline">
+                        Apple TV to air first major live pro sports event shot on iPhone 17 Pro
+                      </div>
+                    </div>
+                    <div class="tile__timestamp">May 21, 2026</div>
+                  </div>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </section>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Newsroom",
+      "Latest News",
+      "After the Whistle with Brendan Hunt and Rebecca Lowe returns",
+      "Apple TV to air first major live pro sports event shot on iPhone 17 Pro",
+    ]);
+    expect(result.anchors.get("seg_3")?.sourceNode).toBe(
+      document.querySelector(".tile__headline"),
+    );
+  });
+
   it("extracts browser-rendered plain text documents from the generated pre", async () => {
     const rawText = [
       "# CLAUDE.md",

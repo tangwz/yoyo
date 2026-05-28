@@ -105,6 +105,10 @@ const feedLowValueSelector = [
   "[data-testid='like']",
 ].join(",");
 
+const legacyStoryTableTitleSelector = ".titleline > a[href]";
+const cardHeadlineSelector = ".tile__headline";
+const legacyStoryTableContainerTags = new Set(["TABLE", "TBODY", "TR", "TD"]);
+
 function isPlainTextDocument(): boolean {
   return document.contentType.toLowerCase().split(";")[0]?.trim() === "text/plain";
 }
@@ -115,7 +119,33 @@ function isBrowserGeneratedPlainTextPre(element: Element): boolean {
   return element.parentElement === document.body;
 }
 
+function isLegacyStoryTableContainer(element: Element): boolean {
+  return (
+    legacyStoryTableContainerTags.has(element.tagName) &&
+    element.querySelector(legacyStoryTableTitleSelector) !== null
+  );
+}
+
+function isCardButtonContainer(element: Element): boolean {
+  return element.tagName === "BUTTON" && element.querySelector(cardHeadlineSelector) !== null;
+}
+
+function isCardHeadlineContainer(element: Element): boolean {
+  return (
+    element.matches(cardHeadlineSelector) ||
+    (element.hasAttribute("aria-hidden") &&
+      element.querySelector(cardHeadlineSelector) !== null)
+  );
+}
+
 function isElementSkippedForExtraction(element: Element): boolean {
+  if (
+    isLegacyStoryTableContainer(element) ||
+    isCardButtonContainer(element) ||
+    isCardHeadlineContainer(element)
+  ) {
+    return false;
+  }
   return isElementSkippable(element) && !isBrowserGeneratedPlainTextPre(element);
 }
 
@@ -482,6 +512,8 @@ function isHighConfidenceShortTextElement(element: Element): boolean {
   if (isInsideGenericChrome(element)) return false;
   if (isWeakTextHintInPageChrome(element)) return false;
   if (isNonBodyTextHintInPostWithExplicitBody(element)) return false;
+  if (element.matches(legacyStoryTableTitleSelector)) return true;
+  if (element.matches(cardHeadlineSelector)) return true;
   if (element.matches('[data-testid="cellInnerDiv"]')) {
     return !hasNestedPostTextCandidate(element);
   }
@@ -543,6 +575,7 @@ function hasHighConfidenceReadableChild(
 
 function isDirectReadableCandidate(element: Element): boolean {
   if (element.tagName === "LI" && hasNestedList(element)) return false;
+  if (element.tagName === "LI" && element.querySelector(cardHeadlineSelector)) return false;
   return leafReadableTags.has(element.tagName) || headingTags.has(element.tagName);
 }
 
