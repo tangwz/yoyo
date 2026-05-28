@@ -3,7 +3,11 @@ import {
   hasNonTagSkipReason,
   isElementSkippable,
 } from "@/content/domEligibility";
-import { hashNormalizedText, normalizeSourceText } from "@/translation/hash";
+import {
+  hashNormalizedText,
+  hashSourceText,
+  normalizeSourceText,
+} from "@/translation/hash";
 import type { PageSegment, PageSegmentKind, SegmentPriority } from "@/translation/types";
 
 export type SegmentCollection = {
@@ -116,7 +120,10 @@ function isPlainTextDocument(): boolean {
 function isBrowserGeneratedPlainTextPre(element: Element): boolean {
   if (!isPlainTextDocument()) return false;
   if (element.tagName !== "PRE") return false;
-  return element.parentElement === document.body;
+  if (element.parentElement !== document.body) return false;
+
+  const style = (element as HTMLElement).style;
+  return style.whiteSpace === "pre-wrap" && style.wordWrap === "break-word";
 }
 
 function isElementSkippedForExtraction(element: Element): boolean {
@@ -802,11 +809,21 @@ function materializePlainTextChunks(element: Element): HTMLElement[] {
     return [element as HTMLElement];
   }
 
+  const computedStyle = window.getComputedStyle(element);
   const chunkElements = chunks.map((chunk) => {
     const chunkElement = element.cloneNode(false) as HTMLElement;
     chunkElement.textContent = chunk;
     return chunkElement;
   });
+  for (const [index, chunkElement] of chunkElements.entries()) {
+    chunkElement.dataset.yoyoPlainTextChunk = "true";
+    chunkElement.style.marginTop = index === 0 ? computedStyle.marginTop : "0";
+    chunkElement.style.marginBottom =
+      index === chunkElements.length - 1 ? computedStyle.marginBottom : "0";
+    chunkElement.style.marginLeft = computedStyle.marginLeft;
+    chunkElement.style.marginRight = computedStyle.marginRight;
+  }
+
   element.replaceWith(...chunkElements);
   return chunkElements;
 }
@@ -847,7 +864,10 @@ export async function collectPageSegments(
       kind: segmentKindFor(element),
       priority,
       pathHint: pathHintFor(element),
-      textHash: await hashNormalizedText(segmentSourceText),
+      textHash: addOptions.preserveSourceText
+        ? await hashSourceText(segmentSourceText)
+        : await hashNormalizedText(segmentSourceText),
+      preserveWhitespace: addOptions.preserveSourceText || undefined,
     });
     anchors.set({
       segmentId,
@@ -875,10 +895,7 @@ export async function collectPageSegments(
 
     if (isBrowserGeneratedPlainTextPre(element)) {
       const chunkElements = materializePlainTextChunks(element);
-      for (const [index, chunkElement] of chunkElements.entries()) {
-        if (options.visibleRangeOnly && index > 0) {
-          break;
-        }
+      for (const chunkElement of chunkElements) {
         await addSegment(chunkElement, chunkElement.textContent ?? "", {
           preserveSourceText: true,
         });
