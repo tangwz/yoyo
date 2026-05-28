@@ -119,6 +119,12 @@ function isBrowserGeneratedPlainTextPre(element: Element): boolean {
   return element.parentElement === document.body;
 }
 
+function findBrowserGeneratedPlainTextPre(): Element | undefined {
+  if (!isPlainTextDocument()) return undefined;
+  const pre = document.body.querySelector(":scope > pre");
+  return pre && isBrowserGeneratedPlainTextPre(pre) ? pre : undefined;
+}
+
 function isLegacyStoryTableContainer(element: Element): boolean {
   return (
     legacyStoryTableContainerTags.has(element.tagName) &&
@@ -138,10 +144,16 @@ function isCardHeadlineContainer(element: Element): boolean {
   );
 }
 
-function hasNonAriaExtractionBlocker(element: Element): boolean {
+function hasExtractionBlocker(
+  element: Element,
+  options: { allowAriaHidden?: boolean } = {},
+): boolean {
   if (element.hasAttribute("data-yoyo-translation")) return true;
   if (element.hasAttribute("data-yoyo-extension")) return true;
   if (element.hasAttribute("hidden")) return true;
+  if (!options.allowAriaHidden && element.getAttribute("aria-hidden") === "true") {
+    return true;
+  }
   if (element.hasAttribute("contenteditable")) return true;
   if ((element as HTMLElement).isContentEditable) return true;
 
@@ -152,18 +164,24 @@ function hasNonAriaExtractionBlocker(element: Element): boolean {
 function isElementSkippedForExtraction(element: Element): boolean {
   if (isBrowserGeneratedPlainTextPre(element)) return false;
 
+  if (isLegacyStoryTableContainer(element) && !hasExtractionBlocker(element)) {
+    return false;
+  }
+
   if (
-    !hasNonAriaExtractionBlocker(element) &&
-    (isLegacyStoryTableContainer(element) ||
-      isCardButtonContainer(element) ||
-      isCardHeadlineContainer(element))
+    (isCardButtonContainer(element) || isCardHeadlineContainer(element)) &&
+    !hasExtractionBlocker(element, { allowAriaHidden: true })
   ) {
     return false;
   }
+
   return isElementSkippable(element);
 }
 
 function discoverRoots(): Element[] {
+  const plainTextPre = findBrowserGeneratedPlainTextPre();
+  if (plainTextPre) return [plainTextPre];
+
   const discoveredRoots: DiscoveredRootCandidate[] = [];
 
   for (const candidateRoot of document.querySelectorAll(rootSelector)) {

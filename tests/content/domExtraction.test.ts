@@ -467,6 +467,41 @@ describe("collectPageSegments", () => {
     );
   });
 
+  it("keeps aria-hidden Hacker News style story tables skipped", async () => {
+    document.body.innerHTML = `
+      <main>
+        <table id="hidden-hnmain" aria-hidden="true">
+          <tbody>
+            <tr class="athing" id="hidden">
+              <td class="title">
+                <span class="titleline">
+                  <a href="https://example.com/hidden">Hidden duplicate story title</a>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <table id="visible-hnmain">
+          <tbody>
+            <tr class="athing" id="visible">
+              <td class="title">
+                <span class="titleline">
+                  <a href="https://example.com/visible">Visible story title</a>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Visible story title",
+    ]);
+  });
+
   it("extracts Apple Newsroom style tile headlines without merging card metadata", async () => {
     document.body.innerHTML = `
       <main>
@@ -618,6 +653,26 @@ describe("collectPageSegments", () => {
 
     expect(result.segments.map((segment) => segment.sourceText)).toEqual([
       "Injected siblings should not hide raw text.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelector("pre"),
+    );
+  });
+
+  it("extracts plain text documents when another extension injects a strong root sibling", async () => {
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `
+      <main id="other-extension-root">Translate</main>
+      <pre style="word-wrap: break-word; white-space: pre-wrap;">Strong injected roots should not hide raw text.</pre>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Strong injected roots should not hide raw text.",
     ]);
     expect(result.anchors.get("seg_1")?.sourceNode).toBe(
       document.querySelector("pre"),
@@ -1429,6 +1484,30 @@ describe("collectPageSegments", () => {
     expect(result.segments.map((segment) => segment.sourceText)).toEqual([
       bodyText,
     ]);
+  });
+
+  it("does not add special-case computed style reads for ordinary visible nodes", async () => {
+    const originalGetComputedStyle = window.getComputedStyle;
+    const callsByElement = new Map<Element, number>();
+    document.body.innerHTML = `
+      <main>
+        <p>Readable paragraph.</p>
+      </main>
+    `;
+    window.getComputedStyle = ((element: Element) => {
+      callsByElement.set(element, (callsByElement.get(element) ?? 0) + 1);
+      return originalGetComputedStyle.call(window, element);
+    }) as typeof window.getComputedStyle;
+
+    try {
+      await collectPageSegments("task-1");
+    } finally {
+      window.getComputedStyle = originalGetComputedStyle;
+    }
+
+    expect(callsByElement.get(document.querySelector("main") as Element)).toBeLessThanOrEqual(
+      3,
+    );
   });
 });
 
