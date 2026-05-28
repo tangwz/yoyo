@@ -1,5 +1,8 @@
 import { AnchorRegistry } from "@/content/anchors";
-import { isElementSkippable } from "@/content/domEligibility";
+import {
+  hasNonTagSkipReason,
+  isElementSkippable,
+} from "@/content/domEligibility";
 import { hashNormalizedText, normalizeSourceText } from "@/translation/hash";
 import type { PageSegment, PageSegmentKind, SegmentPriority } from "@/translation/types";
 
@@ -23,6 +26,7 @@ const leafReadableTags = new Set(["P", "LI", "BLOCKQUOTE"]);
 const headingTags = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
 const listTags = new Set(["UL", "OL"]);
 const genericMinimumTextLength = 80;
+const plainTextSegmentMaxLength = 3_000;
 const textNodeType = 3;
 const elementNodeType = 1;
 
@@ -116,7 +120,11 @@ function isBrowserGeneratedPlainTextPre(element: Element): boolean {
 }
 
 function isElementSkippedForExtraction(element: Element): boolean {
-  return isElementSkippable(element) && !isBrowserGeneratedPlainTextPre(element);
+  if (isBrowserGeneratedPlainTextPre(element)) {
+    return hasNonTagSkipReason(element);
+  }
+
+  return isElementSkippable(element);
 }
 
 function discoverRoots(): Element[] {
@@ -646,9 +654,6 @@ function shouldExtractElement(
 ): boolean {
   if (isElementSkippedForExtraction(element)) return false;
   if (isLowValueElement(element, textCache)) return false;
-  if (isBrowserGeneratedPlainTextPre(element)) {
-    return collectExtractableText(element, textCache).length > 0;
-  }
   if (isDirectReadableCandidate(element)) return true;
   if (
     !isHighConfidenceShortTextElement(element) &&
@@ -702,6 +707,92 @@ function isOutsideVisibleCollectionRange(element: Element): boolean {
   return rect.bottom <= -viewportHeight * 2 || rect.top >= viewportHeight * 3;
 }
 
+function normalizePlainTextSource(sourceText: string): string {
+  return sourceText
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00A0/g, " ")
+    .replace(/^\n+|\n+$/g, "");
+}
+
+function splitLongPlainTextLine(line: string): string[] {
+  if (line.length <= plainTextSegmentMaxLength) return [line];
+
+  const chunks: string[] = [];
+  let remaining = line;
+  while (remaining.length > plainTextSegmentMaxLength) {
+    const candidate = remaining.slice(0, plainTextSegmentMaxLength + 1);
+    const whitespaceBreak = Math.max(
+      candidate.lastIndexOf(" "),
+      candidate.lastIndexOf("\t"),
+    );
+    const breakIndex =
+      whitespaceBreak > plainTextSegmentMaxLength * 0.5
+        ? whitespaceBreak
+        : plainTextSegmentMaxLength;
+
+    chunks.push(remaining.slice(0, breakIndex).trimEnd());
+    remaining = remaining.slice(breakIndex).trimStart();
+  }
+
+  if (remaining.length > 0) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
+}
+
+function splitPlainTextBlock(block: string): string[] {
+  if (block.length <= plainTextSegmentMaxLength) return [block];
+
+  const chunks: string[] = [];
+  let current = "";
+  for (const lineChunk of block.split("\n").flatMap(splitLongPlainTextLine)) {
+    const separator = current.length > 0 ? "\n" : "";
+    if (
+      current.length > 0 &&
+      current.length + separator.length + lineChunk.length > plainTextSegmentMaxLength
+    ) {
+      chunks.push(current);
+      current = "";
+    }
+
+    current += `${current.length > 0 ? "\n" : ""}${lineChunk}`;
+  }
+
+  if (current.length > 0) {
+    chunks.push(current);
+  }
+
+  return chunks;
+}
+
+function splitPlainTextSource(sourceText: string): string[] {
+  const text = normalizePlainTextSource(sourceText);
+  if (!normalizeSourceText(text)) return [];
+
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const block of text.split(/\n{2,}/).flatMap(splitPlainTextBlock)) {
+    const separator = current.length > 0 ? "\n\n" : "";
+    if (
+      current.length > 0 &&
+      current.length + separator.length + block.length > plainTextSegmentMaxLength
+    ) {
+      chunks.push(current);
+      current = "";
+    }
+
+    current += `${current.length > 0 ? "\n\n" : ""}${block}`;
+  }
+
+  if (current.length > 0) {
+    chunks.push(current);
+  }
+
+  return chunks;
+}
+
 export async function collectPageSegments(
   taskId: string,
   options: SegmentCollectionOptions = {},
@@ -715,11 +806,15 @@ export async function collectPageSegments(
   async function addSegment(
     element: Element,
     sourceText: string,
+    addOptions: { preserveSourceText?: boolean } = {},
   ): Promise<void> {
     const normalizedText = normalizeSourceText(sourceText);
     if (!normalizedText) {
       return;
     }
+    const segmentSourceText = addOptions.preserveSourceText
+      ? sourceText
+      : normalizedText;
 
     const priority = priorityForElement(element);
     if (options.visibleRangeOnly && priority === "normal") {
@@ -730,11 +825,11 @@ export async function collectPageSegments(
     segments.push({
       id: segmentId,
       order,
-      sourceText: normalizedText,
+      sourceText: segmentSourceText,
       kind: segmentKindFor(element),
       priority,
       pathHint: pathHintFor(element),
-      textHash: await hashNormalizedText(normalizedText),
+      textHash: await hashNormalizedText(segmentSourceText),
     });
     anchors.set({ segmentId, sourceNode: element, taskId });
     order += 1;
@@ -752,6 +847,13 @@ export async function collectPageSegments(
     if (element === document.body) {
       for (const child of [...element.children]) {
         await walk(child);
+      }
+      return;
+    }
+
+    if (isBrowserGeneratedPlainTextPre(element)) {
+      for (const sourceText of splitPlainTextSource(element.textContent ?? "")) {
+        await addSegment(element, sourceText, { preserveSourceText: true });
       }
       return;
     }

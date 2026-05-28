@@ -431,7 +431,7 @@ describe("collectPageSegments", () => {
     const result = await collectPageSegments("task-1");
 
     expect(result.segments.map((segment) => segment.sourceText)).toEqual([
-      "# CLAUDE.md This file provides guidance to Claude Code when working with code in this repository.",
+      rawText,
     ]);
     expect(result.anchors.get("seg_1")?.sourceNode).toBe(
       document.querySelector("pre"),
@@ -473,6 +473,61 @@ describe("collectPageSegments", () => {
     expect(result.anchors.get("seg_1")?.sourceNode).toBe(
       document.querySelector("pre"),
     );
+  });
+
+  it("does not extract hidden or extension-owned top-level plain text pre nodes", async () => {
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `
+      <pre hidden>Hidden raw text.</pre>
+      <pre aria-hidden="true">Aria hidden raw text.</pre>
+      <pre data-yoyo-extension="summary-panel">Extension raw text.</pre>
+      <pre style="display: none;">Display hidden raw text.</pre>
+      <pre style="word-wrap: break-word; white-space: pre-wrap;">Visible raw text.</pre>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Visible raw text.",
+    ]);
+    expect(result.anchors.get("seg_1")?.sourceNode).toBe(
+      document.querySelector("pre:last-of-type"),
+    );
+  });
+
+  it("splits large plain text documents into bounded segments", async () => {
+    const paragraphs = Array.from(
+      { length: 9 },
+      (_, index) =>
+        `Paragraph ${index + 1} ${"describes a raw text section ".repeat(20).trim()}.`,
+    );
+    const rawText = paragraphs.join("\n\n");
+    Object.defineProperty(document, "contentType", {
+      configurable: true,
+      value: "text/plain",
+    });
+    document.body.innerHTML = `<pre style="word-wrap: break-word; white-space: pre-wrap;">${rawText}</pre>`;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.length).toBeGreaterThan(1);
+    expect(result.segments.every((segment) => segment.sourceText.length <= 3_500)).toBe(
+      true,
+    );
+    expect(result.segments.map((segment) => segment.sourceText).join("\n\n")).toBe(
+      rawText,
+    );
+    expect(new Set(result.segments.map((segment) => segment.id)).size).toBe(
+      result.segments.length,
+    );
+    expect(
+      result.anchors.listByTask("task-1").every((anchor) =>
+        anchor.sourceNode === document.querySelector("pre"),
+      ),
+    ).toBe(true);
   });
 
   it("extracts generic readable blocks only when they have no readable child", async () => {
