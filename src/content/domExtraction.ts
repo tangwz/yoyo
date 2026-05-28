@@ -138,15 +138,29 @@ function isCardHeadlineContainer(element: Element): boolean {
   );
 }
 
+function hasNonAriaExtractionBlocker(element: Element): boolean {
+  if (element.hasAttribute("data-yoyo-translation")) return true;
+  if (element.hasAttribute("data-yoyo-extension")) return true;
+  if (element.hasAttribute("hidden")) return true;
+  if (element.hasAttribute("contenteditable")) return true;
+  if ((element as HTMLElement).isContentEditable) return true;
+
+  const style = window.getComputedStyle(element);
+  return style.display === "none" || style.visibility === "hidden";
+}
+
 function isElementSkippedForExtraction(element: Element): boolean {
+  if (isBrowserGeneratedPlainTextPre(element)) return false;
+
   if (
-    isLegacyStoryTableContainer(element) ||
-    isCardButtonContainer(element) ||
-    isCardHeadlineContainer(element)
+    !hasNonAriaExtractionBlocker(element) &&
+    (isLegacyStoryTableContainer(element) ||
+      isCardButtonContainer(element) ||
+      isCardHeadlineContainer(element))
   ) {
     return false;
   }
-  return isElementSkippable(element) && !isBrowserGeneratedPlainTextPre(element);
+  return isElementSkippable(element);
 }
 
 function discoverRoots(): Element[] {

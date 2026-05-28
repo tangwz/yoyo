@@ -522,6 +522,49 @@ describe("collectPageSegments", () => {
     );
   });
 
+  it("does not extract hidden or extension-owned tile headlines", async () => {
+    document.body.innerHTML = `
+      <main>
+        <ul class="section-tiles" role="list">
+          <li class="tile-item" role="listitem" hidden>
+            <a class="tile" href="/hidden-tile/">
+              <div class="tile__description" aria-hidden="true">
+                <div class="tile__headline">Hidden tile headline.</div>
+              </div>
+            </a>
+          </li>
+          <li class="tile-item" role="listitem">
+            <button class="tile" style="display: none;" type="button">
+              <div class="tile__description" aria-hidden="true">
+                <div class="tile__headline">Display none button headline.</div>
+              </div>
+            </button>
+          </li>
+          <li class="tile-item" role="listitem">
+            <a class="tile" href="/extension-owned/">
+              <div class="tile__description" data-yoyo-extension="summary-panel" aria-hidden="true">
+                <div class="tile__headline">Extension owned headline.</div>
+              </div>
+            </a>
+          </li>
+          <li class="tile-item" role="listitem">
+            <a class="tile" href="/visible-tile/">
+              <div class="tile__description" aria-hidden="true">
+                <div class="tile__headline">Visible tile headline.</div>
+              </div>
+            </a>
+          </li>
+        </ul>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Visible tile headline.",
+    ]);
+  });
+
   it("extracts browser-rendered plain text documents from the generated pre", async () => {
     const rawText = [
       "# CLAUDE.md",
