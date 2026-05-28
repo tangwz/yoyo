@@ -76,7 +76,8 @@ function joinSummarySourceText(segments: PageSegment[]): string {
   let sourceText = "";
 
   for (const segment of segments) {
-    const separator = sourceText.length > 0 ? "\n\n" : "";
+    const separator =
+      sourceText.length > 0 && !segment.preserveWhitespace ? "\n\n" : "";
     const nextText = `${separator}${segment.sourceText}`;
     const remainingChars = maxSummarySourceChars - sourceText.length;
     if (remainingChars <= 0) {
@@ -318,13 +319,19 @@ function startVisibilityObserver(taskId: string): void {
 
         const segmentId = observedSegmentIdsByElement.get(entry.target);
         const segment = segmentId ? currentSegmentsById.get(segmentId) : undefined;
-        if (!segment) {
+        const anchor = segmentId ? currentAnchors.get(segmentId) : undefined;
+        if (!segment || !anchor) {
+          continue;
+        }
+
+        const priority = priorityForElement(anchor.sourceNode);
+        if (priority === "normal") {
           continue;
         }
 
         newlyVisible.push({
           ...segment,
-          priority: priorityForElement(entry.target as Element),
+          priority,
         });
       }
 
@@ -509,7 +516,10 @@ async function rescanDirtyMutationRoots(): Promise<void> {
       continue;
     }
 
-    const collection = await collectPageSegments(context.taskId, { root });
+    const collection = await collectPageSegments(context.taskId, {
+      root,
+      materializePlainTextChunks: true,
+    });
     if (translationQueueContext !== context) {
       return;
     }
@@ -747,7 +757,9 @@ async function collectDeferredLazySegments(taskId: string): Promise<void> {
     return;
   }
 
-  const collection = await collectPageSegments(taskId);
+  const collection = await collectPageSegments(taskId, {
+    materializePlainTextChunks: true,
+  });
   if (activeTaskId !== taskId || lazyReportTaskId !== taskId) {
     return;
   }
@@ -761,15 +773,17 @@ function mergeLazySegmentCollection(
   taskId: string,
   collection: SegmentCollection,
 ): PageSegment[] {
-  const existingAnchorsByNode = new Map(
-    currentAnchors
-      .listByTask(taskId)
-      .map((anchor) => [anchor.sourceNode, anchor]),
-  );
+  const existingAnchorsByNode = new Map<Element, ReturnType<AnchorRegistry["listByTask"]>>();
+  for (const anchor of currentAnchors.listByTask(taskId)) {
+    const anchors = existingAnchorsByNode.get(anchor.sourceNode) ?? [];
+    anchors.push(anchor);
+    existingAnchorsByNode.set(anchor.sourceNode, anchors);
+  }
   const nextSegmentsById = new Map(currentSegmentsById);
   const existingSegmentIds = new Set(nextSegmentsById.keys());
   const newSegmentIds: string[] = [];
   const usedSegmentIds = new Set(nextSegmentsById.keys());
+  const matchedExistingSegmentIds = new Set<string>();
   let nextSegmentOrdinal = nextAvailableSegmentOrdinal(usedSegmentIds);
 
   const allocateSegmentId = (preferredSegmentId: string): string => {
@@ -794,34 +808,46 @@ function mergeLazySegmentCollection(
       continue;
     }
 
-    const existingAnchor = existingAnchorsByNode.get(anchor.sourceNode);
-    if (existingAnchor) {
-      const previousSegment = nextSegmentsById.get(existingAnchor.segmentId);
-      if (
-        previousSegment &&
-        (previousSegment.textHash !== segment.textHash ||
-          previousSegment.sourceText !== segment.sourceText)
-      ) {
-        const segmentId = allocateSegmentId(segment.id);
-        dropRuntimeSegment(existingAnchor.segmentId);
-        currentAnchors.set({
-          ...anchor,
-          segmentId,
-        });
-        nextSegmentsById.delete(existingAnchor.segmentId);
-        nextSegmentsById.set(segmentId, {
-          ...segment,
-          id: segmentId,
-        });
-        newSegmentIds.push(segmentId);
-        continue;
+    const existingAnchors = existingAnchorsByNode.get(anchor.sourceNode) ?? [];
+    const existingAnchor = existingAnchors.find((candidate) => {
+      if (matchedExistingSegmentIds.has(candidate.segmentId)) {
+        return false;
       }
-
+      const existingSegment = nextSegmentsById.get(candidate.segmentId);
+      return (
+        existingSegment?.textHash === segment.textHash &&
+        existingSegment.sourceText === segment.sourceText
+      );
+    });
+    if (existingAnchor) {
+      matchedExistingSegmentIds.add(existingAnchor.segmentId);
       nextSegmentsById.set(existingAnchor.segmentId, {
         ...segment,
         id: existingAnchor.segmentId,
       });
       usedSegmentIds.add(existingAnchor.segmentId);
+      continue;
+    }
+
+    const unmatchedExistingAnchor =
+      existingAnchors.length === 1 &&
+      !matchedExistingSegmentIds.has(existingAnchors[0].segmentId)
+        ? existingAnchors[0]
+        : undefined;
+    if (unmatchedExistingAnchor) {
+      const segmentId = allocateSegmentId(segment.id);
+      dropRuntimeSegment(unmatchedExistingAnchor.segmentId);
+      matchedExistingSegmentIds.add(unmatchedExistingAnchor.segmentId);
+      currentAnchors.set({
+        ...anchor,
+        segmentId,
+      });
+      nextSegmentsById.delete(unmatchedExistingAnchor.segmentId);
+      nextSegmentsById.set(segmentId, {
+        ...segment,
+        id: segmentId,
+      });
+      newSegmentIds.push(segmentId);
       continue;
     }
 
@@ -879,7 +905,9 @@ export async function collectSegments(
   const startedAt = nowMs();
   const { segments, anchors } = await collectPageSegments(
     taskId,
-    translationMode === "lazyViewport" ? { visibleRangeOnly: true } : undefined,
+    translationMode === "lazyViewport"
+      ? { visibleRangeOnly: true, materializePlainTextChunks: true }
+      : { materializePlainTextChunks: true },
   );
   if (generation !== collectionGeneration) {
     throw new Error("Translation collection was superseded.");

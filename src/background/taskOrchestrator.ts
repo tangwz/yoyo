@@ -1711,6 +1711,7 @@ export class TranslationTaskOrchestrator {
 
     return createCacheKey({
       sourceText: segment.sourceText,
+      preserveWhitespace: segment.preserveWhitespace,
       sourceLanguage: input.sourceLanguage,
       targetLanguage: input.targetLanguage,
       providerId: providerIdentity.providerId,

@@ -41,6 +41,10 @@ export function isPageUrlSupported(url: string): boolean {
 
 export function isElementSkippable(element: Element): boolean {
   if (blockedTags.has(element.tagName)) return true;
+  return hasNonTagSkipReason(element);
+}
+
+export function hasNonTagSkipReason(element: Element): boolean {
   if (element.hasAttribute("data-yoyo-translation")) return true;
   if (element.hasAttribute("data-yoyo-extension")) return true;
   if (element.hasAttribute("hidden")) return true;

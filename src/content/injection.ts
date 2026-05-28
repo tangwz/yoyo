@@ -1,4 +1,4 @@
-import type { AnchorRegistry } from "@/content/anchors";
+import type { AnchorRegistry, SegmentRuntimeAnchor } from "@/content/anchors";
 import { applyMirroredStyle } from "@/content/styleMirror";
 import type { TranslationResultItem } from "@/translation/types";
 
@@ -51,7 +51,10 @@ export function insertPendingTranslations(
 
       inner.append(spinner);
       wrapper.append(inner);
-      anchor.sourceNode.insertAdjacentElement("afterend", wrapper);
+      insertionReferenceForAnchor(anchors, anchor).insertAdjacentElement(
+        "afterend",
+        wrapper,
+      );
       anchor.insertedNode = wrapper;
       appliedSegmentIds.push(anchor.segmentId);
     } catch {
@@ -95,7 +98,10 @@ export function applyTranslations(
       applyMirroredStyle(inner, anchor.sourceNode);
 
       wrapper.append(inner);
-      anchor.sourceNode.insertAdjacentElement("afterend", wrapper);
+      insertionReferenceForAnchor(anchors, anchor).insertAdjacentElement(
+        "afterend",
+        wrapper,
+      );
       anchor.insertedNode = wrapper;
       appliedSegmentIds.push(item.segmentId);
     } catch {
@@ -153,6 +159,31 @@ function createTranslationWrapper(taskId: string, segmentId: string): HTMLElemen
   wrapper.dataset.yoyoSegmentId = segmentId;
   wrapper.dataset.yoyoTaskId = taskId;
   return wrapper;
+}
+
+function insertionReferenceForAnchor(
+  anchors: AnchorRegistry,
+  anchor: SegmentRuntimeAnchor,
+): Element {
+  const taskAnchors = anchors.listByTask(anchor.taskId);
+  const anchorIndex = taskAnchors.findIndex(
+    (candidate) => candidate.segmentId === anchor.segmentId,
+  );
+  if (anchorIndex <= 0) {
+    return anchor.sourceNode;
+  }
+
+  for (let index = anchorIndex - 1; index >= 0; index -= 1) {
+    const previous = taskAnchors[index];
+    if (previous.sourceNode !== anchor.sourceNode) {
+      continue;
+    }
+    if (previous.insertedNode?.isConnected) {
+      return previous.insertedNode;
+    }
+  }
+
+  return anchor.sourceNode;
 }
 
 function applyPendingIndicatorStyle(element: HTMLElement): void {

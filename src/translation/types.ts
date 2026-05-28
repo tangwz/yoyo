@@ -32,6 +32,7 @@ export type PageSegment = {
   priority: SegmentPriority;
   pathHint: string;
   textHash: string;
+  preserveWhitespace?: boolean;
 };
 
 export type TranslationPreferences = {
