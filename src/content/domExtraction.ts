@@ -114,6 +114,10 @@ const feedLowValueSelector = [
   "[data-testid='like']",
 ].join(",");
 
+const legacyStoryTableTitleSelector = ".titleline > a[href]";
+const cardHeadlineSelector = ".tile__headline";
+const legacyStoryTableContainerTags = new Set(["TABLE", "TBODY", "TR", "TD"]);
+
 function isPlainTextDocument(): boolean {
   return document.contentType.toLowerCase().split(";")[0]?.trim() === "text/plain";
 }
@@ -127,15 +131,72 @@ function isBrowserGeneratedPlainTextPre(element: Element): boolean {
   return style.whiteSpace === "pre-wrap" && style.wordWrap === "break-word";
 }
 
+function findBrowserGeneratedPlainTextPre(): Element | undefined {
+  if (!isPlainTextDocument()) return undefined;
+  return [...document.body.children].find(
+    (child) =>
+      isBrowserGeneratedPlainTextPre(child) && !hasNonTagSkipReason(child),
+  );
+}
+
+function isLegacyStoryTableContainer(element: Element): boolean {
+  return (
+    legacyStoryTableContainerTags.has(element.tagName) &&
+    element.querySelector(legacyStoryTableTitleSelector) !== null
+  );
+}
+
+function isCardButtonContainer(element: Element): boolean {
+  return element.tagName === "BUTTON" && element.querySelector(cardHeadlineSelector) !== null;
+}
+
+function isCardHeadlineContainer(element: Element): boolean {
+  return (
+    element.matches(cardHeadlineSelector) ||
+    (element.hasAttribute("aria-hidden") &&
+      element.querySelector(cardHeadlineSelector) !== null)
+  );
+}
+
+function hasExtractionBlocker(
+  element: Element,
+  options: { allowAriaHidden?: boolean } = {},
+): boolean {
+  if (!options.allowAriaHidden) return hasNonTagSkipReason(element);
+
+  if (element.hasAttribute("data-yoyo-translation")) return true;
+  if (element.hasAttribute("data-yoyo-extension")) return true;
+  if (element.hasAttribute("hidden")) return true;
+  if (element.hasAttribute("contenteditable")) return true;
+  if ((element as HTMLElement).isContentEditable) return true;
+
+  const style = window.getComputedStyle(element);
+  return style.display === "none" || style.visibility === "hidden";
+}
+
 function isElementSkippedForExtraction(element: Element): boolean {
   if (isBrowserGeneratedPlainTextPre(element)) {
     return hasNonTagSkipReason(element);
+  }
+
+  if (isLegacyStoryTableContainer(element) && !hasExtractionBlocker(element)) {
+    return false;
+  }
+
+  if (
+    (isCardButtonContainer(element) || isCardHeadlineContainer(element)) &&
+    !hasExtractionBlocker(element, { allowAriaHidden: true })
+  ) {
+    return false;
   }
 
   return isElementSkippable(element);
 }
 
 function discoverRoots(): Element[] {
+  const plainTextPre = findBrowserGeneratedPlainTextPre();
+  if (plainTextPre) return [plainTextPre];
+
   const discoveredRoots: DiscoveredRootCandidate[] = [];
 
   for (const candidateRoot of document.querySelectorAll(rootSelector)) {
@@ -498,6 +559,8 @@ function isHighConfidenceShortTextElement(element: Element): boolean {
   if (isInsideGenericChrome(element)) return false;
   if (isWeakTextHintInPageChrome(element)) return false;
   if (isNonBodyTextHintInPostWithExplicitBody(element)) return false;
+  if (element.matches(legacyStoryTableTitleSelector)) return true;
+  if (element.matches(cardHeadlineSelector)) return true;
   if (element.matches('[data-testid="cellInnerDiv"]')) {
     return !hasNestedPostTextCandidate(element);
   }
@@ -559,6 +622,7 @@ function hasHighConfidenceReadableChild(
 
 function isDirectReadableCandidate(element: Element): boolean {
   if (element.tagName === "LI" && hasNestedList(element)) return false;
+  if (element.tagName === "LI" && element.querySelector(cardHeadlineSelector)) return false;
   return leafReadableTags.has(element.tagName) || headingTags.has(element.tagName);
 }
 
@@ -662,6 +726,9 @@ function shouldExtractElement(
 ): boolean {
   if (isElementSkippedForExtraction(element)) return false;
   if (isLowValueElement(element, textCache)) return false;
+  if (isBrowserGeneratedPlainTextPre(element)) {
+    return collectExtractableText(element, textCache).length > 0;
+  }
   if (isDirectReadableCandidate(element)) return true;
   if (
     !isHighConfidenceShortTextElement(element) &&
