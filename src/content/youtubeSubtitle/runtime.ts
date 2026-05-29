@@ -448,17 +448,20 @@ export function createYouTubeSubtitleRuntime(
       return initializingPipeline;
     }
 
+    const initializingRuntimeSessionId = currentRuntimeSessionId();
+    const initializingConfigVersion = configVersion;
+    const initializingVideoKey = videoKey;
     initializingPipeline = initializePipeline(player)
       .catch((error) => {
         if (!destroyed && !stopped) {
           console.warn("[yoyo] failed to initialize YouTube subtitle pipeline", {
             error,
-            runtimeSessionId: currentRuntimeSessionId(),
+            runtimeSessionId: initializingRuntimeSessionId,
           });
           markPipelineWarning(
-            currentRuntimeSessionId(),
-            configVersion,
-            videoKey,
+            initializingRuntimeSessionId,
+            initializingConfigVersion,
+            initializingVideoKey,
           );
         }
       })

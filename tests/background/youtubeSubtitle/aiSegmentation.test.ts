@@ -335,6 +335,24 @@ describe("createAiSubtitleSegmentationService", () => {
     });
   });
 
+  it("rejects requests that arrive after their runtime session was cancelled", async () => {
+    const aiService = service();
+
+    aiService.cancel("runtime-1");
+    const response = await aiService.segmentChunk(request());
+
+    expect(response).toEqual({
+      type: "segmentSubtitleChunkError",
+      runtimeSessionId: "runtime-1",
+      configVersion: 7,
+      requestId: "request-1",
+      message: "Subtitle segmentation request was cancelled.",
+      fallbackRequired: true,
+    });
+    expect(getProviderProfile).not.toHaveBeenCalled();
+    expect(generateText).not.toHaveBeenCalled();
+  });
+
   it("rejects AI segments that exceed word bounds", async () => {
     generateText.mockResolvedValueOnce({
       model: "requested-model",

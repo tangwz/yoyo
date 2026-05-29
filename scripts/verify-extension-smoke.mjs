@@ -980,6 +980,12 @@ async function main() {
       "X-like action labels reached the provider prompt.",
     );
     assert(
+      !feedTranslationPromptText.includes("Suggested Account") &&
+        !feedTranslationPromptText.includes("@suggested") &&
+        !feedTranslationPromptText.includes("Follow"),
+      "X-like side rail text reached the initial provider prompt.",
+    );
+    assert(
       feedTranslationRequests.some(
         (request) =>
           request.prompt.includes("Dynamic feed text should translate quickly.") &&

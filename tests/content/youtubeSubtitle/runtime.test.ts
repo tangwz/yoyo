@@ -813,6 +813,46 @@ describe("createYouTubeSubtitleRuntime", () => {
     expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
   });
 
+  it("ignores stale subtitle initialization failures after config changes", async () => {
+    createPlayerDom();
+    let rejectFirst:
+      | ((error: Error) => void)
+      | undefined;
+    let fetchCount = 0;
+    const { runtime, sentMessages } = createRuntimeHarness({
+      fetchCaptionPayload: async () => {
+        fetchCount += 1;
+        if (fetchCount === 1) {
+          return new Promise<YouTubeCaptionPayloadResult>((_resolve, reject) => {
+            rejectFirst = reject;
+          });
+        }
+
+        return createCaptionPayload();
+      },
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await vi.waitFor(() => {
+      expect(rejectFirst).toBeDefined();
+    });
+    await runtime.handleConfigChanged();
+    await flushRuntime();
+    await vi.waitFor(() => {
+      expect(translateMessages(sentMessages)).toHaveLength(1);
+    });
+    expect(buttonStatus()).toBe("enabled");
+    expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
+
+    rejectFirst?.(new Error("Stale caption fetch failed."));
+    await flushRuntime();
+
+    expect(buttonStatus()).toBe("enabled");
+    expect(mountedOverlay()?.hidden).toBe(false);
+    expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
+  });
+
   it("reloads disabled subtitle preferences on config changes", async () => {
     createPlayerDom();
     const { runtime, preferences } = createRuntimeHarness();

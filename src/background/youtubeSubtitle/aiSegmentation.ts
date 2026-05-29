@@ -52,14 +52,25 @@ export function createAiSubtitleSegmentationService(
   return new DefaultAiSubtitleSegmentationService(dependencies);
 }
 
+const maxCancelledRuntimeSessions = 128;
+
 class DefaultAiSubtitleSegmentationService implements AiSubtitleSegmentationService {
   private readonly controllersBySession = new Map<string, Map<string, AbortController>>();
+  private readonly cancelledRuntimeSessionIds = new Set<string>();
+  private readonly cancelledRuntimeSessionOrder: string[] = [];
 
   constructor(private readonly dependencies: AiSubtitleSegmentationServiceDependencies) {}
 
   async segmentChunk(
     request: AiSubtitleSegmentationRequest,
   ): Promise<BackgroundResponse> {
+    if (this.isRuntimeSessionCancelled(request.runtimeSessionId)) {
+      return this.errorResponse(
+        request,
+        "Subtitle segmentation request was cancelled.",
+      );
+    }
+
     const controller = new AbortController();
     this.registerController(request, controller);
 
@@ -139,6 +150,7 @@ class DefaultAiSubtitleSegmentationService implements AiSubtitleSegmentationServ
   }
 
   cancel(runtimeSessionId: string): void {
+    this.markRuntimeSessionCancelled(runtimeSessionId);
     const controllers = this.controllersBySession.get(runtimeSessionId);
     if (!controllers) {
       return;
@@ -149,6 +161,25 @@ class DefaultAiSubtitleSegmentationService implements AiSubtitleSegmentationServ
     }
 
     this.controllersBySession.delete(runtimeSessionId);
+  }
+
+  private markRuntimeSessionCancelled(runtimeSessionId: string): void {
+    if (this.cancelledRuntimeSessionIds.has(runtimeSessionId)) {
+      return;
+    }
+
+    this.cancelledRuntimeSessionIds.add(runtimeSessionId);
+    this.cancelledRuntimeSessionOrder.push(runtimeSessionId);
+    while (this.cancelledRuntimeSessionOrder.length > maxCancelledRuntimeSessions) {
+      const expiredRuntimeSessionId = this.cancelledRuntimeSessionOrder.shift();
+      if (expiredRuntimeSessionId) {
+        this.cancelledRuntimeSessionIds.delete(expiredRuntimeSessionId);
+      }
+    }
+  }
+
+  private isRuntimeSessionCancelled(runtimeSessionId: string): boolean {
+    return this.cancelledRuntimeSessionIds.has(runtimeSessionId);
   }
 
   private async getProfile(

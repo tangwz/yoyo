@@ -364,6 +364,24 @@ describe("createSubtitleTranslationService", () => {
     });
   });
 
+  it("rejects requests that arrive after their runtime session was cancelled", async () => {
+    const subtitleService = service();
+
+    subtitleService.cancel("runtime-1");
+    const response = await subtitleService.translateBatch(request());
+
+    expect(response).toEqual({
+      type: "subtitleTranslateBatchError",
+      runtimeSessionId: "runtime-1",
+      configVersion: 2,
+      requestId: "request-1",
+      message: "Subtitle translation request was cancelled.",
+      retryable: false,
+    });
+    expect(getProviderProfile).not.toHaveBeenCalled();
+    expect(translateBatch).not.toHaveBeenCalled();
+  });
+
   it("returns an empty result without calling the provider", async () => {
     const response = await service().translateBatch(request({ segments: [] }));
 
