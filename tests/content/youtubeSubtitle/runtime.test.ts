@@ -324,6 +324,55 @@ describe("createYouTubeSubtitleRuntime", () => {
     expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
   });
 
+  it("shows warning and does not fetch captions when the subtitle provider is missing", async () => {
+    createPlayerDom();
+    const { runtime, sentMessages } = createRuntimeHarness({
+      sendBackgroundMessage: async (message) => {
+        if (message.type === "getSubtitleRuntimeConfig") {
+          return {
+            type: "subtitleRuntimeConfig",
+            configured: false,
+            targetLanguage: "zh-CN",
+            message: "Provider missing.",
+          };
+        }
+        return createBackgroundResponse(message);
+      },
+      fetchCaptionPayload: async () => {
+        throw new Error("Captions should not be fetched without a provider.");
+      },
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    await vi.waitFor(() => {
+      expect(buttonStatus()).toBe("warning");
+    });
+    expect(translateMessages(sentMessages)).toHaveLength(0);
+    expect(mountedOverlay()).not.toBeNull();
+    expect(mountedOverlay()?.hidden).toBe(true);
+  });
+
+  it("shows warning when no caption payload is available", async () => {
+    createPlayerDom();
+    const { runtime, sentMessages } = createRuntimeHarness({
+      fetchCaptionPayload: async () => undefined,
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    await vi.waitFor(() => {
+      expect(buttonStatus()).toBe("warning");
+    });
+    expect(translateMessages(sentMessages)).toHaveLength(0);
+    expect(mountedOverlay()).not.toBeNull();
+    expect(mountedOverlay()?.hidden).toBe(true);
+  });
+
   it("derives video keys from YouTube shorts and embed URLs", async () => {
     createPlayerDom();
     const shorts = createRuntimeHarness({
@@ -716,6 +765,51 @@ describe("createYouTubeSubtitleRuntime", () => {
       runtimeSessionId: "youtube-subtitle-session-2",
       configVersion: 2,
     });
+    expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
+  });
+
+  it("ignores stale subtitle translation responses after config changes", async () => {
+    createPlayerDom();
+    let resolveFirst:
+      | ((response: BackgroundResponse) => void)
+      | undefined;
+    const { runtime, sentMessages } = createRuntimeHarness({
+      sendBackgroundMessage: async (message) => {
+        if (message.type === "translateSubtitleBatch") {
+          if (!resolveFirst) {
+            return new Promise<BackgroundResponse>((resolve) => {
+              resolveFirst = resolve;
+            });
+          }
+          return createBackgroundResponse(message);
+        }
+        return createBackgroundResponse(message);
+      },
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+    await runtime.handleConfigChanged();
+    await flushRuntime();
+
+    const staleRequest = translateMessages(sentMessages)[0];
+    if (!staleRequest) {
+      throw new Error("Expected first subtitle request.");
+    }
+    resolveFirst?.({
+      type: "subtitleTranslateBatchResult",
+      runtimeSessionId: staleRequest.runtimeSessionId,
+      configVersion: staleRequest.configVersion,
+      requestId: staleRequest.requestId,
+      items: staleRequest.segments.map((segment) => ({
+        segmentId: segment.segmentId,
+        translatedText: "Stale translation.",
+      })),
+    });
+    await flushRuntime();
+
+    expect(mountedOverlay()?.textContent).not.toContain("Stale translation.");
     expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
   });
 

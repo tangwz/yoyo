@@ -140,6 +140,7 @@ export function createYouTubeSubtitleRuntime(
   let scheduler = createScheduler(preferences);
   let sessionCache = new SubtitleSessionCache();
   let pipeline: ActivePipeline | undefined;
+  let warningPipelineKey: string | undefined;
   let initializingPipeline: Promise<void> | undefined;
   let requestIndex = 1;
   let operationQueue = Promise.resolve();
@@ -371,6 +372,7 @@ export function createYouTubeSubtitleRuntime(
     configVersion += 1;
     requestIndex = 1;
     detachPipeline();
+    warningPipelineKey = undefined;
     scheduler = createScheduler(preferences);
     sessionCache = new SubtitleSessionCache();
   }
@@ -403,6 +405,16 @@ export function createYouTubeSubtitleRuntime(
 
   async function ensurePipeline(player: HTMLElement): Promise<void> {
     if (!preferences?.youtubeEnabled || stopped || destroyed) {
+      return;
+    }
+    const nextPipelineKey = pipelineKey(
+      currentRuntimeSessionId(),
+      configVersion,
+      videoKey,
+    );
+    if (warningPipelineKey === nextPipelineKey) {
+      overlay?.hide();
+      updateButtonStatus("warning");
       return;
     }
     if (
@@ -443,7 +455,11 @@ export function createYouTubeSubtitleRuntime(
             error,
             runtimeSessionId: currentRuntimeSessionId(),
           });
-          updateButtonStatus("warning");
+          markPipelineWarning(
+            currentRuntimeSessionId(),
+            configVersion,
+            videoKey,
+          );
         }
       })
       .finally(() => {
@@ -456,6 +472,7 @@ export function createYouTubeSubtitleRuntime(
     const runtimeSessionId = currentRuntimeSessionId();
     const pipelineConfigVersion = configVersion;
     const pipelineVideoKey = videoKey;
+    warningPipelineKey = undefined;
     updateButtonStatus("loading");
 
     const configResponse = await dependencies.sendBackgroundMessage({
@@ -474,7 +491,7 @@ export function createYouTubeSubtitleRuntime(
       configResponse.type !== "subtitleRuntimeConfig" ||
       !configResponse.configured
     ) {
-      updateButtonStatus("warning");
+      markPipelineWarning(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey);
       return;
     }
 
@@ -487,13 +504,13 @@ export function createYouTubeSubtitleRuntime(
       !captionPayload ||
       !isCurrentPipeline(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey)
     ) {
-      updateButtonStatus("warning");
+      markPipelineWarning(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey);
       return;
     }
 
     const cues = parseYouTubeJson3Cues(captionPayload.payload);
     if (cues.length === 0) {
-      updateButtonStatus("warning");
+      markPipelineWarning(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey);
       return;
     }
 
@@ -521,7 +538,7 @@ export function createYouTubeSubtitleRuntime(
     }
     const { segments, segmentationVersion, trackKey } = segmentation;
     if (segments.length === 0) {
-      updateButtonStatus("warning");
+      markPipelineWarning(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey);
       return;
     }
 
@@ -552,6 +569,24 @@ export function createYouTubeSubtitleRuntime(
     updateButtonStatus("enabled");
     renderActiveSubtitle();
     scheduleTranslations();
+  }
+
+  function markPipelineWarning(
+    runtimeSessionId: string,
+    pipelineConfigVersion: number,
+    pipelineVideoKey: string,
+  ): void {
+    if (!isCurrentPipeline(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey)) {
+      return;
+    }
+
+    warningPipelineKey = pipelineKey(
+      runtimeSessionId,
+      pipelineConfigVersion,
+      pipelineVideoKey,
+    );
+    overlay?.hide();
+    updateButtonStatus("warning");
   }
 
   function detachPipeline(): void {
@@ -760,6 +795,14 @@ export function createYouTubeSubtitleRuntime(
       expectedConfigVersion === configVersion &&
       expectedVideoKey === videoKey
     );
+  }
+
+  function pipelineKey(
+    runtimeSessionId: string,
+    pipelineConfigVersion: number,
+    pipelineVideoKey: string,
+  ): string {
+    return `${runtimeSessionId}\n${pipelineConfigVersion}\n${pipelineVideoKey}`;
   }
 
   async function segmentCues(
