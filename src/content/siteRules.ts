@@ -20,7 +20,10 @@ function matchesWildcardHost(hostname: string, pattern: string): boolean {
 }
 
 function matchesExactHost(hostname: string, pattern: string): boolean {
-  return !pattern.includes("/") && hostname === pattern;
+  return (
+    !pattern.includes("/") &&
+    (hostname === pattern || hostname.endsWith(`.${pattern}`))
+  );
 }
 
 export function isUrlBlockedBySiteRules(url: string, rules: SiteRules): boolean {

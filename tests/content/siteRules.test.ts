@@ -29,6 +29,23 @@ describe("content site rules", () => {
     );
   });
 
+  it("treats a registered domain as covering its subdomains", () => {
+    const rules = {
+      blacklist: ["youtube.com"],
+      autoTranslateAllowlist: [],
+    };
+
+    expect(isUrlBlockedBySiteRules("https://www.youtube.com/watch?v=abc", rules)).toBe(
+      true,
+    );
+    expect(isUrlBlockedBySiteRules("https://m.youtube.com/watch?v=abc", rules)).toBe(
+      true,
+    );
+    expect(isUrlBlockedBySiteRules("https://notyoutube.com/watch?v=abc", rules)).toBe(
+      false,
+    );
+  });
+
   it("returns a readable block reason", () => {
     expect(getSiteRuleBlockReason()).toBe(
       "This site is disabled in Yoyo site blacklist.",
