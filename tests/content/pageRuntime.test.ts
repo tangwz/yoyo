@@ -1051,6 +1051,118 @@ describe("page runtime", () => {
     ).toBeNull();
   });
 
+  it("translates dynamically inserted X-like feed posts during an active manual task", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <main>
+        <section id="timeline" role="feed" aria-label="Timeline: Home">
+          <article data-testid="tweet">
+            <div data-testid="tweetText" lang="en" dir="auto">Initial dynamic post text.</div>
+            <div role="group" aria-label="Post actions">
+              <button>Reply</button>
+              <button>Repost</button>
+              <button>Like</button>
+            </div>
+          </article>
+        </section>
+      </main>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    const timeline = document.querySelector("#timeline") as HTMLElement;
+    const nextPost = document.createElement("article");
+    nextPost.dataset.testid = "tweet";
+    nextPost.innerHTML = `
+      <header>
+        <span dir="auto">Display Name</span>
+        <span dir="auto">@display</span>
+        <time>1m</time>
+      </header>
+      <div data-testid="tweetText" lang="en" dir="auto">Inserted post body should be queued.</div>
+      <div role="group" aria-label="Post actions">
+        <button>Reply</button>
+        <button>Repost</button>
+        <button>Like</button>
+      </div>
+    `;
+    timeline.append(nextPost);
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "childList",
+        target: timeline,
+        addedNodes: [nextPost] as unknown as NodeList,
+        removedNodes: [] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "enqueueTranslationBatch",
+          segments: [
+            expect.objectContaining({
+              sourceText: "Inserted post body should be queued.",
+            }),
+          ],
+        }),
+      );
+    });
+    const batches = runtimeMessages<{
+      type: "enqueueTranslationBatch";
+      segments: Array<{ sourceText: string }>;
+    }>("enqueueTranslationBatch");
+    expect(
+      batches.flatMap((batch) =>
+        batch.segments.map((segment) => segment.sourceText),
+      ),
+    ).not.toEqual(
+      expect.arrayContaining(["Reply", "Repost", "Like", "Display Name", "@display"]),
+    );
+  });
+
+  it("ignores dynamic side rail updates while a feed translation task is active", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <main>
+        <section role="feed">
+          <article data-testid="tweet">
+            <div data-testid="tweetText" lang="en" dir="auto">Initial post body.</div>
+          </article>
+        </section>
+        <aside id="rail" aria-label="Who to follow">
+          <div dir="auto">Existing suggestion</div>
+        </aside>
+      </main>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    const rail = document.querySelector("#rail") as HTMLElement;
+    const suggestion = document.createElement("div");
+    suggestion.setAttribute("dir", "auto");
+    suggestion.textContent = "New suggested account";
+    rail.append(suggestion);
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "childList",
+        target: rail,
+        addedNodes: [suggestion] as unknown as NodeList,
+        removedNodes: [] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(runtimeMessages("enqueueTranslationBatch")).toEqual([]);
+  });
+
   it("keeps translations when a click-driven page update temporarily detaches a source node", async () => {
     vi.useFakeTimers();
     document.body.innerHTML = `
