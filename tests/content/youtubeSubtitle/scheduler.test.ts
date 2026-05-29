@@ -57,6 +57,31 @@ describe("SubtitleScheduler", () => {
     ]);
   });
 
+  it("queues newly intersecting segments after seeking to a later window", () => {
+    const queue = scheduler({ maxBatchSegments: 2 });
+    queue.replaceTimeline([
+      segment("early", 0, 1000),
+      segment("middle", 10_000, 11_000),
+      segment("late", 20_000, 21_000),
+    ]);
+
+    queue.scanWindow(0);
+    expect(queue.takeBatch("request-1").map((entry) => entry.segmentId)).toEqual([
+      "early",
+    ]);
+    queue.markTranslated("request-1", ["early"]);
+
+    queue.scanWindow(10_000);
+    expect(queue.takeBatch("request-2").map((entry) => entry.segmentId)).toEqual([
+      "middle",
+    ]);
+
+    queue.scanWindow(20_000);
+    expect(queue.takeBatch("request-3").map((entry) => entry.segmentId)).toEqual([
+      "late",
+    ]);
+  });
+
   it("respects segment count and character budgets while keeping oversized singles", () => {
     const byCount = scheduler({ maxBatchSegments: 2, maxBatchChars: 100 });
     byCount.replaceTimeline([
@@ -200,6 +225,29 @@ describe("SubtitleScheduler", () => {
 
     queue.markTranslated("request-2", ["one"]);
     queue.clearInFlight();
+    queue.scanWindow(0);
+    expect(queue.takeBatch("request-4")).toEqual([]);
+  });
+
+  it("does not let stale failed requests exhaust a rescheduled segment", () => {
+    const queue = scheduler({ maxRetryCount: 0 });
+    queue.replaceTimeline([segment("one", 0, 100)]);
+
+    queue.scanWindow(0);
+    expect(queue.takeBatch("request-1").map((entry) => entry.segmentId)).toEqual([
+      "one",
+    ]);
+    queue.clearInFlight();
+    queue.scanWindow(0);
+    expect(queue.takeBatch("request-2").map((entry) => entry.segmentId)).toEqual([
+      "one",
+    ]);
+
+    queue.markFailed("request-1", ["one"]);
+    queue.scanWindow(0);
+    expect(queue.takeBatch("request-3")).toEqual([]);
+
+    queue.markFailed("request-2", ["one"]);
     queue.scanWindow(0);
     expect(queue.takeBatch("request-4")).toEqual([]);
   });
