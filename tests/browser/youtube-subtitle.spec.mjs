@@ -224,6 +224,16 @@ async function run() {
       "[translated Hello from the fixture.]",
     );
     await assertOverlayContract(page);
+    await page.locator("video").evaluate((video) => {
+      video.currentTime = 5.2;
+      video.dispatchEvent(new Event("timeupdate"));
+      video.dispatchEvent(new Event("seeked"));
+    });
+    await waitForTranslatedOverlay(
+      page,
+      "Later playback text should translate after seeking.",
+      "[translated Later playback text should translate after seeking.]",
+    );
     assert(
       fixtureServer.getTimedTextRequestCount() > 0,
       "Subtitle runtime did not request the timed text payload.",
@@ -255,6 +265,11 @@ async function run() {
       ["enabled", "loading"],
       "Subtitle button should switch back to enabled or loading.",
     );
+    await page.locator("video").evaluate((video) => {
+      video.currentTime = 0;
+      video.dispatchEvent(new Event("timeupdate"));
+      video.dispatchEvent(new Event("seeked"));
+    });
     await waitForTranslatedOverlay(
       page,
       "Hello from the fixture.",

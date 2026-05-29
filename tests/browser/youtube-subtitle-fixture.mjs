@@ -94,6 +94,11 @@ const timedTextJson = {
       dDurationMs: 1800,
       segs: [{ utf8: "This payload is reserved for subtitle pipeline coverage." }],
     },
+    {
+      tStartMs: 5000,
+      dDurationMs: 1800,
+      segs: [{ utf8: "Later playback text should translate after seeking." }],
+    },
   ],
 };
 
