@@ -509,6 +509,65 @@ describe("TranslationTaskOrchestrator", () => {
     }
   });
 
+  it("ignores provider results that resolve after task cancellation", async () => {
+    let resolveProvider:
+      | ((value: { items: Array<{ segmentId: string; translatedText: string }> }) => void)
+      | undefined;
+    const translateBatch = vi.fn(
+      () =>
+        new Promise<{ items: Array<{ segmentId: string; translatedText: string }> }>(
+          (resolve) => {
+            resolveProvider = resolve;
+          },
+        ),
+    );
+    const { orchestrator, sendToContent } = createOrchestrator({
+      getTranslationProvider: () => ({ translateText: vi.fn(), translateBatch }),
+    });
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [segment({ id: "segment-1", sourceText: "One." })],
+        };
+      }
+
+      if (message.type === "applyTranslations") {
+        throw new Error("Stale provider result should not be applied.");
+      }
+
+      return { type: "contentActionResult", success: true };
+    });
+
+    const running = orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    await vi.waitFor(() => {
+      expect(translateBatch).toHaveBeenCalledTimes(1);
+    });
+    const taskId = orchestrator.getTaskForTab(7)?.taskId;
+    if (!taskId) {
+      throw new Error("Expected running task.");
+    }
+    orchestrator.cancelTask(taskId, "userCancelled");
+    resolveProvider?.({
+      items: [{ segmentId: "segment-1", translatedText: "Stale translation." }],
+    });
+
+    await expect(running).resolves.toMatchObject({
+      state: "cancelled",
+    });
+    expect(sendToContent).not.toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ type: "applyTranslations" }),
+    );
+  });
+
   it("does not collect page content when no active provider profile exists", async () => {
     const missingProvider = vi.fn(async () => undefined);
     const { orchestrator, sendToContent, translateBatch } = createOrchestrator({
