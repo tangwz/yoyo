@@ -136,6 +136,7 @@ type TranslationBatchInput = TaskTranslationContext & {
   segments: PageSegment[];
   fanOutGroups: Map<string, PageSegment[]>;
   batchId?: string;
+  skipStreaming?: boolean;
 };
 
 type TranslationBatchResult = {
@@ -1089,7 +1090,12 @@ export class TranslationTaskOrchestrator {
       });
 
       await this.retryOrDegradeBatch(
-        { ...batchInput, batchId: resultBatchId, segments: result.missingSegments },
+        {
+          ...batchInput,
+          batchId: resultBatchId,
+          segments: result.missingSegments,
+          skipStreaming: batchInput.skipStreaming || Boolean(result.error),
+        },
         attempt,
       );
     } catch (error) {
@@ -1106,16 +1112,18 @@ export class TranslationTaskOrchestrator {
     input: TranslationBatchInput,
     attempt: number,
   ): Promise<TranslationBatchResult> {
-    const streamingResult = await this.requestAndApplyStreamingBatch(input, attempt);
-    if (streamingResult) {
-      if ("fallback" in streamingResult) {
-        return this.requestAndApplyBufferedBatch(
-          { ...input, batchId: this.createBatchId() },
-          attempt,
-        );
-      }
+    if (!input.skipStreaming) {
+      const streamingResult = await this.requestAndApplyStreamingBatch(input, attempt);
+      if (streamingResult) {
+        if ("fallback" in streamingResult) {
+          return this.requestAndApplyBufferedBatch(
+            { ...input, batchId: this.createBatchId() },
+            attempt,
+          );
+        }
 
-      return streamingResult;
+        return streamingResult;
+      }
     }
 
     return this.requestAndApplyBufferedBatch(input, attempt);

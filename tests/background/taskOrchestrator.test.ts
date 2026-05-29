@@ -4576,6 +4576,69 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("keeps streamed applied items and retries only missing segments after a stream error", async () => {
+    const streamBatch = vi.fn(async function* () {
+      yield {
+        items: [{ segmentId: "segment-1", translatedText: "一。" }],
+      };
+      throw new Error("stream interrupted");
+    });
+    const translateBatch = vi.fn(async () => ({
+      items: [{ segmentId: "segment-2", translatedText: "二。" }],
+    }));
+    const { orchestrator, sendToContent } = createOrchestrator({
+      getTranslationProvider: () => ({
+        translateText: vi.fn(),
+        translateBatch,
+        streamBatch,
+      }),
+    });
+    const applied: string[] = [];
+
+    sendToContent.mockImplementation(async (_tabId, message) => {
+      if (message.type === "collectSegments") {
+        return {
+          type: "collectSegmentsResult",
+          taskId: message.taskId,
+          segments: [
+            segment({ id: "segment-1", sourceText: "One." }),
+            segment({
+              id: "segment-2",
+              order: 2,
+              sourceText: "Two.",
+              textHash: "hash-2",
+            }),
+          ],
+        };
+      }
+
+      if (message.type !== "applyTranslations") {
+        throw new Error(`Unexpected content message: ${message.type}`);
+      }
+
+      applied.push(...message.items.map((item) => item.segmentId));
+      return { type: "contentActionResult", success: true };
+    });
+
+    const progress = await orchestrator.translatePage({
+      tabId: 7,
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+    });
+
+    expect(streamBatch).toHaveBeenCalledTimes(1);
+    expect(translateBatch).toHaveBeenCalledTimes(1);
+    expect(translateBatch.mock.calls[0]?.[0].segments.map((item) => item.id)).toEqual([
+      "segment-2",
+    ]);
+    expect(applied).toEqual(["segment-1", "segment-2"]);
+    expect(progress).toMatchObject({
+      state: "completed",
+      translated: 2,
+      failed: 0,
+    });
+  });
+
   it("does not trace empty stream fallback as a completed batch", async () => {
     vi.stubEnv("DEV", true);
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
