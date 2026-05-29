@@ -40,6 +40,7 @@ import { TranslationProviderResolver } from "@/provider/resolver";
 import type { ProviderProfile } from "@/provider/types";
 import { createStorageRepositories } from "@/storage/repositories";
 import { storageKeys } from "@/storage/storageKeys";
+import { isUrlBlockedBySiteRules } from "@/siteRules/matching";
 
 function createTaskId(): string {
   return `task-${Date.now()}-${crypto.randomUUID()}`;
@@ -99,6 +100,10 @@ export default defineBackground(() => {
 
   async function getStoredTranslationMode() {
     return (await storage.translationPreferences.get()).mode;
+  }
+
+  async function isPageUrlBlocked(pageUrl: string): Promise<boolean> {
+    return isUrlBlockedBySiteRules(pageUrl, await storage.siteRules.get());
   }
 
   async function getSubtitleRuntimeConfig(): Promise<BackgroundResponse> {
@@ -252,6 +257,7 @@ export default defineBackground(() => {
             detectSourceLanguage: (sourceText) =>
               getChromeBuiltInAiOffscreenClient().detectLanguage(sourceText),
             prepareChromeBuiltInAi,
+            isPageBlocked: isPageUrlBlocked,
             sendToContent: (targetTabId, message) =>
               sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
           }),
@@ -360,17 +366,24 @@ export default defineBackground(() => {
         case "getSubtitleRuntimeConfig":
           return getSubtitleRuntimeConfig();
         case "translateSelection":
-          await translateSelection(request, {
-            getProviderState: loadStoredProviderState,
-            getSelectionProviderId,
-            getTranslationProvider: (profile) =>
-              translationProviderResolver.getTranslationProvider(profile),
-            detectSourceLanguage: (sourceText) =>
-              getChromeBuiltInAiOffscreenClient().detectLanguage(sourceText),
-            prepareChromeBuiltInAi,
-            sendToContent: (targetTabId, message) =>
-              sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
-          });
+          await translateSelection(
+            {
+              ...request,
+              pageUrl: request.pageUrl ?? sender.tab?.url ?? sender.url,
+            },
+            {
+              isPageBlocked: isPageUrlBlocked,
+              getProviderState: loadStoredProviderState,
+              getSelectionProviderId,
+              getTranslationProvider: (profile) =>
+                translationProviderResolver.getTranslationProvider(profile),
+              detectSourceLanguage: (sourceText) =>
+                getChromeBuiltInAiOffscreenClient().detectLanguage(sourceText),
+              prepareChromeBuiltInAi,
+              sendToContent: (targetTabId, message) =>
+                sendTabMessage<ContentRequest, ContentResponse>(targetTabId, message),
+            },
+          );
           return { type: "backgroundActionResult", success: true };
         case "getSelectionTranslationConfig": {
           const [targetLanguage, providerState, savedProviderId] = await Promise.all([
@@ -409,11 +422,13 @@ export default defineBackground(() => {
               tabId,
               requestId: request.requestId,
               providerId: request.providerId,
+              pageUrl: sender.tab?.url ?? sender.url,
               text: request.text,
               sourceLanguage: request.sourceLanguage,
               targetLanguage: request.targetLanguage,
             },
             {
+              isPageBlocked: isPageUrlBlocked,
               getProviderState: loadStoredProviderState,
               getSelectionProviderId,
               getTranslationProvider: (profile) =>

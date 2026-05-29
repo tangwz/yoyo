@@ -11,6 +11,7 @@ export type TranslatePageMenuInput = {
 
 export type TranslateSelectionMenuClickInput = {
   tabId: number;
+  pageUrl?: string;
   text: string;
 };
 
@@ -82,14 +83,19 @@ export async function handleTranslateSelectionMenuClick(
   input: TranslateSelectionMenuClickInput,
   dependencies: TranslateSelectionMenuClickDependencies,
 ): Promise<void> {
-  await dependencies.translateSelection({
+  const request: TranslateSelectionMenuInput = {
     tabId: input.tabId,
     text: input.text,
     sourceLanguage: "auto",
     targetLanguage: await getStoredTargetLanguageOrDefault(
       dependencies.getStoredTargetLanguage,
     ),
-  });
+  };
+  if (input.pageUrl) {
+    request.pageUrl = input.pageUrl;
+  }
+
+  await dependencies.translateSelection(request);
 }
 
 export async function handleSummarizePageMenuClick(

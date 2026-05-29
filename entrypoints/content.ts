@@ -8,6 +8,7 @@ import {
   hidePageTranslations,
   removePageTranslations,
   showPageTranslations,
+  stopActivePageRuntime,
   finalizeLazyRecoverySourceLanguage,
 } from "@/content/pageRuntime";
 import { showSelectionTranslation } from "@/content/selectionPanel";
@@ -31,6 +32,10 @@ import {
   addRuntimeMessageListener,
   sendRuntimeMessage,
 } from "@/messaging/runtime";
+import {
+  getSiteRuleBlockReason,
+  isUrlBlockedBySiteRules,
+} from "@/siteRules/matching";
 import { createStorageRepositories } from "@/storage/repositories";
 import { storageKeys } from "@/storage/storageKeys";
 
@@ -82,7 +87,7 @@ function isYouTubeSubtitleConfigChange(
 ): boolean {
   const relevantKeys =
     areaName === "local"
-      ? [storageKeys.providerProfiles, storageKeys.activeProviderId]
+      ? [storageKeys.providerProfiles, storageKeys.activeProviderId, storageKeys.siteRules]
       : areaName === "sync"
         ? [storageKeys.translationPreferences, storageKeys.subtitlePreferences]
         : [];
@@ -292,16 +297,20 @@ async function getYoutubeCaptionTrackKey(request: {
   return track ? buildTrackKey(request.videoKey, track) : undefined;
 }
 
-function installYouTubeSubtitleRuntimeManager(): void {
+export function installYouTubeSubtitleRuntimeManager(input?: {
+  shouldBlockCurrentSite?: () => Promise<boolean>;
+}): void {
   const repositories = createStorageRepositories();
+  const shouldBlockCurrentSite = input?.shouldBlockCurrentSite ?? (async () => false);
   let youtubeSubtitleRuntime: ReturnType<typeof createYouTubeSubtitleRuntime> | undefined;
+  let ensureRuntimeGeneration = 0;
 
   const handleSubtitleConfigStorageChange = (
     changes: StorageChanges,
     areaName: string,
   ): void => {
-    if (youtubeSubtitleRuntime && isYouTubeSubtitleConfigChange(changes, areaName)) {
-      void youtubeSubtitleRuntime.handleConfigChanged();
+    if (isYouTubeSubtitleConfigChange(changes, areaName)) {
+      void ensureRuntime();
     }
   };
 
@@ -311,14 +320,25 @@ function installYouTubeSubtitleRuntimeManager(): void {
     await runtime?.destroy();
   }
 
-  function ensureRuntime(): void {
+  async function ensureRuntime(): Promise<void> {
+    const generation = ++ensureRuntimeGeneration;
     if (!isYouTubeVideoPage(window.location)) {
-      void stopRuntime();
+      await stopRuntime();
+      return;
+    }
+
+    const shouldBlock = await shouldBlockCurrentSite();
+    if (generation !== ensureRuntimeGeneration) {
+      return;
+    }
+
+    if (shouldBlock) {
+      await stopRuntime();
       return;
     }
 
     if (youtubeSubtitleRuntime) {
-      void youtubeSubtitleRuntime.handleConfigChanged();
+      await youtubeSubtitleRuntime.handleConfigChanged();
       return;
     }
 
@@ -329,11 +349,14 @@ function installYouTubeSubtitleRuntimeManager(): void {
       fetchCaptionPayload: fetchYoutubeCaptionPayload,
       getCaptionTrackKey: getYoutubeCaptionTrackKey,
     });
-    void youtubeSubtitleRuntime.start();
+    await youtubeSubtitleRuntime.start();
   }
 
   const notifyLocationChanged = (): void => {
     window.dispatchEvent(new Event("yoyo:locationchange"));
+  };
+  const handleLocationChanged = (): void => {
+    void ensureRuntime();
   };
   const patchHistoryMethod = (method: "pushState" | "replaceState"): void => {
     const original = window.history[method];
@@ -349,12 +372,12 @@ function installYouTubeSubtitleRuntimeManager(): void {
   patchHistoryMethod("pushState");
   patchHistoryMethod("replaceState");
   window.addEventListener("popstate", notifyLocationChanged);
-  window.addEventListener("yoyo:locationchange", ensureRuntime);
+  window.addEventListener("yoyo:locationchange", handleLocationChanged);
   browser.storage.onChanged.addListener(handleSubtitleConfigStorageChange);
 
   const handlePageShow = (event: PageTransitionEvent): void => {
     if (event.persisted) {
-      ensureRuntime();
+      void ensureRuntime();
     }
   };
   const handlePageHide = (event: PageTransitionEvent): void => {
@@ -363,7 +386,7 @@ function installYouTubeSubtitleRuntimeManager(): void {
     }
     browser.storage.onChanged.removeListener(handleSubtitleConfigStorageChange);
     window.removeEventListener("popstate", notifyLocationChanged);
-    window.removeEventListener("yoyo:locationchange", ensureRuntime);
+    window.removeEventListener("yoyo:locationchange", handleLocationChanged);
     window.removeEventListener("pageshow", handlePageShow);
     window.removeEventListener("pagehide", handlePageHide);
     void stopRuntime();
@@ -372,16 +395,55 @@ function installYouTubeSubtitleRuntimeManager(): void {
   window.addEventListener("pageshow", handlePageShow);
   window.addEventListener("pagehide", handlePageHide);
 
-  ensureRuntime();
+  void ensureRuntime();
 }
 
 export default defineContentScript({
   matches: ["<all_urls>"],
   main() {
     console.info("[yoyo] content script ready");
+    const repositories = createStorageRepositories();
+
+    async function isCurrentSiteBlocked(): Promise<boolean> {
+      const rules = await repositories.siteRules.get();
+      return isUrlBlockedBySiteRules(window.location.href, rules);
+    }
+
+    async function assertCurrentSiteAllowed(): Promise<void> {
+      if (await isCurrentSiteBlocked()) {
+        throw new Error(getSiteRuleBlockReason());
+      }
+    }
+
+    async function stopPageRuntimeIfCurrentSiteBlocked(): Promise<void> {
+      if (!(await isCurrentSiteBlocked())) {
+        return;
+      }
+
+      const taskId = stopActivePageRuntime();
+      if (!taskId) {
+        return;
+      }
+
+      await sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
+        type: "cancelTask",
+        taskId,
+        reason: "userCancelled",
+      }).catch(() => undefined);
+    }
+
+    browser.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local" || !(storageKeys.siteRules in changes)) {
+        return;
+      }
+
+      void stopPageRuntimeIfCurrentSiteBlocked();
+    });
 
     if (isYouTubeHost(window.location.hostname) || isYouTubeSubtitleFixture(window.location)) {
-      installYouTubeSubtitleRuntimeManager();
+      installYouTubeSubtitleRuntimeManager({
+        shouldBlockCurrentSite: isCurrentSiteBlocked,
+      });
     }
 
     addRuntimeMessageListener<unknown, ContentResponse>(
@@ -392,11 +454,23 @@ export default defineContentScript({
 
         switch (message.type) {
           case "estimatePage":
+            if (await isCurrentSiteBlocked()) {
+              return {
+                type: "estimatePageResult",
+                estimate: {
+                  canTranslate: false,
+                  estimatedSegments: 0,
+                  estimatedChars: 0,
+                  reason: getSiteRuleBlockReason(),
+                },
+              };
+            }
             return {
               type: "estimatePageResult",
               estimate: await estimatePage(),
             };
           case "collectSegments": {
+            await assertCurrentSiteAllowed();
             const request = message as Extract<
               ContentRequest,
               { type: "collectSegments" }
@@ -470,6 +544,7 @@ export default defineContentScript({
               ...getPageRuntimeState(),
             };
           case "collectSummarySource":
+            await assertCurrentSiteAllowed();
             return {
               type: "summarySourceResult",
               ...(await collectSummarySource()),

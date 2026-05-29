@@ -14,6 +14,7 @@ export type TranslateSelectionInput = {
   tabId: number;
   requestId?: string;
   providerId?: string;
+  pageUrl?: string;
   text: string;
   sourceLanguage: string;
   targetLanguage: string;
@@ -33,6 +34,7 @@ export type TranslateSelectionDependencies = {
     sourceLanguage: string,
     targetLanguage: string,
   ) => Promise<void>;
+  isPageBlocked?: (pageUrl: string) => Promise<boolean>;
   sendToContent: (
     tabId: number,
     message: ContentRequest,
@@ -45,6 +47,10 @@ export async function translateSelection(
 ): Promise<void> {
   const sourceText = input.text.trim();
   if (!sourceText) {
+    return;
+  }
+
+  if (input.pageUrl && (await dependencies.isPageBlocked?.(input.pageUrl))) {
     return;
   }
 

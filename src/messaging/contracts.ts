@@ -150,6 +150,7 @@ export type BackgroundRequest =
   | {
       type: "translateSelection";
       tabId: number;
+      pageUrl?: string;
       text: string;
       sourceLanguage: string;
       targetLanguage: string;
