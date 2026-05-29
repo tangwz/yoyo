@@ -1188,6 +1188,74 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("translates repeated source text once and fans out cached results without leaking private text", async () => {
+    vi.stubEnv("DEV", true);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const privateSource = "Private repeated source.";
+    const privateTranslation = "Private repeated translation.";
+    const translateBatch = vi.fn(async () => ({
+      items: [{ segmentId: "segment-1", translatedText: privateTranslation }],
+    }));
+    const { orchestrator, sendToContent } = createOrchestrator({
+      getTranslationProvider: () => ({ translateText: vi.fn(), translateBatch }),
+    });
+    const applied: Array<{ segmentId: string; translatedText: string }> = [];
+
+    try {
+      sendToContent.mockImplementation(async (_tabId, message) => {
+        if (message.type === "collectSegments") {
+          return {
+            type: "collectSegmentsResult",
+            taskId: message.taskId,
+            segments: [
+              segment({ id: "segment-1", sourceText: privateSource, textHash: "same-hash" }),
+              segment({
+                id: "segment-2",
+                order: 2,
+                sourceText: privateSource,
+                textHash: "same-hash",
+              }),
+            ],
+          };
+        }
+
+        if (message.type !== "applyTranslations") {
+          throw new Error(`Unexpected content message: ${message.type}`);
+        }
+
+        applied.push(...message.items);
+        return { type: "contentActionResult", success: true };
+      });
+
+      await expect(
+        orchestrator.translatePage({
+          tabId: 7,
+          sourceLanguage: "en",
+          targetLanguage: "zh-CN",
+        }),
+      ).resolves.toMatchObject({
+        state: "completed",
+        translated: 2,
+        failed: 0,
+      });
+
+      expect(translateBatch).toHaveBeenCalledTimes(1);
+      expect(translateBatch.mock.calls[0]?.[0].segments.map((item) => item.id)).toEqual([
+        "segment-1",
+      ]);
+      expect(applied).toEqual([
+        { segmentId: "segment-1", translatedText: privateTranslation },
+        { segmentId: "segment-2", translatedText: privateTranslation },
+      ]);
+      const output = renderedConsoleOutput(infoSpy.mock.calls);
+      expect(output).not.toContain(privateSource);
+      expect(output).not.toContain(privateTranslation);
+    } finally {
+      infoSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("waits for viewport in lazy mode and translates newly enqueued segments once", async () => {
     const { orchestrator, translateBatch, sendToContent } = createOrchestrator();
 
