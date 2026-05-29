@@ -35,6 +35,7 @@ const browserMock = vi.hoisted(() => ({
   localStorageRemove: vi.fn(),
   localStorageSet: vi.fn(),
   runtimeListeners: new Set<(message: unknown) => void>(),
+  runtimeGetManifest: vi.fn(),
   runtimeOpenOptionsPage: vi.fn(),
   runtimeSendMessage: vi.fn(),
   sessionStorageGet: vi.fn(),
@@ -78,6 +79,7 @@ function readyProviderStatus() {
 vi.mock("wxt/browser", () => ({
   browser: {
     runtime: {
+      getManifest: browserMock.runtimeGetManifest,
       openOptionsPage: browserMock.runtimeOpenOptionsPage,
       sendMessage: browserMock.runtimeSendMessage,
       onMessage: {
@@ -216,6 +218,7 @@ describe("popup app", () => {
     });
 
     browserMock.tabsQuery.mockResolvedValue([{ id: 123 }]);
+    browserMock.runtimeGetManifest.mockReturnValue({ version: "0.5.0" });
     browserMock.tabsDetectLanguage.mockResolvedValue("en");
     browserMock.tabsSendMessage.mockImplementation(
       async (_tabId: number, message: { type: string }) => {
@@ -326,7 +329,7 @@ describe("popup app", () => {
     expect(within(pageActions).getByRole("button", { name: defaultTranslateLabel })).toBeVisible();
     expect(within(pageActions).getByRole("button", { name: summaryLabel })).toBeVisible();
     expect(screen.getByText("设置")).toBeVisible();
-    expect(screen.getByText("0.4.0")).toBeVisible();
+    expect(screen.getByText("0.5.0")).toBeVisible();
     expect(screen.getByText("更多")).toBeVisible();
 
     await waitFor(() => {
@@ -1624,3 +1627,4 @@ describe("task progress", () => {
     expect(screen.getByText("4 / 5")).toBeVisible();
   });
 });
+    browserMock.runtimeGetManifest.mockReset();

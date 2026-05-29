@@ -23,8 +23,10 @@ import {
   type ProviderProfile,
 } from "@/provider/types";
 import {
+  defaultSiteRules,
   defaultTranslationPreferences,
   defaultUiPreferences,
+  type SiteRules,
   type UiPreferences,
 } from "@/storage/defaults";
 import { createStorageRepositories } from "@/storage/repositories";
@@ -50,6 +52,11 @@ const hasUserEditedTranslationMode = ref(false);
 const isUiPreferencesLoaded = ref(false);
 const uiTheme = ref<UiPreferences["theme"]>(defaultUiPreferences.theme);
 const uiLanguage = ref(defaultUiPreferences.uiLanguage);
+const siteBlacklistText = ref("");
+const siteRuleAutoTranslateAllowlist = ref<string[]>(
+  defaultSiteRules.autoTranslateAllowlist,
+);
+const siteRulesSaveState = ref<"idle" | "saved" | "error">("idle");
 const timeoutMs = ref(30000);
 const temperature = ref(0.3);
 const maxTokens = ref(4096);
@@ -145,6 +152,21 @@ function normalizePositiveInteger(value: unknown, defaultValue: number): number 
   }
 
   return Math.trunc(parsed);
+}
+
+function parsePatternLines(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0),
+    ),
+  ];
+}
+
+function formatPatternLines(patterns: string[]): string {
+  return patterns.join("\n");
 }
 
 function buildProviderProfile(): ProviderProfile {
@@ -298,6 +320,18 @@ async function loadTranslationPreferences() {
   }
 }
 
+async function loadSiteRules() {
+  try {
+    const storage = createStorageRepositories();
+    const rules = await storage.siteRules.get();
+    siteBlacklistText.value = formatPatternLines(rules.blacklist);
+    siteRuleAutoTranslateAllowlist.value = rules.autoTranslateAllowlist;
+  } catch {
+    siteBlacklistText.value = formatPatternLines(defaultSiteRules.blacklist);
+    siteRuleAutoTranslateAllowlist.value = defaultSiteRules.autoTranslateAllowlist;
+  }
+}
+
 async function focusProviderLanding() {
   if (!shouldLandOnProvider) {
     return;
@@ -317,6 +351,7 @@ onMounted(async () => {
     loadUiPreferences(),
     loadActiveProviderProfile(),
     loadTranslationPreferences(),
+    loadSiteRules(),
   ]);
   await focusProviderLanding();
 });
@@ -387,6 +422,24 @@ async function saveUiLanguage() {
     });
   } catch {
     // UI language is already applied locally; storage can retry on the next change.
+  }
+}
+
+async function saveSiteRules() {
+  siteRulesSaveState.value = "idle";
+
+  const rules: SiteRules = {
+    blacklist: parsePatternLines(siteBlacklistText.value),
+    autoTranslateAllowlist: siteRuleAutoTranslateAllowlist.value,
+  };
+
+  try {
+    const storage = createStorageRepositories();
+    await storage.siteRules.save(rules);
+    siteBlacklistText.value = formatPatternLines(rules.blacklist);
+    siteRulesSaveState.value = "saved";
+  } catch {
+    siteRulesSaveState.value = "error";
   }
 }
 
@@ -723,6 +776,42 @@ async function testConnection() {
             <li>{{ t("privacy.apiKeyIsolation") }}</li>
             <li>{{ t("privacy.noPersistentCache") }}</li>
           </ul>
+
+          <div class="site-rules-panel">
+            <div class="field field-wide">
+              <label for="site-blacklist">{{ t("field.siteBlacklist") }}</label>
+              <textarea
+                id="site-blacklist"
+                v-model="siteBlacklistText"
+                rows="5"
+                :placeholder="t('siteBlacklist.placeholder')"
+              />
+              <small>{{ t("siteBlacklist.note") }}</small>
+            </div>
+            <div class="button-row">
+              <button
+                class="secondary-button"
+                type="button"
+                @click="saveSiteRules"
+              >
+                {{ t("button.saveSiteBlacklist") }}
+              </button>
+            </div>
+            <p
+              v-if="siteRulesSaveState === 'saved'"
+              class="save-feedback success"
+              role="status"
+            >
+              {{ t("siteBlacklist.saveSuccess") }}
+            </p>
+            <p
+              v-else-if="siteRulesSaveState === 'error'"
+              class="save-feedback error"
+              role="alert"
+            >
+              {{ t("siteBlacklist.saveError") }}
+            </p>
+          </div>
         </section>
 
         <section
@@ -980,7 +1069,8 @@ async function testConnection() {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   box-sizing: border-box;
   width: 100%;
   min-height: 40px;
@@ -994,10 +1084,16 @@ async function testConnection() {
 }
 
 .field input:focus-visible,
-.field select:focus-visible {
+.field select:focus-visible,
+.field textarea:focus-visible {
   border-color: var(--yoyo-brand-600);
   outline: 3px solid var(--yoyo-focus-ring);
   outline-offset: 2px;
+}
+
+.field textarea {
+  resize: vertical;
+  line-height: 1.5;
 }
 
 .field small,
@@ -1056,6 +1152,10 @@ async function testConnection() {
   margin: 0;
   color: var(--yoyo-text-soft);
   line-height: 1.6;
+}
+
+.site-rules-panel {
+  margin-top: 18px;
 }
 
 .static-field {

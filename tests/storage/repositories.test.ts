@@ -1,14 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createInMemoryStorageArea,
+  experimentalFlagRepository,
   providerProfileRepository,
   selectionTranslationPreferenceRepository,
+  siteRuleRepository,
   subtitlePreferenceRepository,
   translationPreferenceRepository,
   uiPreferenceRepository,
 } from "@/storage/repositories";
 import {
+  defaultExperimentalFlags,
   defaultSelectionTranslationPreferences,
+  defaultSiteRules,
 } from "@/storage/defaults";
 import { defaultSubtitlePreferences } from "@/subtitle/types";
 import { isTargetLanguage } from "@/translation/types";
@@ -117,6 +121,59 @@ describe("storage repositories", () => {
       "yoyo.selectionTranslationPreferences": { providerId: "provider-1" },
     });
     expect(await local.get("yoyo.selectionTranslationPreferences")).toEqual({});
+  });
+
+  it("stores site rules in local storage", async () => {
+    const local = createInMemoryStorageArea();
+    const sync = createInMemoryStorageArea();
+    const repository = siteRuleRepository({ privateStorage: local });
+
+    await expect(repository.get()).resolves.toEqual(defaultSiteRules);
+
+    await repository.save({
+      blacklist: ["example.com", "*.internal.test"],
+      autoTranslateAllowlist: ["docs.example.com"],
+    });
+
+    expect(await local.get("yoyo.siteRules")).toEqual({
+      "yoyo.siteRules": {
+        blacklist: ["example.com", "*.internal.test"],
+        autoTranslateAllowlist: ["docs.example.com"],
+      },
+    });
+    expect(await sync.get("yoyo.siteRules")).toEqual({});
+  });
+
+  it("normalizes corrupt site rules", async () => {
+    const local = createInMemoryStorageArea();
+    const repository = siteRuleRepository({ privateStorage: local });
+
+    await local.set({
+      "yoyo.siteRules": {
+        blacklist: [" example.com ", "", 1, "https://news.example.com/path"],
+        autoTranslateAllowlist: [" docs.example.com ", false],
+      },
+    });
+
+    await expect(repository.get()).resolves.toEqual({
+      blacklist: ["example.com", "https://news.example.com/path"],
+      autoTranslateAllowlist: ["docs.example.com"],
+    });
+  });
+
+  it("stores experimental flags in local storage", async () => {
+    const local = createInMemoryStorageArea();
+    const sync = createInMemoryStorageArea();
+    const repository = experimentalFlagRepository({ privateStorage: local });
+
+    await expect(repository.get()).resolves.toEqual(defaultExperimentalFlags);
+
+    await repository.save({ translateMoreVisibleText: true });
+
+    expect(await local.get("yoyo.experimentalFlags")).toEqual({
+      "yoyo.experimentalFlags": { translateMoreVisibleText: true },
+    });
+    expect(await sync.get("yoyo.experimentalFlags")).toEqual({});
   });
 
   it("normalizes corrupt selection translation preferences", async () => {

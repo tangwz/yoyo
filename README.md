@@ -4,7 +4,7 @@
 
 Yoyo Reading Assistant is a Chrome / Edge reading assistant extension for bilingual long-form reading. It lets users configure their own OpenAI-compatible LLM provider, then manually translate the current page with progressive result injection and task state tracking.
 
-This project is not positioned as a page-cleaning tool. It is designed to preserve the original page structure as much as possible: it does not replace source text, does not expose API keys to content scripts, and does not automatically transmit page text. The current MVP focuses on the full-page translation workflow. Future versions can extend the same provider and task orchestration foundation to support selection translation, image translation, video translation, and page summaries.
+This project is not positioned as a page-cleaning tool. It is designed to preserve the original page structure as much as possible: it does not replace source text, does not expose API keys to content scripts, and does not automatically transmit page text. The original MVP focused on the full-page translation workflow. The current version also reuses the same provider and task orchestration foundation for selection translation, YouTube subtitle translation, and page summaries.
 
 ## Features
 
@@ -15,6 +15,9 @@ Implemented in the current version:
 - Local provider storage: provider profiles, API keys, model names, and Base URLs are stored in `chrome.storage.local` and are not synced across devices.
 - Provider connection test: the options page can send a fixed short prompt to test the configured provider without reading page content.
 - Full-page translation: users can translate the current page from the popup or context menu.
+- Selection translation: users can translate selected text through the context menu and review the result in an in-page popup.
+- Page summaries: users can summarize readable page content with OpenAI-compatible providers.
+- YouTube subtitle translation: supported YouTube caption tracks can be translated and displayed over the video.
 - Bilingual reading layout: translations are inserted below the original text instead of replacing it.
 - Style compatibility: injected translations try to mirror the original paragraph styling to reduce disruption across different page backgrounds and layouts.
 - Progressive injection: translated batches are injected as they complete instead of waiting for the entire page.
@@ -27,15 +30,12 @@ Implemented in the current version:
 
 Not included in the current version:
 
-- Selection translation
 - Image translation
-- Video subtitle translation
-- Page summaries
 - Persistent translation cache
 - Task recovery after service worker restart
 - Automatic translation for all websites
 
-These capabilities are planned for later versions and are not part of the current MVP scope.
+These capabilities are planned for later versions and are not part of the current scope.
 
 ## Tech Stack
 
@@ -109,6 +109,12 @@ pnpm verify:extension
 ```
 
 `pnpm verify:extension` builds the extension, starts a local test article and mock OpenAI-compatible provider, launches Chrome with `build/chrome-mv3` loaded, and verifies provider configuration, full-page translation, translation injection, and code-block skipping.
+
+Run the same smoke path against Edge when Edge is installed:
+
+```bash
+YOYO_BROWSER=edge pnpm verify:extension
+```
 
 Keep the browser open for manual acceptance:
 

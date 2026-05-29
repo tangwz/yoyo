@@ -1,10 +1,14 @@
 import type { ProviderProfile } from "@/provider/types";
 import {
+  defaultExperimentalFlags,
   defaultSelectionTranslationPreferences,
+  defaultSiteRules,
   defaultTranslationPreferences,
   defaultUiPreferences,
   isUiLanguage,
+  type ExperimentalFlags,
   type SelectionTranslationPreferences,
+  type SiteRules,
   type UiPreferences,
 } from "@/storage/defaults";
 import { storageKeys } from "@/storage/storageKeys";
@@ -46,6 +50,14 @@ type SubtitlePreferenceRepositoryDependencies = {
 
 type SelectionTranslationPreferenceRepositoryDependencies = {
   syncedStorage: StorageArea;
+};
+
+type SiteRuleRepositoryDependencies = {
+  privateStorage: StorageArea;
+};
+
+type ExperimentalFlagRepositoryDependencies = {
+  privateStorage: StorageArea;
 };
 
 type ExtensionStorageRuntime = {
@@ -135,6 +147,47 @@ function normalizeSelectionTranslationPreferences(
       : undefined;
 
   return providerId === undefined ? {} : { providerId };
+}
+
+function normalizePatternList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const normalized = value.flatMap((item) => {
+    if (typeof item !== "string") {
+      return [];
+    }
+
+    const pattern = item.trim();
+    return pattern ? [pattern] : [];
+  });
+
+  return [...new Set(normalized)];
+}
+
+function normalizeSiteRules(value: unknown): SiteRules {
+  if (!isRecord(value)) {
+    return defaultSiteRules;
+  }
+
+  return {
+    blacklist: normalizePatternList(value.blacklist),
+    autoTranslateAllowlist: normalizePatternList(value.autoTranslateAllowlist),
+  };
+}
+
+function normalizeExperimentalFlags(value: unknown): ExperimentalFlags {
+  if (!isRecord(value)) {
+    return defaultExperimentalFlags;
+  }
+
+  return {
+    translateMoreVisibleText:
+      typeof value.translateMoreVisibleText === "boolean"
+        ? value.translateMoreVisibleText
+        : defaultExperimentalFlags.translateMoreVisibleText,
+  };
 }
 
 export function createInMemoryStorageArea(): StorageArea {
@@ -292,6 +345,40 @@ export function selectionTranslationPreferenceRepository({
   return { get, save };
 }
 
+export function siteRuleRepository({ privateStorage }: SiteRuleRepositoryDependencies) {
+  async function get(): Promise<SiteRules> {
+    const result = await privateStorage.get({
+      [storageKeys.siteRules]: defaultSiteRules,
+    });
+    return normalizeSiteRules(result[storageKeys.siteRules]);
+  }
+
+  async function save(rules: SiteRules): Promise<void> {
+    await privateStorage.set({ [storageKeys.siteRules]: normalizeSiteRules(rules) });
+  }
+
+  return { get, save };
+}
+
+export function experimentalFlagRepository({
+  privateStorage,
+}: ExperimentalFlagRepositoryDependencies) {
+  async function get(): Promise<ExperimentalFlags> {
+    const result = await privateStorage.get({
+      [storageKeys.experimentalFlags]: defaultExperimentalFlags,
+    });
+    return normalizeExperimentalFlags(result[storageKeys.experimentalFlags]);
+  }
+
+  async function save(flags: ExperimentalFlags): Promise<void> {
+    await privateStorage.set({
+      [storageKeys.experimentalFlags]: normalizeExperimentalFlags(flags),
+    });
+  }
+
+  return { get, save };
+}
+
 export function subtitlePreferenceRepository({
   syncedStorage,
 }: SubtitlePreferenceRepositoryDependencies) {
@@ -319,6 +406,8 @@ export type StorageRepositories = {
     typeof selectionTranslationPreferenceRepository
   >;
   subtitlePreferences: ReturnType<typeof subtitlePreferenceRepository>;
+  siteRules: ReturnType<typeof siteRuleRepository>;
+  experimentalFlags: ReturnType<typeof experimentalFlagRepository>;
 };
 
 export function createStorageRepositories(): StorageRepositories {
@@ -333,5 +422,7 @@ export function createStorageRepositories(): StorageRepositories {
       syncedStorage: storage.sync,
     }),
     subtitlePreferences: subtitlePreferenceRepository({ syncedStorage: storage.sync }),
+    siteRules: siteRuleRepository({ privateStorage: storage.local }),
+    experimentalFlags: experimentalFlagRepository({ privateStorage: storage.local }),
   };
 }

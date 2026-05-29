@@ -13,6 +13,10 @@ import {
 import { showSelectionTranslation } from "@/content/selectionPanel";
 import { showPageSummary } from "@/content/summaryPanel";
 import {
+  getSiteRuleBlockReason,
+  isUrlBlockedBySiteRules,
+} from "@/content/siteRules";
+import {
   createYouTubeSubtitleRuntime,
   type YouTubeCaptionPayloadResult,
 } from "@/content/youtubeSubtitle/runtime";
@@ -379,6 +383,18 @@ export default defineContentScript({
   matches: ["<all_urls>"],
   main() {
     console.info("[yoyo] content script ready");
+    const repositories = createStorageRepositories();
+
+    async function isCurrentSiteBlocked(): Promise<boolean> {
+      const rules = await repositories.siteRules.get();
+      return isUrlBlockedBySiteRules(window.location.href, rules);
+    }
+
+    async function assertCurrentSiteAllowed(): Promise<void> {
+      if (await isCurrentSiteBlocked()) {
+        throw new Error(getSiteRuleBlockReason());
+      }
+    }
 
     if (isYouTubeHost(window.location.hostname) || isYouTubeSubtitleFixture(window.location)) {
       installYouTubeSubtitleRuntimeManager();
@@ -392,11 +408,23 @@ export default defineContentScript({
 
         switch (message.type) {
           case "estimatePage":
+            if (await isCurrentSiteBlocked()) {
+              return {
+                type: "estimatePageResult",
+                estimate: {
+                  canTranslate: false,
+                  estimatedSegments: 0,
+                  estimatedChars: 0,
+                  reason: getSiteRuleBlockReason(),
+                },
+              };
+            }
             return {
               type: "estimatePageResult",
               estimate: await estimatePage(),
             };
           case "collectSegments": {
+            await assertCurrentSiteAllowed();
             const request = message as Extract<
               ContentRequest,
               { type: "collectSegments" }
@@ -470,6 +498,7 @@ export default defineContentScript({
               ...getPageRuntimeState(),
             };
           case "collectSummarySource":
+            await assertCurrentSiteAllowed();
             return {
               type: "summarySourceResult",
               ...(await collectSummarySource()),

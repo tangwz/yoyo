@@ -63,6 +63,7 @@ const total = ref(0);
 const failed = ref(0);
 const errorMessage = ref("");
 const pageTranslationsVisible = ref(true);
+const extensionVersion = browser.runtime.getManifest().version;
 const providerOnboardingAutoOpenKey = "yoyo.providerOnboardingAutoOpened";
 let targetLanguageSaveQueue: Promise<void> = Promise.resolve();
 
@@ -804,7 +805,7 @@ async function onRemoveTranslations(): Promise<void> {
 
     <PopupFooter
       left-label="设置"
-      version="0.4.0"
+      :version="extensionVersion"
       @open-settings="onOpenSettings"
     />
   </main>

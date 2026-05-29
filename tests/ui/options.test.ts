@@ -21,6 +21,10 @@ const getSelectionTranslationPreferences = vi.fn();
 const saveSelectionTranslationPreferences = vi.fn();
 const getSubtitlePreferences = vi.fn();
 const saveSubtitlePreferences = vi.fn();
+const getSiteRules = vi.fn();
+const saveSiteRules = vi.fn();
+const getExperimentalFlags = vi.fn();
+const saveExperimentalFlags = vi.fn();
 const originalScrollIntoView = Element.prototype.scrollIntoView;
 
 function createDeferred<T>() {
@@ -64,6 +68,14 @@ function mockStorageRepositories() {
       get: getSubtitlePreferences,
       save: saveSubtitlePreferences,
     },
+    siteRules: {
+      get: getSiteRules,
+      save: saveSiteRules,
+    },
+    experimentalFlags: {
+      get: getExperimentalFlags,
+      save: saveExperimentalFlags,
+    },
   });
 }
 
@@ -103,6 +115,13 @@ describe("options app", () => {
       maxRetryCount: 2,
     });
     saveSubtitlePreferences.mockResolvedValue(undefined);
+    getSiteRules.mockResolvedValue({
+      blacklist: [],
+      autoTranslateAllowlist: [],
+    });
+    saveSiteRules.mockResolvedValue(undefined);
+    getExperimentalFlags.mockResolvedValue({ translateMoreVisibleText: false });
+    saveExperimentalFlags.mockResolvedValue(undefined);
     mockStorageRepositories();
   });
 
@@ -150,6 +169,7 @@ describe("options app", () => {
         "选择 OpenAI-compatible Provider 时，提取的文本会发送到你配置的模型服务；选择 Chrome Built-in AI 时，文本在本地处理，不会自动回退到远端 Provider。",
       ),
     ).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "站点黑名单" })).toBeVisible();
   });
 
   it("renders options messages from the saved UI language", async () => {
@@ -171,6 +191,30 @@ describe("options app", () => {
       ),
     ).toBeVisible();
     expect(screen.getByRole("option", { name: "Custom OpenAI compatible" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Site blacklist" })).toBeVisible();
+  });
+
+  it("loads and saves the site blacklist from local settings", async () => {
+    getSiteRules.mockResolvedValue({
+      blacklist: ["example.com", "*.internal.test"],
+      autoTranslateAllowlist: ["docs.example.com"],
+    });
+
+    await renderReady();
+
+    const blacklist = screen.getByRole("textbox", {
+      name: "站点黑名单",
+    }) as HTMLTextAreaElement;
+    expect(blacklist).toHaveValue("example.com\n*.internal.test");
+
+    await fireEvent.update(blacklist, " example.com \n\nhttps://news.example.com/path ");
+    await fireEvent.click(screen.getByRole("button", { name: "保存站点黑名单" }));
+
+    expect(saveSiteRules).toHaveBeenCalledWith({
+      blacklist: ["example.com", "https://news.example.com/path"],
+      autoTranslateAllowlist: ["docs.example.com"],
+    });
+    expect(await screen.findByText("站点黑名单已保存。")).toBeVisible();
   });
 
   it("does not render settings text before the stored UI language is loaded", async () => {

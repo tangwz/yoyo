@@ -14,6 +14,11 @@ export type ExperimentalFlags = {
   translateMoreVisibleText: boolean;
 };
 
+export type SiteRules = {
+  blacklist: string[];
+  autoTranslateAllowlist: string[];
+};
+
 export type SelectionTranslationPreferences = {
   providerId?: string;
 };
@@ -29,6 +34,11 @@ export function isUiLanguage(value: unknown): value is UiPreferences["uiLanguage
 
 export const defaultExperimentalFlags: ExperimentalFlags = {
   translateMoreVisibleText: false,
+};
+
+export const defaultSiteRules: SiteRules = {
+  blacklist: [],
+  autoTranslateAllowlist: [],
 };
 
 export const defaultSelectionTranslationPreferences: SelectionTranslationPreferences = {};

@@ -6,6 +6,10 @@ import { tmpdir } from "node:os";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
+import {
+  getBrowserExecutableCandidates,
+  normalizeBrowserTarget,
+} from "./browser-launch-options.mjs";
 
 const extensionPath = resolve("build/chrome-mv3");
 const keepOpen = process.env.YOYO_SMOKE_KEEP_OPEN === "1";
@@ -375,15 +379,11 @@ function createArticleServer() {
 }
 
 function findChromeExecutable() {
-  const candidates = [
-    process.env.YOYO_CHROME_EXECUTABLE,
-    join(
-      homedir(),
-      "Library/Caches/ms-playwright/chromium-1217/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-    ),
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-  ].filter(Boolean);
+  const candidates = getBrowserExecutableCandidates({
+    target: process.env.YOYO_BROWSER,
+    envExecutable: process.env.YOYO_CHROME_EXECUTABLE,
+    homeDir: homedir(),
+  });
 
   return candidates.find((candidate) => existsSync(candidate));
 }
@@ -490,7 +490,7 @@ async function findExtensionPage(context, extensionId, pathPrefix, timeout = 500
   return undefined;
 }
 
-async function openActionPopup(serviceWorker, windowId) {
+async function openActionPopup(context, serviceWorker, extensionId, windowId) {
   const result = await serviceWorker.evaluate(async (targetWindowId) => {
     try {
       await chrome.action.openPopup({ windowId: targetWindowId });
@@ -503,7 +503,13 @@ async function openActionPopup(serviceWorker, windowId) {
     }
   }, windowId);
 
-  assert(result.ok, `Could not open extension action popup: ${result.message}`);
+  if (result.ok) {
+    return findExtensionPage(context, extensionId, "popup.html");
+  }
+
+  const popupPage = await context.newPage();
+  await popupPage.goto(`chrome-extension://${extensionId}/popup.html`);
+  return popupPage;
 }
 
 async function main() {
@@ -548,7 +554,13 @@ async function main() {
     } else {
       const launchOptions = executablePath
         ? { executablePath }
-        : { channel: process.env.YOYO_CHROME_CHANNEL ?? "chrome" };
+        : {
+            channel:
+              process.env.YOYO_CHROME_CHANNEL ??
+              (normalizeBrowserTarget(process.env.YOYO_BROWSER) === "edge"
+                ? "msedge"
+                : "chrome"),
+          };
 
       context = await chromium.launchPersistentContext(userDataDir, {
         ...launchOptions,
@@ -657,11 +669,17 @@ async function main() {
 
     const beforePopupRequestCount = countProviderRequests();
     await articlePage.bringToFront();
-    await openActionPopup(serviceWorker, articleTab.windowId);
+    const articlePopupPage = await openActionPopup(
+      context,
+      serviceWorker,
+      extensionId,
+      articleTab.windowId,
+    );
     await assertProviderRequestCountStays(
       beforePopupRequestCount,
       "Opening the action popup for a readable article sent a provider request.",
     );
+    await articlePopupPage?.close().catch(() => undefined);
 
     const beforeEstimateRequestCount = countProviderRequests();
     const estimateResponse = await optionsPage.evaluate(async (targetTabId) => {
@@ -735,11 +753,17 @@ async function main() {
     );
     const beforeExistingPopupRequestCount = countProviderRequests();
     await articlePage.bringToFront();
-    await openActionPopup(serviceWorker, articleTab.windowId);
+    const existingTranslationPopupPage = await openActionPopup(
+      context,
+      serviceWorker,
+      extensionId,
+      articleTab.windowId,
+    );
     await assertProviderRequestCountStays(
       beforeExistingPopupRequestCount,
       "Opening the action popup for existing translations sent a provider request.",
     );
+    await existingTranslationPopupPage?.close().catch(() => undefined);
 
     const lazyPage = await context.newPage();
     await lazyPage.goto(articleServer.lazyUrl);
