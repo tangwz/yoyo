@@ -1087,6 +1087,100 @@ describe("collectPageSegments", () => {
     ]);
   });
 
+  it("extracts mainstream feed post bodies while skipping side rails and actions", async () => {
+    document.body.innerHTML = `
+      <main>
+        <section role="feed" aria-label="Timeline: Home">
+          <div role="listitem">
+            <article role="article">
+              <header>
+                <div dir="auto">Terence</div>
+                <div dir="auto">@terence</div>
+                <time>2h</time>
+              </header>
+              <div lang="en" dir="auto">
+                The main post body should translate on a dynamic social feed.
+              </div>
+              <div aria-label="Post actions">
+                <span>Reply</span>
+                <span>Repost</span>
+                <span>Like</span>
+                <span>42</span>
+              </div>
+            </article>
+          </div>
+        </section>
+        <aside aria-label="Who to follow">
+          <div dir="auto">Suggested Person</div>
+          <div dir="auto">@suggested</div>
+          <button>Follow</button>
+        </aside>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "The main post body should translate on a dynamic social feed.",
+    ]);
+  });
+
+  it("extracts Reddit-like post bodies without voting or toolbar text", async () => {
+    document.body.innerHTML = `
+      <main>
+        <article aria-label="Post">
+          <header>
+            <a href="/r/programming">r/programming</a>
+            <span>123 upvotes</span>
+          </header>
+          <div slot="text-body">
+            <p>Reddit-like dynamic post text should be translated as content.</p>
+            <p>Second paragraph in the post body should also be translated.</p>
+          </div>
+          <footer role="toolbar">
+            <button>Vote</button>
+            <button>Comment</button>
+            <button>Share</button>
+          </footer>
+        </article>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "Reddit-like dynamic post text should be translated as content.",
+      "Second paragraph in the post body should also be translated.",
+    ]);
+  });
+
+  it("extracts GitHub-like discussion comments without repository chrome", async () => {
+    document.body.innerHTML = `
+      <main>
+        <nav>Code Issues Pull requests Actions Projects Security Insights</nav>
+        <div role="article" aria-label="Comment">
+          <header>
+            <a href="/octocat">octocat</a>
+            <relative-time>now</relative-time>
+          </header>
+          <div class="comment-body">
+            <p>GitHub-like discussion comments should remain readable.</p>
+          </div>
+          <div role="toolbar">
+            <button>React</button>
+            <button>Quote reply</button>
+          </div>
+        </div>
+      </main>
+    `;
+
+    const result = await collectPageSegments("task-1");
+
+    expect(result.segments.map((segment) => segment.sourceText)).toEqual([
+      "GitHub-like discussion comments should remain readable.",
+    ]);
+  });
+
   it("keeps numeric spans inside tweet text", async () => {
     document.body.innerHTML = `
       <main>
