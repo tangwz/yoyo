@@ -1299,9 +1299,10 @@ describe("TranslationTaskOrchestrator", () => {
       });
 
       expect(translateBatch).toHaveBeenCalledTimes(1);
-      expect(translateBatch.mock.calls[0]?.[0].segments.map((item) => item.id)).toEqual([
-        "segment-1",
-      ]);
+      const request = (translateBatch.mock.calls[0] as unknown as
+        | [TranslateBatchRequest]
+        | undefined)?.[0];
+      expect(request?.segments.map((item) => item.id)).toEqual(["segment-1"]);
       expect(applied).toEqual([
         { segmentId: "segment-1", translatedText: privateTranslation },
         { segmentId: "segment-2", translatedText: privateTranslation },
@@ -4755,9 +4756,10 @@ describe("TranslationTaskOrchestrator", () => {
 
     expect(streamBatch).toHaveBeenCalledTimes(1);
     expect(translateBatch).toHaveBeenCalledTimes(1);
-    expect(translateBatch.mock.calls[0]?.[0].segments.map((item) => item.id)).toEqual([
-      "segment-2",
-    ]);
+    const request = (translateBatch.mock.calls[0] as unknown as
+      | [TranslateBatchRequest]
+      | undefined)?.[0];
+    expect(request?.segments.map((item) => item.id)).toEqual(["segment-2"]);
     expect(applied).toEqual(["segment-1", "segment-2"]);
     expect(progress).toMatchObject({
       state: "completed",
