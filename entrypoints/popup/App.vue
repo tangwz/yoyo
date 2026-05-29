@@ -824,7 +824,6 @@ async function onRemoveTranslations(): Promise<void> {
 
 .yoyo-shell {
   width: 100%;
-  min-height: 300px;
   padding: 18px;
   color: var(--yoyo-text);
   background:
@@ -847,7 +846,7 @@ async function onRemoveTranslations(): Promise<void> {
 .popup-content {
   display: grid;
   gap: 14px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .action-grid {
