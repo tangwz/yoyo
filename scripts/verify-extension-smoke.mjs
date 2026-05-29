@@ -265,7 +265,12 @@ const xLikeFeedHtml = `<!doctype html>
       body {
         font-family: system-ui, sans-serif;
         margin: 0 auto;
-        max-width: 720px;
+        max-width: 860px;
+      }
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 240px;
+        gap: 24px;
       }
       article {
         border-bottom: 1px solid #ddd;
@@ -275,25 +280,49 @@ const xLikeFeedHtml = `<!doctype html>
         font-size: 18px;
         line-height: 1.45;
       }
+      aside {
+        border-left: 1px solid #eee;
+        padding-left: 16px;
+      }
     </style>
   </head>
   <body>
     <main>
-      <article data-testid="tweet">
-        <div><a href="/author">Terence</a><span>@terence</span><time>1h</time></div>
-        <div data-testid="tweetText" lang="en" dir="auto">
-          <span>Dynamic feed text should translate quickly.</span>
-        </div>
-        <div role="group" aria-label="Post actions">
-          <button>Reply</button><button>Repost</button><button>Like</button>
-        </div>
-      </article>
-      <article data-testid="tweet">
-        <div data-testid="tweetText" lang="en" dir="auto">
-          <span>Newly visible short text should translate too.</span>
-        </div>
-      </article>
+      <section id="timeline" role="feed" aria-label="Timeline: Home">
+        <article data-testid="tweet">
+          <div><a href="/author">Terence</a><span>@terence</span><time>1h</time></div>
+          <div data-testid="tweetText" lang="en" dir="auto">
+            <span>Dynamic feed text should translate quickly.</span>
+          </div>
+          <div role="group" aria-label="Post actions">
+            <button>Reply</button><button>Repost</button><button>Like</button>
+          </div>
+        </article>
+        <article data-testid="tweet">
+          <div data-testid="tweetText" lang="en" dir="auto">
+            <span>Newly visible short text should translate too.</span>
+          </div>
+        </article>
+      </section>
+      <aside aria-label="Who to follow">
+        <div dir="auto">Suggested Account</div>
+        <div dir="auto">@suggested</div>
+        <button>Follow</button>
+      </aside>
     </main>
+    <button id="append-post" type="button">Append post</button>
+    <script>
+      document.querySelector("#append-post").addEventListener("click", () => {
+        const article = document.createElement("article");
+        article.dataset.testid = "tweet";
+        article.innerHTML = [
+          '<div><span dir="auto">Another Author</span><span dir="auto">@another</span><time>1m</time></div>',
+          '<div data-testid="tweetText" lang="en" dir="auto"><span>Inserted smoke post should translate after mutation.</span></div>',
+          '<div role="group" aria-label="Post actions"><button>Reply</button><button>Repost</button><button>Like</button></div>'
+        ].join("");
+        document.querySelector("#timeline").append(article);
+      });
+    </script>
   </body>
 </html>`;
 
@@ -957,6 +986,46 @@ async function main() {
           request.prompt.includes("Newly visible short text should translate too."),
       ),
       "X-like feed provider request did not include both tweet texts.",
+    );
+    const beforeInsertedFeedRequestCount = countProviderRequests();
+    await xLikePage.locator("#append-post").click();
+    const insertedFeedResult = await waitForCondition(
+      async () => {
+        const insertedPromptItems = promptProbe.requests
+          .slice(beforeInsertedFeedRequestCount)
+          .flatMap((request) => extractPromptItems(request.prompt));
+        const insertedItem = insertedPromptItems.find(
+          (item) => item.text === "Inserted smoke post should translate after mutation.",
+        );
+        if (!insertedItem) {
+          return undefined;
+        }
+
+        const snapshot = await translationSnapshot(xLikePage);
+        const translatedText = snapshot
+          .filter((item) => !item.pending)
+          .map((item) => item.text)
+          .join("\n");
+        return translatedText.includes(`[translated ${insertedItem.id}]`)
+          ? { snapshot, insertedItem }
+          : undefined;
+      },
+      "X-like feed did not translate an inserted post after mutation.",
+      10000,
+    );
+    assertUniqueInjectedSegments(
+      insertedFeedResult.snapshot,
+      "X-like feed duplicated injected translations after mutation.",
+    );
+    const insertedFeedPromptText = promptProbe.requests
+      .slice(beforeInsertedFeedRequestCount)
+      .map((request) => request.prompt)
+      .join("\n");
+    assert(
+      !insertedFeedPromptText.includes("Suggested Account") &&
+        !insertedFeedPromptText.includes("@suggested") &&
+        !insertedFeedPromptText.includes("Follow"),
+      "X-like side rail text reached the provider prompt after dynamic mutation.",
     );
     const xLikeProgressResponse = await optionsPage.evaluate(async (targetTabId) => {
       return chrome.runtime.sendMessage({

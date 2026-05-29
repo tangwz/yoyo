@@ -233,7 +233,11 @@ export class TranslationTaskOrchestrator {
       return this.missingTaskProgress(input.taskId);
     }
     if (task && this.isTaskStopped(task)) {
-      return this.cloneProgress(task.progress);
+      if (this.canResumeCompletedLazyTask(task, input)) {
+        this.resumeCompletedLazyTask(task);
+      } else {
+        return this.cloneProgress(task.progress);
+      }
     }
     if (!task && this.hasTaskForTab(input.tabId)) {
       return this.missingTaskProgress(input.taskId);
@@ -1784,6 +1788,22 @@ export class TranslationTaskOrchestrator {
 
   private isTaskStopped(task: RunningTask): boolean {
     return this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state);
+  }
+
+  private canResumeCompletedLazyTask(
+    task: RunningTask,
+    input: EnqueueTranslationBatchInput,
+  ): boolean {
+    return (
+      input.translationMode === "lazyViewport" &&
+      task.context?.translationMode === "lazyViewport" &&
+      (task.progress.state === "completed" ||
+        task.progress.state === "completedWithErrors")
+    );
+  }
+
+  private resumeCompletedLazyTask(task: RunningTask): void {
+    this.updateProgress(task, { state: "translating" });
   }
 
   private emptyProgress(

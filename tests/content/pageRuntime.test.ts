@@ -1125,6 +1125,70 @@ describe("page runtime", () => {
     );
   });
 
+  it("keeps translating inserted X-like feed posts after lazy task completion", async () => {
+    vi.useFakeTimers();
+    runtimeMock.sendRuntimeMessage.mockResolvedValue({
+      type: "taskProgress",
+      progress: {
+        taskId: "task-1",
+        state: "completed",
+        total: 1,
+        translated: 1,
+        failed: 0,
+      },
+    });
+    document.body.innerHTML = `
+      <main>
+        <section id="timeline" role="feed" aria-label="Timeline: Home">
+          <article data-testid="tweet">
+            <div data-testid="tweetText" lang="en" dir="auto">Initial completed post text.</div>
+          </article>
+        </section>
+      </main>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(1);
+    });
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    const timeline = document.querySelector("#timeline") as HTMLElement;
+    const nextPost = document.createElement("article");
+    nextPost.dataset.testid = "tweet";
+    nextPost.innerHTML = `
+      <div data-testid="tweetText" lang="en" dir="auto">Inserted post after completion.</div>
+      <div role="group" aria-label="Post actions">
+        <button>Reply</button>
+      </div>
+    `;
+    timeline.append(nextPost);
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "childList",
+        target: timeline,
+        addedNodes: [nextPost] as unknown as NodeList,
+        removedNodes: [] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "enqueueTranslationBatch",
+          segments: [
+            expect.objectContaining({
+              sourceText: "Inserted post after completion.",
+            }),
+          ],
+        }),
+      );
+    });
+  });
+
   it("ignores dynamic side rail updates while a feed translation task is active", async () => {
     vi.useFakeTimers();
     document.body.innerHTML = `
