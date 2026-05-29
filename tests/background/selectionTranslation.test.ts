@@ -150,6 +150,7 @@ describe("translateSelection", () => {
     await translateSelection(
       {
         tabId: 42,
+        pageUrl: "https://example.com/article",
         text: "  Hello  ",
         sourceLanguage: "auto",
         targetLanguage: "zh-CN",
@@ -190,6 +191,28 @@ describe("translateSelection", () => {
         translatedText: "你好",
       }),
     );
+  });
+
+  it("skips provider calls when the selected page is blocked", async () => {
+    const isPageBlocked = vi.fn(async () => true);
+
+    await translateSelection(
+      {
+        tabId: 42,
+        pageUrl: "https://example.com/private",
+        text: "Blocked page text",
+        sourceLanguage: "auto",
+        targetLanguage: "zh-CN",
+      },
+      {
+        ...dependencies(),
+        isPageBlocked,
+      },
+    );
+
+    expect(isPageBlocked).toHaveBeenCalledWith("https://example.com/private");
+    expect(sendToContent).not.toHaveBeenCalled();
+    expect(translateText).not.toHaveBeenCalled();
   });
 
   it("sends a loading popup before calling the translation provider", async () => {

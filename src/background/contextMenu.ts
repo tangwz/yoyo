@@ -12,6 +12,7 @@ export const summarizePageMenuId = "yoyo.summarizePage";
 
 export type TranslateSelectionMenuClick = {
   tabId: number;
+  pageUrl?: string;
   text: string;
 };
 
@@ -97,7 +98,11 @@ export function onTranslateSelectionMenuClick(
       return;
     }
 
-    const input = { tabId: tab.id, text };
+    const input = {
+      tabId: tab.id,
+      text,
+      ...(tab.url ? { pageUrl: tab.url } : {}),
+    };
 
     void handler(input).catch((error: unknown) => {
       onError(error, input);

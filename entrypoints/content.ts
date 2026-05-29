@@ -8,14 +8,11 @@ import {
   hidePageTranslations,
   removePageTranslations,
   showPageTranslations,
+  stopActivePageRuntime,
   finalizeLazyRecoverySourceLanguage,
 } from "@/content/pageRuntime";
 import { showSelectionTranslation } from "@/content/selectionPanel";
 import { showPageSummary } from "@/content/summaryPanel";
-import {
-  getSiteRuleBlockReason,
-  isUrlBlockedBySiteRules,
-} from "@/content/siteRules";
 import {
   createYouTubeSubtitleRuntime,
   type YouTubeCaptionPayloadResult,
@@ -35,6 +32,10 @@ import {
   addRuntimeMessageListener,
   sendRuntimeMessage,
 } from "@/messaging/runtime";
+import {
+  getSiteRuleBlockReason,
+  isUrlBlockedBySiteRules,
+} from "@/siteRules/matching";
 import { createStorageRepositories } from "@/storage/repositories";
 import { storageKeys } from "@/storage/storageKeys";
 
@@ -296,12 +297,13 @@ async function getYoutubeCaptionTrackKey(request: {
   return track ? buildTrackKey(request.videoKey, track) : undefined;
 }
 
-function installYouTubeSubtitleRuntimeManager(input?: {
+export function installYouTubeSubtitleRuntimeManager(input?: {
   shouldBlockCurrentSite?: () => Promise<boolean>;
 }): void {
   const repositories = createStorageRepositories();
   const shouldBlockCurrentSite = input?.shouldBlockCurrentSite ?? (async () => false);
   let youtubeSubtitleRuntime: ReturnType<typeof createYouTubeSubtitleRuntime> | undefined;
+  let ensureRuntimeGeneration = 0;
 
   const handleSubtitleConfigStorageChange = (
     changes: StorageChanges,
@@ -319,12 +321,18 @@ function installYouTubeSubtitleRuntimeManager(input?: {
   }
 
   async function ensureRuntime(): Promise<void> {
+    const generation = ++ensureRuntimeGeneration;
     if (!isYouTubeVideoPage(window.location)) {
       await stopRuntime();
       return;
     }
 
-    if (await shouldBlockCurrentSite()) {
+    const shouldBlock = await shouldBlockCurrentSite();
+    if (generation !== ensureRuntimeGeneration) {
+      return;
+    }
+
+    if (shouldBlock) {
       await stopRuntime();
       return;
     }
@@ -406,6 +414,31 @@ export default defineContentScript({
         throw new Error(getSiteRuleBlockReason());
       }
     }
+
+    async function stopPageRuntimeIfCurrentSiteBlocked(): Promise<void> {
+      if (!(await isCurrentSiteBlocked())) {
+        return;
+      }
+
+      const taskId = stopActivePageRuntime();
+      if (!taskId) {
+        return;
+      }
+
+      await sendRuntimeMessage<BackgroundRequest, BackgroundResponse>({
+        type: "cancelTask",
+        taskId,
+        reason: "userCancelled",
+      }).catch(() => undefined);
+    }
+
+    browser.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local" || !(storageKeys.siteRules in changes)) {
+        return;
+      }
+
+      void stopPageRuntimeIfCurrentSiteBlocked();
+    });
 
     if (isYouTubeHost(window.location.hostname) || isYouTubeSubtitleFixture(window.location)) {
       installYouTubeSubtitleRuntimeManager({

@@ -1083,6 +1083,12 @@ export function removePageTranslations(taskId?: string): void {
   }
 }
 
+export function stopActivePageRuntime(): string | undefined {
+  const taskId = activeTaskId;
+  removePageTranslations();
+  return taskId;
+}
+
 export function getPageRuntimeState(): {
   hasTranslations: boolean;
   taskId?: string;

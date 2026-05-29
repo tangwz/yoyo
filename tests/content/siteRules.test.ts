@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getSiteRuleBlockReason, isUrlBlockedBySiteRules } from "@/content/siteRules";
+import { getSiteRuleBlockReason, isUrlBlockedBySiteRules } from "@/siteRules/matching";
 
 describe("content site rules", () => {
   it("blocks host and wildcard blacklist entries", () => {

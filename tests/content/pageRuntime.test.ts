@@ -21,6 +21,7 @@ import {
   hidePageTranslations,
   removePageTranslations,
   showPageTranslations,
+  stopActivePageRuntime,
 } from "@/content/pageRuntime";
 
 function renderedConsoleOutput(calls: unknown[][]): string {
@@ -1444,6 +1445,62 @@ describe("page runtime", () => {
     expect(thirdSegmentIds).toEqual(
       expect.arrayContaining(lazyMessage?.segmentIds ?? []),
     );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
+  it("stops lazy collection and reporting when the active page runtime is stopped", async () => {
+    vi.useFakeTimers();
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 100,
+    });
+
+    document.body.innerHTML = `
+      <article>
+        <p id="first">First readable paragraph.</p>
+        <p id="second">Second readable paragraph.</p>
+        <p id="third">Third readable paragraph.</p>
+      </article>
+    `;
+
+    const rects: Record<string, { top: number; bottom: number }> = {
+      first: { top: 10, bottom: 30 },
+      second: { top: 180, bottom: 210 },
+      third: { top: 420, bottom: 450 },
+    };
+
+    for (const id of Object.keys(rects)) {
+      const element = document.querySelector(`#${id}`) as HTMLElement;
+      element.getBoundingClientRect = () =>
+        ({
+          x: 0,
+          y: rects[id].top,
+          top: rects[id].top,
+          bottom: rects[id].bottom,
+          left: 0,
+          right: 100,
+          width: 100,
+          height: rects[id].bottom - rects[id].top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+    }
+
+    await collectSegments("task-1", "lazyViewport");
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    expect(stopActivePageRuntime()).toBe("task-1");
+
+    rects.third = { top: 80, bottom: 96 };
+    window.dispatchEvent(new Event("scroll"));
+    await vi.advanceTimersByTimeAsync(150);
+
+    expect(runtimeMessages("enqueueLazySegments")).toEqual([]);
+    expect(runtimeMessages("enqueueTranslationBatch")).toEqual([]);
 
     Object.defineProperty(window, "innerHeight", {
       configurable: true,
