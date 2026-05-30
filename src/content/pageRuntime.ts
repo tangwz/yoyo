@@ -165,6 +165,10 @@ function stopLazySegmentReporting(): void {
   resetTranslationQueue();
 }
 
+function shouldStopLazyRuntimeForProgress(progress: TranslationProgress): boolean {
+  return progress.state === "cancelled" || progress.state === "failed";
+}
+
 function stopTranslationQueueFlushTimer(): void {
   if (translationQueueFlushTimer !== undefined) {
     globalThis.clearTimeout(translationQueueFlushTimer);
@@ -460,15 +464,21 @@ async function flushTranslationQueue(): Promise<void> {
     pendingFailedRuntimeBatchSegments.delete(segmentId);
   }
 
-  if (isTerminalTaskState(response.progress.state)) {
-    if (context.translationMode === "lazyViewport") {
+  const terminalProgress = isTerminalTaskState(response.progress.state);
+  if (terminalProgress) {
+    if (
+      context.translationMode === "lazyViewport" &&
+      shouldStopLazyRuntimeForProgress(response.progress)
+    ) {
       stopLazySegmentReporting();
       return;
     }
 
-    stopMutationObserver();
-    resetTranslationQueue();
-    return;
+    if (context.translationMode !== "lazyViewport") {
+      stopMutationObserver();
+      resetTranslationQueue();
+      return;
+    }
   }
 
   const translatedSegmentIds = [
@@ -482,6 +492,10 @@ async function flushTranslationQueue(): Promise<void> {
   );
   translationQueue.markTranslating(translatedSegmentIds);
   translationQueue.markTranslated(translatedSegmentIds);
+  if (terminalProgress) {
+    scheduleTranslationQueueFlush();
+    return;
+  }
   scheduleTranslationQueueFlush();
 }
 
@@ -681,7 +695,10 @@ async function reportVisibleLazySegments(
     return;
   }
 
-  if (isTerminalTaskState(response.progress.state)) {
+  if (
+    isTerminalTaskState(response.progress.state) &&
+    shouldStopLazyRuntimeForProgress(response.progress)
+  ) {
     stopLazySegmentReporting();
     return;
   }
@@ -1043,11 +1060,20 @@ export function handleTaskProgress(progress: TranslationProgress): void {
   }
 
   if (progress.taskId === lazyReportTaskId) {
-    stopLazySegmentReporting();
+    if (shouldStopLazyRuntimeForProgress(progress)) {
+      stopLazySegmentReporting();
+    }
     return;
   }
 
   if (progress.taskId === translationQueueContext?.taskId) {
+    if (
+      translationQueueContext.translationMode === "lazyViewport" &&
+      !shouldStopLazyRuntimeForProgress(progress)
+    ) {
+      return;
+    }
+
     stopMutationObserver();
     resetTranslationQueue();
   }

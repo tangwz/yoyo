@@ -1051,6 +1051,223 @@ describe("page runtime", () => {
     ).toBeNull();
   });
 
+  it("translates dynamically inserted X-like feed posts during an active manual task", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <main>
+        <section id="timeline" role="feed" aria-label="Timeline: Home">
+          <article data-testid="tweet">
+            <div data-testid="tweetText" lang="en" dir="auto">Initial dynamic post text.</div>
+            <div role="group" aria-label="Post actions">
+              <button>Reply</button>
+              <button>Repost</button>
+              <button>Like</button>
+            </div>
+          </article>
+        </section>
+      </main>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    const timeline = document.querySelector("#timeline") as HTMLElement;
+    const nextPost = document.createElement("article");
+    nextPost.dataset.testid = "tweet";
+    nextPost.innerHTML = `
+      <header>
+        <span dir="auto">Display Name</span>
+        <span dir="auto">@display</span>
+        <time>1m</time>
+      </header>
+      <div data-testid="tweetText" lang="en" dir="auto">Inserted post body should be queued.</div>
+      <div role="group" aria-label="Post actions">
+        <button>Reply</button>
+        <button>Repost</button>
+        <button>Like</button>
+      </div>
+    `;
+    timeline.append(nextPost);
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "childList",
+        target: timeline,
+        addedNodes: [nextPost] as unknown as NodeList,
+        removedNodes: [] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "enqueueTranslationBatch",
+          segments: [
+            expect.objectContaining({
+              sourceText: "Inserted post body should be queued.",
+            }),
+          ],
+        }),
+      );
+    });
+    const batches = runtimeMessages<{
+      type: "enqueueTranslationBatch";
+      segments: Array<{ sourceText: string }>;
+    }>("enqueueTranslationBatch");
+    expect(
+      batches.flatMap((batch) =>
+        batch.segments.map((segment) => segment.sourceText),
+      ),
+    ).not.toEqual(
+      expect.arrayContaining(["Reply", "Repost", "Like", "Display Name", "@display"]),
+    );
+  });
+
+  it("keeps translating inserted X-like feed posts after lazy task completion", async () => {
+    vi.useFakeTimers();
+    runtimeMock.sendRuntimeMessage.mockResolvedValue({
+      type: "taskProgress",
+      progress: {
+        taskId: "task-1",
+        state: "completed",
+        total: 1,
+        translated: 1,
+        failed: 0,
+      },
+    });
+    document.body.innerHTML = `
+      <main>
+        <section id="timeline" role="feed" aria-label="Timeline: Home">
+          <article data-testid="tweet">
+            <div data-testid="tweetText" lang="en" dir="auto">Initial completed post text.</div>
+          </article>
+        </section>
+      </main>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(1);
+    });
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    const timeline = document.querySelector("#timeline") as HTMLElement;
+    const nextPost = document.createElement("article");
+    nextPost.dataset.testid = "tweet";
+    nextPost.innerHTML = `
+      <div data-testid="tweetText" lang="en" dir="auto">Inserted post after completion.</div>
+      <div role="group" aria-label="Post actions">
+        <button>Reply</button>
+      </div>
+    `;
+    timeline.append(nextPost);
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "childList",
+        target: timeline,
+        addedNodes: [nextPost] as unknown as NodeList,
+        removedNodes: [] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await vi.waitFor(() => {
+      expect(runtimeMock.sendRuntimeMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "enqueueTranslationBatch",
+          segments: [
+            expect.objectContaining({
+              sourceText: "Inserted post after completion.",
+            }),
+          ],
+        }),
+      );
+    });
+  });
+
+  it("continues flushing lazy batches after terminal completed progress", async () => {
+    vi.useFakeTimers();
+    runtimeMock.sendRuntimeMessage.mockResolvedValue({
+      type: "taskProgress",
+      progress: {
+        taskId: "task-1",
+        state: "completed",
+        total: 5,
+        translated: 5,
+        failed: 0,
+      },
+    });
+    document.body.innerHTML = `
+      <article>
+        <p>First visible paragraph.</p>
+        <p>Second visible paragraph.</p>
+        <p>Third visible paragraph.</p>
+        <p>Fourth visible paragraph.</p>
+        <p>Fifth visible paragraph.</p>
+      </article>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(1);
+    });
+    await vi.advanceTimersByTimeAsync(200);
+
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(2);
+    });
+    expect(
+      runtimeMessages<{
+        type: "enqueueTranslationBatch";
+        segments: Array<{ sourceText: string }>;
+      }>("enqueueTranslationBatch")[1]?.segments.map((segment) => segment.sourceText),
+    ).toEqual(["Fifth visible paragraph."]);
+  });
+
+  it("ignores dynamic side rail updates while a feed translation task is active", async () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = `
+      <main>
+        <section role="feed">
+          <article data-testid="tweet">
+            <div data-testid="tweetText" lang="en" dir="auto">Initial post body.</div>
+          </article>
+        </section>
+        <aside id="rail" aria-label="Who to follow">
+          <div dir="auto">Existing suggestion</div>
+        </aside>
+      </main>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+    await flushDeferredLazyCollection();
+    runtimeMock.sendRuntimeMessage.mockClear();
+
+    const rail = document.querySelector("#rail") as HTMLElement;
+    const suggestion = document.createElement("div");
+    suggestion.setAttribute("dir", "auto");
+    suggestion.textContent = "New suggested account";
+    rail.append(suggestion);
+    MockMutationObserver.instances[0]?.emit([
+      {
+        type: "childList",
+        target: rail,
+        addedNodes: [suggestion] as unknown as NodeList,
+        removedNodes: [] as unknown as NodeList,
+      } as unknown as MutationRecord,
+    ]);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(runtimeMessages("enqueueTranslationBatch")).toEqual([]);
+  });
+
   it("keeps translations when a click-driven page update temporarily detaches a source node", async () => {
     vi.useFakeTimers();
     document.body.innerHTML = `

@@ -36,9 +36,13 @@ export function createSubtitleTranslationService(
   return new DefaultSubtitleTranslationService(dependencies);
 }
 
+const maxCancelledRuntimeSessions = 128;
+
 class DefaultSubtitleTranslationService implements SubtitleTranslationService {
   private readonly cache: SubtitleTranslationCache<string>;
   private readonly controllersBySession = new Map<string, Map<string, AbortController>>();
+  private readonly cancelledRuntimeSessionIds = new Set<string>();
+  private readonly cancelledRuntimeSessionOrder: string[] = [];
 
   constructor(private readonly dependencies: SubtitleTranslationServiceDependencies) {
     this.cache = dependencies.cache ?? new SubtitleTranslationCache<string>();
@@ -47,6 +51,10 @@ class DefaultSubtitleTranslationService implements SubtitleTranslationService {
   async translateBatch(
     request: SubtitleTranslationBatchRequest,
   ): Promise<BackgroundResponse> {
+    if (this.isRuntimeSessionCancelled(request.runtimeSessionId)) {
+      return this.cancelledResponse(request);
+    }
+
     if (request.segments.length === 0) {
       return this.resultResponse(request, []);
     }
@@ -146,6 +154,7 @@ class DefaultSubtitleTranslationService implements SubtitleTranslationService {
   }
 
   cancel(runtimeSessionId: string): void {
+    this.markRuntimeSessionCancelled(runtimeSessionId);
     const controllers = this.controllersBySession.get(runtimeSessionId);
     if (!controllers) {
       return;
@@ -203,6 +212,25 @@ class DefaultSubtitleTranslationService implements SubtitleTranslationService {
 
       return "auto";
     }
+  }
+
+  private markRuntimeSessionCancelled(runtimeSessionId: string): void {
+    if (this.cancelledRuntimeSessionIds.has(runtimeSessionId)) {
+      return;
+    }
+
+    this.cancelledRuntimeSessionIds.add(runtimeSessionId);
+    this.cancelledRuntimeSessionOrder.push(runtimeSessionId);
+    while (this.cancelledRuntimeSessionOrder.length > maxCancelledRuntimeSessions) {
+      const expiredRuntimeSessionId = this.cancelledRuntimeSessionOrder.shift();
+      if (expiredRuntimeSessionId) {
+        this.cancelledRuntimeSessionIds.delete(expiredRuntimeSessionId);
+      }
+    }
+  }
+
+  private isRuntimeSessionCancelled(runtimeSessionId: string): boolean {
+    return this.cancelledRuntimeSessionIds.has(runtimeSessionId);
   }
 
   private registerController(

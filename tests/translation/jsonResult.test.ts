@@ -151,4 +151,34 @@ describe("streaming translation JSONL parser", () => {
       "Ignoring invalid JSON at line 5.",
     ]);
   });
+
+  it("recovers after malformed JSONL records", () => {
+    const parser = createStreamingTranslationResultParser(["a", "b"]);
+
+    expect(parser.push('{"id":"a","text":"A"}\n{"id":"b","text":\n')).toEqual([
+      { segmentId: "a", translatedText: "A" },
+    ]);
+    expect(parser.push('{"id":"b","text":"B"}\n')).toEqual([
+      { segmentId: "b", translatedText: "B" },
+    ]);
+    expect(parser.finish()).toEqual({
+      items: [],
+      missingSegmentIds: [],
+      warnings: ["Ignoring invalid JSON at line 2."],
+    });
+  });
+
+  it("does not emit duplicate streaming records", () => {
+    const parser = createStreamingTranslationResultParser(["a"]);
+
+    expect(parser.push('{"id":"a","text":"A"}\n')).toEqual([
+      { segmentId: "a", translatedText: "A" },
+    ]);
+    expect(parser.push('{"id":"a","text":"Duplicate"}\n')).toEqual([]);
+    expect(parser.finish()).toEqual({
+      items: [],
+      missingSegmentIds: [],
+      warnings: ['Ignoring duplicate segmentId "a".'],
+    });
+  });
 });

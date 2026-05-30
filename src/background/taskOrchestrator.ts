@@ -136,6 +136,7 @@ type TranslationBatchInput = TaskTranslationContext & {
   segments: PageSegment[];
   fanOutGroups: Map<string, PageSegment[]>;
   batchId?: string;
+  skipStreaming?: boolean;
 };
 
 type TranslationBatchResult = {
@@ -183,8 +184,15 @@ export class TranslationTaskOrchestrator {
       this.mergeLazyRecoverySnapshot(task, recovery);
     }
 
-    if (!task || !task.context || this.isTaskStopped(task)) {
+    if (!task || !task.context) {
       return task ? this.cloneProgress(task.progress) : this.missingTaskProgress(taskId);
+    }
+    if (this.isTaskStopped(task)) {
+      if (this.canResumeCompletedLazyTaskFromReport(task, segmentIds, recovery)) {
+        this.resumeCompletedLazyTask(task);
+      } else {
+        return this.cloneProgress(task.progress);
+      }
     }
 
     this.markSegmentsFailed(task, failedSegmentIds, segmentIds);
@@ -233,7 +241,11 @@ export class TranslationTaskOrchestrator {
       return this.missingTaskProgress(input.taskId);
     }
     if (task && this.isTaskStopped(task)) {
-      return this.cloneProgress(task.progress);
+      if (this.canResumeCompletedLazyTask(task, input)) {
+        this.resumeCompletedLazyTask(task);
+      } else {
+        return this.cloneProgress(task.progress);
+      }
     }
     if (!task && this.hasTaskForTab(input.tabId)) {
       return this.missingTaskProgress(input.taskId);
@@ -1085,7 +1097,12 @@ export class TranslationTaskOrchestrator {
       });
 
       await this.retryOrDegradeBatch(
-        { ...batchInput, batchId: resultBatchId, segments: result.missingSegments },
+        {
+          ...batchInput,
+          batchId: resultBatchId,
+          segments: result.missingSegments,
+          skipStreaming: batchInput.skipStreaming || Boolean(result.error),
+        },
         attempt,
       );
     } catch (error) {
@@ -1102,16 +1119,18 @@ export class TranslationTaskOrchestrator {
     input: TranslationBatchInput,
     attempt: number,
   ): Promise<TranslationBatchResult> {
-    const streamingResult = await this.requestAndApplyStreamingBatch(input, attempt);
-    if (streamingResult) {
-      if ("fallback" in streamingResult) {
-        return this.requestAndApplyBufferedBatch(
-          { ...input, batchId: this.createBatchId() },
-          attempt,
-        );
-      }
+    if (!input.skipStreaming) {
+      const streamingResult = await this.requestAndApplyStreamingBatch(input, attempt);
+      if (streamingResult) {
+        if ("fallback" in streamingResult) {
+          return this.requestAndApplyBufferedBatch(
+            { ...input, batchId: this.createBatchId() },
+            attempt,
+          );
+        }
 
-      return streamingResult;
+        return streamingResult;
+      }
     }
 
     return this.requestAndApplyBufferedBatch(input, attempt);
@@ -1784,6 +1803,48 @@ export class TranslationTaskOrchestrator {
 
   private isTaskStopped(task: RunningTask): boolean {
     return this.isTaskCancelled(task) || isTerminalTaskState(task.progress.state);
+  }
+
+  private canResumeCompletedLazyTask(
+    task: RunningTask,
+    input: EnqueueTranslationBatchInput,
+  ): boolean {
+    return (
+      input.translationMode === "lazyViewport" &&
+      task.context?.translationMode === "lazyViewport" &&
+      (task.progress.state === "completed" ||
+        task.progress.state === "completedWithErrors")
+    );
+  }
+
+  private canResumeCompletedLazyTaskFromReport(
+    task: RunningTask,
+    segmentIds: readonly string[],
+    recovery: LazySegmentRecoverySnapshot | undefined,
+  ): boolean {
+    return (
+      task.context?.translationMode === "lazyViewport" &&
+      (task.progress.state === "completed" ||
+        task.progress.state === "completedWithErrors") &&
+      (segmentIds.some(
+        (segmentId) =>
+          task.segmentsById.has(segmentId) &&
+          !task.processedSegmentIds.has(segmentId) &&
+          !task.inFlightSegmentIds.has(segmentId),
+      ) ||
+        Boolean(
+          recovery?.segments.some(
+            (segment) =>
+              segment.priority !== "normal" &&
+              !task.processedSegmentIds.has(segment.id) &&
+              !task.inFlightSegmentIds.has(segment.id),
+          ),
+        ))
+    );
+  }
+
+  private resumeCompletedLazyTask(task: RunningTask): void {
+    this.updateProgress(task, { state: "translating" });
   }
 
   private emptyProgress(

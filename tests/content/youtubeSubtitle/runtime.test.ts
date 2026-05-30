@@ -51,6 +51,8 @@ function createRuntimeHarness(options: {
   fetchCaptionPayload?: () => Promise<YouTubeCaptionPayloadResult | undefined>;
   getCaptionTrackKey?: () => Promise<string | undefined>;
   createRuntimeSessionIdBase?: () => string;
+  captionDiscoveryRetryDelayMs?: number;
+  createMutationObserver?: (callback: MutationCallback) => MutationObserver;
 } = {}): {
   runtime: TestRuntime;
   preferences: SubtitlePreferences;
@@ -87,7 +89,9 @@ function createRuntimeHarness(options: {
     createRuntimeSessionIdBase:
       options.createRuntimeSessionIdBase ??
       (() => "youtube-subtitle-session"),
+    captionDiscoveryRetryDelayMs: options.captionDiscoveryRetryDelayMs,
     getCurrentUrl: () => currentUrl,
+    createMutationObserver: options.createMutationObserver,
   };
 
   return {
@@ -322,6 +326,123 @@ describe("createYouTubeSubtitleRuntime", () => {
     });
     expect(mountedOverlay()?.textContent).toContain("Hello world.");
     expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
+  });
+
+  it("shows warning and does not fetch captions when the subtitle provider is missing", async () => {
+    createPlayerDom();
+    const { runtime, sentMessages } = createRuntimeHarness({
+      sendBackgroundMessage: async (message) => {
+        if (message.type === "getSubtitleRuntimeConfig") {
+          return {
+            type: "subtitleRuntimeConfig",
+            configured: false,
+            targetLanguage: "zh-CN",
+            message: "Provider missing.",
+          };
+        }
+        return createBackgroundResponse(message);
+      },
+      fetchCaptionPayload: async () => {
+        throw new Error("Captions should not be fetched without a provider.");
+      },
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    await vi.waitFor(() => {
+      expect(buttonStatus()).toBe("warning");
+    });
+    expect(translateMessages(sentMessages)).toHaveLength(0);
+    expect(mountedOverlay()).not.toBeNull();
+    expect(mountedOverlay()?.hidden).toBe(true);
+  });
+
+  it("shows warning when no caption payload is available", async () => {
+    createPlayerDom();
+    const { runtime, sentMessages } = createRuntimeHarness({
+      fetchCaptionPayload: async () => undefined,
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    await vi.waitFor(() => {
+      expect(buttonStatus()).toBe("warning");
+    });
+    expect(translateMessages(sentMessages)).toHaveLength(0);
+    expect(mountedOverlay()).not.toBeNull();
+    expect(mountedOverlay()?.hidden).toBe(true);
+  });
+
+  it("retries caption discovery after a transient missing payload", async () => {
+    createPlayerDom();
+    let fetchCount = 0;
+    const { runtime, sentMessages } = createRuntimeHarness({
+      captionDiscoveryRetryDelayMs: 1,
+      fetchCaptionPayload: async () => {
+        fetchCount += 1;
+        return fetchCount === 1 ? undefined : createCaptionPayload();
+      },
+      createMutationObserver: () =>
+        ({
+          observe: vi.fn(),
+          disconnect: vi.fn(),
+          takeRecords: vi.fn(() => []),
+        }) as unknown as MutationObserver,
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    expect(fetchCount).toBe(1);
+    expect(buttonStatus()).toBe("warning");
+
+    await vi.waitFor(() => {
+      expect(fetchCount).toBe(2);
+    });
+
+    expect(buttonStatus()).toBe("enabled");
+    expect(translateMessages(sentMessages)).toHaveLength(1);
+  });
+
+  it("retries subtitle initialization after a transient caption fetch rejection", async () => {
+    createPlayerDom();
+    let fetchCount = 0;
+    const { runtime, sentMessages } = createRuntimeHarness({
+      captionDiscoveryRetryDelayMs: 1,
+      fetchCaptionPayload: async () => {
+        fetchCount += 1;
+        if (fetchCount === 1) {
+          throw new Error("Temporary caption fetch failure.");
+        }
+
+        return createCaptionPayload();
+      },
+      createMutationObserver: () =>
+        ({
+          observe: vi.fn(),
+          disconnect: vi.fn(),
+          takeRecords: vi.fn(() => []),
+        }) as unknown as MutationObserver,
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    expect(fetchCount).toBe(1);
+    expect(buttonStatus()).toBe("warning");
+
+    await vi.waitFor(() => {
+      expect(fetchCount).toBe(2);
+    });
+
+    expect(buttonStatus()).toBe("enabled");
+    expect(translateMessages(sentMessages)).toHaveLength(1);
   });
 
   it("derives video keys from YouTube shorts and embed URLs", async () => {
@@ -716,6 +837,91 @@ describe("createYouTubeSubtitleRuntime", () => {
       runtimeSessionId: "youtube-subtitle-session-2",
       configVersion: 2,
     });
+    expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
+  });
+
+  it("ignores stale subtitle translation responses after config changes", async () => {
+    createPlayerDom();
+    let resolveFirst:
+      | ((response: BackgroundResponse) => void)
+      | undefined;
+    const { runtime, sentMessages } = createRuntimeHarness({
+      sendBackgroundMessage: async (message) => {
+        if (message.type === "translateSubtitleBatch") {
+          if (!resolveFirst) {
+            return new Promise<BackgroundResponse>((resolve) => {
+              resolveFirst = resolve;
+            });
+          }
+          return createBackgroundResponse(message);
+        }
+        return createBackgroundResponse(message);
+      },
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+    await runtime.handleConfigChanged();
+    await flushRuntime();
+
+    const staleRequest = translateMessages(sentMessages)[0];
+    if (!staleRequest) {
+      throw new Error("Expected first subtitle request.");
+    }
+    resolveFirst?.({
+      type: "subtitleTranslateBatchResult",
+      runtimeSessionId: staleRequest.runtimeSessionId,
+      configVersion: staleRequest.configVersion,
+      requestId: staleRequest.requestId,
+      items: staleRequest.segments.map((segment) => ({
+        segmentId: segment.segmentId,
+        translatedText: "Stale translation.",
+      })),
+    });
+    await flushRuntime();
+
+    expect(mountedOverlay()?.textContent).not.toContain("Stale translation.");
+    expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
+  });
+
+  it("ignores stale subtitle initialization failures after config changes", async () => {
+    createPlayerDom();
+    let rejectFirst:
+      | ((error: Error) => void)
+      | undefined;
+    let fetchCount = 0;
+    const { runtime, sentMessages } = createRuntimeHarness({
+      fetchCaptionPayload: async () => {
+        fetchCount += 1;
+        if (fetchCount === 1) {
+          return new Promise<YouTubeCaptionPayloadResult>((_resolve, reject) => {
+            rejectFirst = reject;
+          });
+        }
+
+        return createCaptionPayload();
+      },
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await vi.waitFor(() => {
+      expect(rejectFirst).toBeDefined();
+    });
+    await runtime.handleConfigChanged();
+    await flushRuntime();
+    await vi.waitFor(() => {
+      expect(translateMessages(sentMessages)).toHaveLength(1);
+    });
+    expect(buttonStatus()).toBe("enabled");
+    expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
+
+    rejectFirst?.(new Error("Stale caption fetch failed."));
+    await flushRuntime();
+
+    expect(buttonStatus()).toBe("enabled");
+    expect(mountedOverlay()?.hidden).toBe(false);
     expect(mountedOverlay()?.textContent).toContain("Translated: Hello world.");
   });
 

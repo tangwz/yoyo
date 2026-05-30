@@ -224,6 +224,32 @@ describe("createSubtitleTranslationService", () => {
     );
   });
 
+  it("returns only provider items that match requested subtitle segments", async () => {
+    translateBatch.mockResolvedValueOnce({
+      items: [
+        { segmentId: "segment-1", translatedText: "One translated." },
+        { segmentId: "unknown", translatedText: "Unknown translated." },
+      ],
+    });
+
+    const response = await service().translateBatch(
+      request({
+        segments: [
+          subtitleSegment({ segmentId: "segment-1", textHash: "hash-1" }),
+          subtitleSegment({ segmentId: "segment-2", textHash: "hash-2" }),
+        ],
+      }),
+    );
+
+    expect(response).toEqual({
+      type: "subtitleTranslateBatchResult",
+      runtimeSessionId: "runtime-1",
+      configVersion: 2,
+      requestId: "request-1",
+      items: [{ segmentId: "segment-1", translatedText: "One translated." }],
+    });
+  });
+
   it("detects unknown source language and falls back to auto when detection fails", async () => {
     detectSourceLanguage.mockRejectedValue(new Error("Language detection failed."));
 
@@ -308,6 +334,52 @@ describe("createSubtitleTranslationService", () => {
       message: "Subtitle translation request was cancelled.",
       retryable: false,
     });
+  });
+
+  it("cancels all active requests for a runtime session", async () => {
+    translateBatch.mockImplementation(
+      async ({ abortSignal }) =>
+        new Promise((resolve, reject) => {
+          abortSignal?.addEventListener("abort", () => {
+            reject(new DOMException("Request cancelled.", "AbortError"));
+          });
+          setTimeout(() => {
+            resolve({ items: [] });
+          }, 50);
+        }),
+    );
+    const subtitleService = service();
+
+    const first = subtitleService.translateBatch(request({ requestId: "request-1" }));
+    const second = subtitleService.translateBatch(request({ requestId: "request-2" }));
+    subtitleService.cancel("runtime-1");
+
+    await expect(first).resolves.toMatchObject({
+      type: "subtitleTranslateBatchError",
+      retryable: false,
+    });
+    await expect(second).resolves.toMatchObject({
+      type: "subtitleTranslateBatchError",
+      retryable: false,
+    });
+  });
+
+  it("rejects requests that arrive after their runtime session was cancelled", async () => {
+    const subtitleService = service();
+
+    subtitleService.cancel("runtime-1");
+    const response = await subtitleService.translateBatch(request());
+
+    expect(response).toEqual({
+      type: "subtitleTranslateBatchError",
+      runtimeSessionId: "runtime-1",
+      configVersion: 2,
+      requestId: "request-1",
+      message: "Subtitle translation request was cancelled.",
+      retryable: false,
+    });
+    expect(getProviderProfile).not.toHaveBeenCalled();
+    expect(translateBatch).not.toHaveBeenCalled();
   });
 
   it("returns an empty result without calling the provider", async () => {

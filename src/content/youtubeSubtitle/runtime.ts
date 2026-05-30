@@ -71,6 +71,7 @@ export type YouTubeSubtitleRuntimeDependencies = {
     request: YouTubeCaptionPayloadRequest,
   ) => Promise<string | undefined>;
   createRuntimeSessionIdBase?: () => string;
+  captionDiscoveryRetryDelayMs?: number;
   document?: Document;
   getCurrentUrl?: () => string;
   createMutationObserver?: (callback: MutationCallback) => MutationObserver;
@@ -88,6 +89,7 @@ const PLAYER_SELECTOR = "#movie_player";
 const CONTROLS_SELECTOR = ".ytp-right-controls";
 const SESSION_ID_PREFIX = "youtube-subtitle-session";
 const SUBTITLE_PROMPT_VERSION = "subtitle-translation-v1";
+const CAPTION_DISCOVERY_RETRY_DELAY_MS = 1_000;
 const BUILTIN_SEGMENTATION_VERSION = "builtin-v1";
 const AI_SEGMENTATION_VERSION = "ai-v1";
 const AI_SEGMENTATION_PROMPT_VERSION = "subtitle-segmentation-v1";
@@ -140,6 +142,8 @@ export function createYouTubeSubtitleRuntime(
   let scheduler = createScheduler(preferences);
   let sessionCache = new SubtitleSessionCache();
   let pipeline: ActivePipeline | undefined;
+  let warningPipelineKey: string | undefined;
+  let warningRetryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
   let initializingPipeline: Promise<void> | undefined;
   let requestIndex = 1;
   let operationQueue = Promise.resolve();
@@ -370,7 +374,9 @@ export function createYouTubeSubtitleRuntime(
     sessionIndex += 1;
     configVersion += 1;
     requestIndex = 1;
+    clearWarningRetry();
     detachPipeline();
+    warningPipelineKey = undefined;
     scheduler = createScheduler(preferences);
     sessionCache = new SubtitleSessionCache();
   }
@@ -405,6 +411,20 @@ export function createYouTubeSubtitleRuntime(
     if (!preferences?.youtubeEnabled || stopped || destroyed) {
       return;
     }
+    const nextPipelineKey = pipelineKey(
+      currentRuntimeSessionId(),
+      configVersion,
+      videoKey,
+    );
+    if (warningPipelineKey === nextPipelineKey) {
+      if (overlay && !overlay.element.hidden) {
+        overlay.hide();
+      }
+      if (buttonStatus !== "warning") {
+        updateButtonStatus("warning");
+      }
+      return;
+    }
     if (
       pipeline &&
       pipeline.runtimeSessionId === currentRuntimeSessionId() &&
@@ -436,14 +456,26 @@ export function createYouTubeSubtitleRuntime(
       return initializingPipeline;
     }
 
+    const initializingRuntimeSessionId = currentRuntimeSessionId();
+    const initializingConfigVersion = configVersion;
+    const initializingVideoKey = videoKey;
     initializingPipeline = initializePipeline(player)
       .catch((error) => {
         if (!destroyed && !stopped) {
           console.warn("[yoyo] failed to initialize YouTube subtitle pipeline", {
             error,
-            runtimeSessionId: currentRuntimeSessionId(),
+            runtimeSessionId: initializingRuntimeSessionId,
           });
-          updateButtonStatus("warning");
+          markPipelineWarning(
+            initializingRuntimeSessionId,
+            initializingConfigVersion,
+            initializingVideoKey,
+            {
+              retryAfterMs:
+                dependencies.captionDiscoveryRetryDelayMs ??
+                CAPTION_DISCOVERY_RETRY_DELAY_MS,
+            },
+          );
         }
       })
       .finally(() => {
@@ -456,6 +488,8 @@ export function createYouTubeSubtitleRuntime(
     const runtimeSessionId = currentRuntimeSessionId();
     const pipelineConfigVersion = configVersion;
     const pipelineVideoKey = videoKey;
+    clearWarningRetry();
+    warningPipelineKey = undefined;
     updateButtonStatus("loading");
 
     const configResponse = await dependencies.sendBackgroundMessage({
@@ -474,7 +508,7 @@ export function createYouTubeSubtitleRuntime(
       configResponse.type !== "subtitleRuntimeConfig" ||
       !configResponse.configured
     ) {
-      updateButtonStatus("warning");
+      markPipelineWarning(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey);
       return;
     }
 
@@ -483,17 +517,22 @@ export function createYouTubeSubtitleRuntime(
       configVersion: pipelineConfigVersion,
       videoKey: pipelineVideoKey,
     });
-    if (
-      !captionPayload ||
-      !isCurrentPipeline(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey)
-    ) {
-      updateButtonStatus("warning");
+    if (!captionPayload) {
+      markPipelineWarning(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey, {
+        retryAfterMs:
+          dependencies.captionDiscoveryRetryDelayMs ??
+          CAPTION_DISCOVERY_RETRY_DELAY_MS,
+      });
+      return;
+    }
+    if (!isCurrentPipeline(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey)) {
+      markPipelineWarning(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey);
       return;
     }
 
     const cues = parseYouTubeJson3Cues(captionPayload.payload);
     if (cues.length === 0) {
-      updateButtonStatus("warning");
+      markPipelineWarning(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey);
       return;
     }
 
@@ -521,7 +560,7 @@ export function createYouTubeSubtitleRuntime(
     }
     const { segments, segmentationVersion, trackKey } = segmentation;
     if (segments.length === 0) {
-      updateButtonStatus("warning");
+      markPipelineWarning(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey);
       return;
     }
 
@@ -554,7 +593,52 @@ export function createYouTubeSubtitleRuntime(
     scheduleTranslations();
   }
 
+  function markPipelineWarning(
+    runtimeSessionId: string,
+    pipelineConfigVersion: number,
+    pipelineVideoKey: string,
+    options: { retryAfterMs?: number } = {},
+  ): void {
+    if (!isCurrentPipeline(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey)) {
+      return;
+    }
+
+    warningPipelineKey = pipelineKey(
+      runtimeSessionId,
+      pipelineConfigVersion,
+      pipelineVideoKey,
+    );
+    if (options.retryAfterMs !== undefined) {
+      scheduleWarningRetry(warningPipelineKey, options.retryAfterMs);
+    }
+    overlay?.hide();
+    updateButtonStatus("warning");
+  }
+
+  function scheduleWarningRetry(key: string, retryAfterMs: number): void {
+    clearWarningRetry();
+    warningRetryTimer = globalThis.setTimeout(() => {
+      warningRetryTimer = undefined;
+      if (warningPipelineKey !== key) {
+        return;
+      }
+
+      warningPipelineKey = undefined;
+      void enqueueOperation(reconcile);
+    }, retryAfterMs);
+  }
+
+  function clearWarningRetry(): void {
+    if (warningRetryTimer === undefined) {
+      return;
+    }
+
+    globalThis.clearTimeout(warningRetryTimer);
+    warningRetryTimer = undefined;
+  }
+
   function detachPipeline(): void {
+    clearWarningRetry();
     if (pipeline?.video) {
       pipeline.video.removeEventListener("timeupdate", pipeline.onTimeChange);
       pipeline.video.removeEventListener("seeked", pipeline.onTimeChange);
@@ -760,6 +844,14 @@ export function createYouTubeSubtitleRuntime(
       expectedConfigVersion === configVersion &&
       expectedVideoKey === videoKey
     );
+  }
+
+  function pipelineKey(
+    runtimeSessionId: string,
+    pipelineConfigVersion: number,
+    pipelineVideoKey: string,
+  ): string {
+    return `${runtimeSessionId}\n${pipelineConfigVersion}\n${pipelineVideoKey}`;
   }
 
   async function segmentCues(

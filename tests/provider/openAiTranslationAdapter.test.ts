@@ -284,6 +284,70 @@ describe("OpenAiTranslationAdapter", () => {
     expect(generateText).not.toHaveBeenCalled();
   });
 
+  it("ignores unknown and duplicate streaming records while preserving valid order", async () => {
+    const generateText = vi.fn();
+    const streamText = vi.fn<(request: StreamTextRequest) => AsyncGenerator<{ text: string }>>(
+      () =>
+        streamTextChunks([
+          '{"id":"segment-unknown","text":"Ignore me."}\n',
+          '{"id":"segment-1","text":"你好。"}\n',
+          '{"id":"segment-1","text":"Duplicate should be ignored."}\n',
+          '{"id":"segment-2","text":"早上好。"}\n',
+        ]),
+    );
+    const adapter = new OpenAiTranslationAdapter({ generateText, streamText });
+    const responses = [];
+
+    for await (const response of adapter.streamBatch({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      segments: [
+        segment("segment-1", "Hello."),
+        segment("segment-2", "Good morning."),
+      ],
+    })) {
+      responses.push(response);
+    }
+
+    expect(responses).toEqual([
+      { items: [{ segmentId: "segment-1", translatedText: "你好。" }] },
+      { items: [{ segmentId: "segment-2", translatedText: "早上好。" }] },
+    ]);
+    expect(generateText).not.toHaveBeenCalled();
+  });
+
+  it("continues streaming after malformed records and reports only valid items", async () => {
+    const generateText = vi.fn();
+    const streamText = vi.fn<(request: StreamTextRequest) => AsyncGenerator<{ text: string }>>(
+      () =>
+        streamTextChunks([
+          '{"id":"segment-1","text":"你好。"}\n',
+          '{"id":"segment-2","text":\n',
+          '{"id":"segment-2","text":"早上好。"}\n',
+        ]),
+    );
+    const adapter = new OpenAiTranslationAdapter({ generateText, streamText });
+    const responses = [];
+
+    for await (const response of adapter.streamBatch({
+      profile: profile(),
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      segments: [
+        segment("segment-1", "Hello."),
+        segment("segment-2", "Good morning."),
+      ],
+    })) {
+      responses.push(response);
+    }
+
+    expect(responses).toEqual([
+      { items: [{ segmentId: "segment-1", translatedText: "你好。" }] },
+      { items: [{ segmentId: "segment-2", translatedText: "早上好。" }] },
+    ]);
+  });
+
   it("traces parsed streaming batch results without logging private content", async () => {
     vi.stubEnv("DEV", true);
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
