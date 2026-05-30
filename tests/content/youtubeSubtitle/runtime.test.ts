@@ -409,6 +409,42 @@ describe("createYouTubeSubtitleRuntime", () => {
     expect(translateMessages(sentMessages)).toHaveLength(1);
   });
 
+  it("retries subtitle initialization after a transient caption fetch rejection", async () => {
+    createPlayerDom();
+    let fetchCount = 0;
+    const { runtime, sentMessages } = createRuntimeHarness({
+      captionDiscoveryRetryDelayMs: 1,
+      fetchCaptionPayload: async () => {
+        fetchCount += 1;
+        if (fetchCount === 1) {
+          throw new Error("Temporary caption fetch failure.");
+        }
+
+        return createCaptionPayload();
+      },
+      createMutationObserver: () =>
+        ({
+          observe: vi.fn(),
+          disconnect: vi.fn(),
+          takeRecords: vi.fn(() => []),
+        }) as unknown as MutationObserver,
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    expect(fetchCount).toBe(1);
+    expect(buttonStatus()).toBe("warning");
+
+    await vi.waitFor(() => {
+      expect(fetchCount).toBe(2);
+    });
+
+    expect(buttonStatus()).toBe("enabled");
+    expect(translateMessages(sentMessages)).toHaveLength(1);
+  });
+
   it("derives video keys from YouTube shorts and embed URLs", async () => {
     createPlayerDom();
     const shorts = createRuntimeHarness({

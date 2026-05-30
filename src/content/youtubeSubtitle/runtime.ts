@@ -470,6 +470,11 @@ export function createYouTubeSubtitleRuntime(
             initializingRuntimeSessionId,
             initializingConfigVersion,
             initializingVideoKey,
+            {
+              retryAfterMs:
+                dependencies.captionDiscoveryRetryDelayMs ??
+                CAPTION_DISCOVERY_RETRY_DELAY_MS,
+            },
           );
         }
       })
