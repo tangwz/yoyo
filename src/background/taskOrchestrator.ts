@@ -184,8 +184,15 @@ export class TranslationTaskOrchestrator {
       this.mergeLazyRecoverySnapshot(task, recovery);
     }
 
-    if (!task || !task.context || this.isTaskStopped(task)) {
+    if (!task || !task.context) {
       return task ? this.cloneProgress(task.progress) : this.missingTaskProgress(taskId);
+    }
+    if (this.isTaskStopped(task)) {
+      if (this.canResumeCompletedLazyTaskFromReport(task, segmentIds, recovery)) {
+        this.resumeCompletedLazyTask(task);
+      } else {
+        return this.cloneProgress(task.progress);
+      }
     }
 
     this.markSegmentsFailed(task, failedSegmentIds, segmentIds);
@@ -1807,6 +1814,32 @@ export class TranslationTaskOrchestrator {
       task.context?.translationMode === "lazyViewport" &&
       (task.progress.state === "completed" ||
         task.progress.state === "completedWithErrors")
+    );
+  }
+
+  private canResumeCompletedLazyTaskFromReport(
+    task: RunningTask,
+    segmentIds: readonly string[],
+    recovery: LazySegmentRecoverySnapshot | undefined,
+  ): boolean {
+    return (
+      task.context?.translationMode === "lazyViewport" &&
+      (task.progress.state === "completed" ||
+        task.progress.state === "completedWithErrors") &&
+      (segmentIds.some(
+        (segmentId) =>
+          task.segmentsById.has(segmentId) &&
+          !task.processedSegmentIds.has(segmentId) &&
+          !task.inFlightSegmentIds.has(segmentId),
+      ) ||
+        Boolean(
+          recovery?.segments.some(
+            (segment) =>
+              segment.priority !== "normal" &&
+              !task.processedSegmentIds.has(segment.id) &&
+              !task.inFlightSegmentIds.has(segment.id),
+          ),
+        ))
     );
   }
 

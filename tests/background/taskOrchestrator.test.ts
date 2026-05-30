@@ -2570,6 +2570,85 @@ describe("TranslationTaskOrchestrator", () => {
     });
   });
 
+  it("resumes a completed lazy task for viewport lazy reports", async () => {
+    const { orchestrator, generateText, sendToContent } = createOrchestrator();
+
+    sendToContent.mockResolvedValue({ type: "contentActionResult", success: true });
+    generateText.mockImplementation(async (request) => {
+      const input = JSON.parse(request.prompt.split("Input:\n")[1] ?? "{}") as {
+        items?: Array<{ id: string }>;
+      };
+
+      return {
+        text: JSON.stringify({
+          items: (input.items ?? []).map((item) => ({
+            id: item.id,
+            text: `Translated ${item.id}`,
+          })),
+        }),
+        model: "gpt-5-mini",
+      };
+    });
+
+    const initialSegment = segment({
+      id: "runtime-1",
+      sourceText: "Initial runtime text.",
+      textHash: "hash-runtime-1",
+      priority: "viewport",
+    });
+    const dynamicSegment = segment({
+      id: "runtime-2",
+      order: 2,
+      sourceText: "Inserted viewport text.",
+      textHash: "hash-runtime-2",
+      priority: "viewport",
+    });
+    await orchestrator.enqueueTranslationBatch({
+      tabId: 7,
+      taskId: "task-1",
+      sourceLanguage: "en",
+      targetLanguage: "zh-CN",
+      translationMode: "lazyViewport",
+      collectionComplete: true,
+      segments: [initialSegment],
+    });
+
+    generateText.mockClear();
+    sendToContent.mockClear();
+
+    const resumedProgress = await orchestrator.enqueueLazySegments(
+      "task-1",
+      ["runtime-2"],
+      [],
+      {
+        tabId: 7,
+        sourceLanguage: "en",
+        targetLanguage: "zh-CN",
+        translationMode: "lazyViewport",
+        segments: [initialSegment, dynamicSegment],
+        processedSegmentIds: ["runtime-1"],
+        collectionComplete: true,
+      },
+    );
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(sendToContent).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        type: "applyTranslations",
+        taskId: "task-1",
+        items: [{ segmentId: "runtime-2", translatedText: "Translated runtime-2" }],
+      }),
+    );
+    expect(resumedProgress).toEqual({
+      taskId: "task-1",
+      state: "completed",
+      total: 2,
+      translated: 2,
+      failed: 0,
+    });
+  });
+
   it("rejects a runtime batch when its existing task belongs to another tab", async () => {
     const { orchestrator, generateText, sendToContent } = createOrchestrator();
 

@@ -51,6 +51,8 @@ function createRuntimeHarness(options: {
   fetchCaptionPayload?: () => Promise<YouTubeCaptionPayloadResult | undefined>;
   getCaptionTrackKey?: () => Promise<string | undefined>;
   createRuntimeSessionIdBase?: () => string;
+  captionDiscoveryRetryDelayMs?: number;
+  createMutationObserver?: (callback: MutationCallback) => MutationObserver;
 } = {}): {
   runtime: TestRuntime;
   preferences: SubtitlePreferences;
@@ -87,7 +89,9 @@ function createRuntimeHarness(options: {
     createRuntimeSessionIdBase:
       options.createRuntimeSessionIdBase ??
       (() => "youtube-subtitle-session"),
+    captionDiscoveryRetryDelayMs: options.captionDiscoveryRetryDelayMs,
     getCurrentUrl: () => currentUrl,
+    createMutationObserver: options.createMutationObserver,
   };
 
   return {
@@ -371,6 +375,38 @@ describe("createYouTubeSubtitleRuntime", () => {
     expect(translateMessages(sentMessages)).toHaveLength(0);
     expect(mountedOverlay()).not.toBeNull();
     expect(mountedOverlay()?.hidden).toBe(true);
+  });
+
+  it("retries caption discovery after a transient missing payload", async () => {
+    createPlayerDom();
+    let fetchCount = 0;
+    const { runtime, sentMessages } = createRuntimeHarness({
+      captionDiscoveryRetryDelayMs: 1,
+      fetchCaptionPayload: async () => {
+        fetchCount += 1;
+        return fetchCount === 1 ? undefined : createCaptionPayload();
+      },
+      createMutationObserver: () =>
+        ({
+          observe: vi.fn(),
+          disconnect: vi.fn(),
+          takeRecords: vi.fn(() => []),
+        }) as unknown as MutationObserver,
+    });
+    trackRuntime(runtime);
+
+    await runtime.start();
+    await flushRuntime();
+
+    expect(fetchCount).toBe(1);
+    expect(buttonStatus()).toBe("warning");
+
+    await vi.waitFor(() => {
+      expect(fetchCount).toBe(2);
+    });
+
+    expect(buttonStatus()).toBe("enabled");
+    expect(translateMessages(sentMessages)).toHaveLength(1);
   });
 
   it("derives video keys from YouTube shorts and embed URLs", async () => {

@@ -71,6 +71,7 @@ export type YouTubeSubtitleRuntimeDependencies = {
     request: YouTubeCaptionPayloadRequest,
   ) => Promise<string | undefined>;
   createRuntimeSessionIdBase?: () => string;
+  captionDiscoveryRetryDelayMs?: number;
   document?: Document;
   getCurrentUrl?: () => string;
   createMutationObserver?: (callback: MutationCallback) => MutationObserver;
@@ -88,6 +89,7 @@ const PLAYER_SELECTOR = "#movie_player";
 const CONTROLS_SELECTOR = ".ytp-right-controls";
 const SESSION_ID_PREFIX = "youtube-subtitle-session";
 const SUBTITLE_PROMPT_VERSION = "subtitle-translation-v1";
+const CAPTION_DISCOVERY_RETRY_DELAY_MS = 1_000;
 const BUILTIN_SEGMENTATION_VERSION = "builtin-v1";
 const AI_SEGMENTATION_VERSION = "ai-v1";
 const AI_SEGMENTATION_PROMPT_VERSION = "subtitle-segmentation-v1";
@@ -141,6 +143,7 @@ export function createYouTubeSubtitleRuntime(
   let sessionCache = new SubtitleSessionCache();
   let pipeline: ActivePipeline | undefined;
   let warningPipelineKey: string | undefined;
+  let warningRetryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
   let initializingPipeline: Promise<void> | undefined;
   let requestIndex = 1;
   let operationQueue = Promise.resolve();
@@ -371,6 +374,7 @@ export function createYouTubeSubtitleRuntime(
     sessionIndex += 1;
     configVersion += 1;
     requestIndex = 1;
+    clearWarningRetry();
     detachPipeline();
     warningPipelineKey = undefined;
     scheduler = createScheduler(preferences);
@@ -413,8 +417,12 @@ export function createYouTubeSubtitleRuntime(
       videoKey,
     );
     if (warningPipelineKey === nextPipelineKey) {
-      overlay?.hide();
-      updateButtonStatus("warning");
+      if (overlay && !overlay.element.hidden) {
+        overlay.hide();
+      }
+      if (buttonStatus !== "warning") {
+        updateButtonStatus("warning");
+      }
       return;
     }
     if (
@@ -475,6 +483,7 @@ export function createYouTubeSubtitleRuntime(
     const runtimeSessionId = currentRuntimeSessionId();
     const pipelineConfigVersion = configVersion;
     const pipelineVideoKey = videoKey;
+    clearWarningRetry();
     warningPipelineKey = undefined;
     updateButtonStatus("loading");
 
@@ -503,10 +512,15 @@ export function createYouTubeSubtitleRuntime(
       configVersion: pipelineConfigVersion,
       videoKey: pipelineVideoKey,
     });
-    if (
-      !captionPayload ||
-      !isCurrentPipeline(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey)
-    ) {
+    if (!captionPayload) {
+      markPipelineWarning(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey, {
+        retryAfterMs:
+          dependencies.captionDiscoveryRetryDelayMs ??
+          CAPTION_DISCOVERY_RETRY_DELAY_MS,
+      });
+      return;
+    }
+    if (!isCurrentPipeline(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey)) {
       markPipelineWarning(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey);
       return;
     }
@@ -578,6 +592,7 @@ export function createYouTubeSubtitleRuntime(
     runtimeSessionId: string,
     pipelineConfigVersion: number,
     pipelineVideoKey: string,
+    options: { retryAfterMs?: number } = {},
   ): void {
     if (!isCurrentPipeline(runtimeSessionId, pipelineConfigVersion, pipelineVideoKey)) {
       return;
@@ -588,11 +603,37 @@ export function createYouTubeSubtitleRuntime(
       pipelineConfigVersion,
       pipelineVideoKey,
     );
+    if (options.retryAfterMs !== undefined) {
+      scheduleWarningRetry(warningPipelineKey, options.retryAfterMs);
+    }
     overlay?.hide();
     updateButtonStatus("warning");
   }
 
+  function scheduleWarningRetry(key: string, retryAfterMs: number): void {
+    clearWarningRetry();
+    warningRetryTimer = globalThis.setTimeout(() => {
+      warningRetryTimer = undefined;
+      if (warningPipelineKey !== key) {
+        return;
+      }
+
+      warningPipelineKey = undefined;
+      void enqueueOperation(reconcile);
+    }, retryAfterMs);
+  }
+
+  function clearWarningRetry(): void {
+    if (warningRetryTimer === undefined) {
+      return;
+    }
+
+    globalThis.clearTimeout(warningRetryTimer);
+    warningRetryTimer = undefined;
+  }
+
   function detachPipeline(): void {
+    clearWarningRetry();
     if (pipeline?.video) {
       pipeline.video.removeEventListener("timeupdate", pipeline.onTimeChange);
       pipeline.video.removeEventListener("seeked", pipeline.onTimeChange);

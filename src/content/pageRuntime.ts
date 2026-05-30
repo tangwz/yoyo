@@ -493,6 +493,7 @@ async function flushTranslationQueue(): Promise<void> {
   translationQueue.markTranslating(translatedSegmentIds);
   translationQueue.markTranslated(translatedSegmentIds);
   if (terminalProgress) {
+    scheduleTranslationQueueFlush();
     return;
   }
   scheduleTranslationQueueFlush();

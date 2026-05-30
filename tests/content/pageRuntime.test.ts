@@ -1189,6 +1189,47 @@ describe("page runtime", () => {
     });
   });
 
+  it("continues flushing lazy batches after terminal completed progress", async () => {
+    vi.useFakeTimers();
+    runtimeMock.sendRuntimeMessage.mockResolvedValue({
+      type: "taskProgress",
+      progress: {
+        taskId: "task-1",
+        state: "completed",
+        total: 5,
+        translated: 5,
+        failed: 0,
+      },
+    });
+    document.body.innerHTML = `
+      <article>
+        <p>First visible paragraph.</p>
+        <p>Second visible paragraph.</p>
+        <p>Third visible paragraph.</p>
+        <p>Fourth visible paragraph.</p>
+        <p>Fifth visible paragraph.</p>
+      </article>
+    `;
+
+    await collectSegments("task-1", "lazyViewport", "en", "zh-CN");
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(1);
+    });
+    await vi.advanceTimersByTimeAsync(200);
+
+    await vi.waitFor(() => {
+      expect(runtimeMessages("enqueueTranslationBatch")).toHaveLength(2);
+    });
+    expect(
+      runtimeMessages<{
+        type: "enqueueTranslationBatch";
+        segments: Array<{ sourceText: string }>;
+      }>("enqueueTranslationBatch")[1]?.segments.map((segment) => segment.sourceText),
+    ).toEqual(["Fifth visible paragraph."]);
+  });
+
   it("ignores dynamic side rail updates while a feed translation task is active", async () => {
     vi.useFakeTimers();
     document.body.innerHTML = `
