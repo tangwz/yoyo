@@ -36,8 +36,10 @@ import {
   getSiteRuleBlockReason,
   isUrlBlockedBySiteRules,
 } from "@/siteRules/matching";
-import { createStorageRepositories } from "@/storage/repositories";
-import { storageKeys } from "@/storage/storageKeys";
+import {
+  contentStorageKeys,
+  createContentStorageRepositories,
+} from "@/content/contentStorage";
 
 function normalizeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -87,12 +89,15 @@ function isYouTubeSubtitleConfigChange(
 ): boolean {
   const relevantKeys =
     areaName === "local"
-      ? [storageKeys.providerProfiles, storageKeys.activeProviderId, storageKeys.siteRules]
+      ? [contentStorageKeys.siteRules]
       : areaName === "sync"
-        ? [storageKeys.translationPreferences, storageKeys.subtitlePreferences]
+        ? [
+            contentStorageKeys.translationPreferences,
+            contentStorageKeys.subtitlePreferences,
+          ]
         : [];
 
-  return relevantKeys.some((key) => key in changes);
+  return areaName === "local" || relevantKeys.some((key) => key in changes);
 }
 
 type YouTubePlayerResponse = {
@@ -300,7 +305,7 @@ async function getYoutubeCaptionTrackKey(request: {
 export function installYouTubeSubtitleRuntimeManager(input?: {
   shouldBlockCurrentSite?: () => Promise<boolean>;
 }): void {
-  const repositories = createStorageRepositories();
+  const repositories = createContentStorageRepositories();
   const shouldBlockCurrentSite = input?.shouldBlockCurrentSite ?? (async () => false);
   let youtubeSubtitleRuntime: ReturnType<typeof createYouTubeSubtitleRuntime> | undefined;
   let ensureRuntimeGeneration = 0;
@@ -402,7 +407,7 @@ export default defineContentScript({
   matches: ["<all_urls>"],
   main() {
     console.info("[yoyo] content script ready");
-    const repositories = createStorageRepositories();
+    const repositories = createContentStorageRepositories();
 
     async function isCurrentSiteBlocked(): Promise<boolean> {
       const rules = await repositories.siteRules.get();
@@ -433,7 +438,7 @@ export default defineContentScript({
     }
 
     browser.storage.onChanged.addListener((changes, areaName) => {
-      if (areaName !== "local" || !(storageKeys.siteRules in changes)) {
+      if (areaName !== "local" || !(contentStorageKeys.siteRules in changes)) {
         return;
       }
 
