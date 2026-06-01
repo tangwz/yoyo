@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { storageKeys } from "@/storage/storageKeys";
 
 const browserMock = vi.hoisted(() => ({
   addStorageListener: vi.fn(),
@@ -91,8 +90,7 @@ describe("content entrypoint", () => {
     );
 
     installYouTubeSubtitleRuntimeManager({ shouldBlockCurrentSite });
-    const [handleStorageChange] = browserMock.addStorageListener.mock.calls[0] ?? [];
-    handleStorageChange({ [storageKeys.siteRules]: { newValue: {} } }, "local");
+    window.dispatchEvent(new Event("yoyo:youtubeSubtitleConfigChanged"));
 
     await Promise.resolve();
     firstCheck.resolve(false);
@@ -101,5 +99,6 @@ describe("content entrypoint", () => {
 
     expect(shouldBlockCurrentSite).toHaveBeenCalledTimes(2);
     expect(youtubeRuntimeMock.createYouTubeSubtitleRuntime).not.toHaveBeenCalled();
+    expect(browserMock.addStorageListener).not.toHaveBeenCalled();
   });
 });

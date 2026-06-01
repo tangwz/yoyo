@@ -9,7 +9,6 @@ import {
 export const contentStorageKeys = {
   siteRules: "yoyo.siteRules",
   subtitlePreferences: "yoyo.subtitlePreferences",
-  translationPreferences: "yoyo.translationPreferences",
 } as const;
 
 type ContentStorageAreaName = "local" | "sync";

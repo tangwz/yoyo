@@ -60,6 +60,8 @@ describe("messaging contracts", () => {
       { type: "removeTranslations", taskId: "task-1" },
       { type: "getPageRuntimeState" },
       { type: "collectSummarySource" },
+      { type: "siteRulesChanged" },
+      { type: "youtubeSubtitleConfigChanged" },
       {
         type: "showSelectionTranslation",
         requestId: "selection-request-1",
@@ -116,6 +118,8 @@ describe("messaging contracts", () => {
       "removeTranslations",
       "getPageRuntimeState",
       "collectSummarySource",
+      "siteRulesChanged",
+      "youtubeSubtitleConfigChanged",
       "showSelectionTranslation",
       "showSelectionTranslation",
       "showPageSummary",

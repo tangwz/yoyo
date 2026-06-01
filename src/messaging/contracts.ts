@@ -70,6 +70,8 @@ export type ContentRequest =
   | { type: "removeTranslations"; taskId?: string }
   | { type: "getPageRuntimeState" }
   | { type: "collectSummarySource" }
+  | { type: "siteRulesChanged" }
+  | { type: "youtubeSubtitleConfigChanged" }
   | {
       type: "showPageSummary";
       targetLanguage: string;

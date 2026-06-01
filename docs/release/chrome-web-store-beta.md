@@ -74,7 +74,7 @@
 - [ ] 不包含 automatic page translation。
 - [ ] 不包含 persistent translation cache。
 - [ ] 不包含 glossary 或 terminology management。
-- [ ] 不包含 site-level rules、allowlist、rule subscription 或 rule sharing。
+- [ ] 已包含 site blacklist；不包含 auto-translation allowlist、rule subscription 或 rule sharing。
 - [ ] 不包含 subtitle download、side subtitle list、生词本或复杂 subtitle style editor。
 - [ ] 不包含 rich-text fidelity guarantee；尤其是复杂 inline links 和 nested formatting 仍按当前 DOM injection 能力 best-effort。
 - [ ] Service worker restart 后不保证恢复完整 in-flight task progress。
