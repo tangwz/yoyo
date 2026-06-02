@@ -37,16 +37,36 @@ class YoutubeSubtitlePlayerButtonHandle implements YoutubeSubtitlePlayerButton {
 
     this.element.type = "button";
     this.element.dataset.yoyoYoutubeSubtitleButton = "true";
-    this.element.className = "yoyo-youtube-subtitle-button notranslate";
+    this.element.className = "ytp-button yoyo-youtube-subtitle-button notranslate";
     this.element.setAttribute("translate", "no");
     this.element.addEventListener("click", this.handleClick);
     Object.assign(this.element.style, {
       position: "relative",
+      width: "48px",
+      height: "48px",
+      minWidth: "48px",
+      margin: "0",
+      padding: "0",
+      border: "0",
+      background: "transparent",
+      color: "#f8fff9",
+      cursor: "pointer",
+      boxSizing: "border-box",
+      verticalAlign: "top",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      flex: "0 0 48px",
+    });
+
+    const logo = document.createElement("span");
+    logo.dataset.yoyoYoutubeSubtitleLogo = "true";
+    logo.setAttribute("aria-hidden", "true");
+    Object.assign(logo.style, {
+      position: "relative",
       width: "28px",
       height: "28px",
-      minWidth: "28px",
-      margin: "0 4px",
-      padding: "0",
+      margin: "auto",
       border: "1px solid rgba(255, 255, 255, 0.34)",
       borderRadius: "6px",
       background: "linear-gradient(135deg, #16a34a 0%, #22c55e 100%)",
@@ -55,13 +75,11 @@ class YoutubeSubtitlePlayerButtonHandle implements YoutubeSubtitlePlayerButton {
       fontWeight: "700",
       lineHeight: "26px",
       textAlign: "center",
-      cursor: "pointer",
       boxSizing: "border-box",
-      verticalAlign: "middle",
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "center",
-      flex: "0 0 28px",
+      pointerEvents: "none",
     });
 
     const glyph = document.createElement("span");
@@ -72,6 +90,8 @@ class YoutubeSubtitlePlayerButtonHandle implements YoutubeSubtitlePlayerButton {
       transform: "translateY(-1px)",
       pointerEvents: "none",
     });
+
+    logo.append(glyph, this.badge);
 
     this.badge.dataset.yoyoYoutubeSubtitleBadge = "true";
     this.badge.setAttribute("aria-hidden", "true");
@@ -92,7 +112,7 @@ class YoutubeSubtitlePlayerButtonHandle implements YoutubeSubtitlePlayerButton {
       pointerEvents: "none",
     });
 
-    this.element.append(glyph, this.badge);
+    this.element.append(logo);
     this.applyStatus();
   }
 

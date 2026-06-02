@@ -73,6 +73,31 @@ describe("mountYoutubeSubtitlePlayerButton", () => {
     expect(controls.firstElementChild).toBe(button.element);
   });
 
+  it("uses a YouTube-sized control shell with centered logo artwork", () => {
+    const controls = createControls();
+
+    const button = mountYoutubeSubtitlePlayerButton({
+      controls,
+      status: "enabled",
+      onToggle: vi.fn(),
+    });
+
+    const logo = button.element.querySelector<HTMLElement>(
+      '[data-yoyo-youtube-subtitle-logo="true"]',
+    );
+
+    expect(button.element.classList.contains("ytp-button")).toBe(true);
+    expect(button.element.style.width).toBe("48px");
+    expect(button.element.style.height).toBe("48px");
+    expect(button.element.style.margin).toBe("0px");
+    expect(button.element.style.border).toBe("0px");
+    expect(button.element.style.background).toBe("transparent");
+    expect(logo).not.toBeNull();
+    expect(logo?.style.width).toBe("28px");
+    expect(logo?.style.height).toBe("28px");
+    expect(logo?.style.margin).toBe("auto");
+  });
+
   it.each([
     ["enabled", "\u2713", "enabled"],
     ["disabled", "x", "disabled"],
