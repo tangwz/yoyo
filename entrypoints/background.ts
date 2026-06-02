@@ -10,6 +10,7 @@ import {
   handleTranslatePageMenuClick,
   handleTranslateSelectionMenuClick,
 } from "@/background/contextMenuActions";
+import { buildContentStorageChangeMessages } from "@/background/contentStorageSignals";
 import { notifyPageCannotTranslate, notifyProviderMissing } from "@/background/notifications";
 import { summarizePage } from "@/background/pageSummary";
 import {
@@ -154,6 +155,34 @@ export default defineBackground(() => {
       });
   }
 
+  function broadcastContentMessages(messages: ContentRequest[]): void {
+    if (messages.length === 0) {
+      return;
+    }
+
+    void browser.tabs
+      .query({})
+      .then((tabs) => {
+        for (const tab of tabs) {
+          if (tab.id === undefined) {
+            continue;
+          }
+
+          for (const message of messages) {
+            void sendTabMessage<ContentRequest, ContentResponse>(
+              tab.id,
+              message,
+            ).catch(() => undefined);
+          }
+        }
+      })
+      .catch((error: unknown) => {
+        console.error("[yoyo] failed to broadcast content storage change", {
+          error,
+        });
+      });
+  }
+
   async function prepareChromeBuiltInAi(
     sourceLanguage: string,
     targetLanguage: string,
@@ -207,19 +236,15 @@ export default defineBackground(() => {
   });
 
   browser.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "sync") {
-      return;
-    }
+    broadcastContentMessages(buildContentStorageChangeMessages(changes, areaName));
 
-    if (!(storageKeys.uiPreferences in changes)) {
-      return;
+    if (areaName === "sync" && storageKeys.uiPreferences in changes) {
+      registerContextMenus(
+        getContextMenuUiLanguageForPreferenceChange(
+          changes[storageKeys.uiPreferences]?.newValue,
+        ),
+      );
     }
-
-    registerContextMenus(
-      getContextMenuUiLanguageForPreferenceChange(
-        changes[storageKeys.uiPreferences]?.newValue,
-      ),
-    );
   });
 
   onTranslatePageMenuClick(
