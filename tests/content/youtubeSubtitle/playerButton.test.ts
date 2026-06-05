@@ -59,9 +59,9 @@ describe("mountYoutubeSubtitlePlayerButton", () => {
     expect(first.element.title).toContain("enabled");
   });
 
-  it("mounts before native controls so it stays inside the controls cluster", () => {
+  it("mounts after native controls so it does not displace other extensions", () => {
     const controls = createControls();
-    const nativeFirstControl = controls.firstElementChild;
+    const nativeLastControl = controls.lastElementChild;
 
     const button = mountYoutubeSubtitlePlayerButton({
       controls,
@@ -69,8 +69,33 @@ describe("mountYoutubeSubtitlePlayerButton", () => {
       onToggle: vi.fn(),
     });
 
-    expect(button.element.nextElementSibling).toBe(nativeFirstControl);
-    expect(controls.firstElementChild).toBe(button.element);
+    expect(button.element.previousElementSibling).toBe(nativeLastControl);
+    expect(controls.lastElementChild).toBe(button.element);
+  });
+
+  it("does not displace buttons injected by other extensions", () => {
+    const controls = createControls();
+
+    // Simulate another extension (e.g. immersive-translate) injecting a button
+    const otherExtButton = document.createElement("button");
+    otherExtButton.className = "immersive-translate-button";
+    otherExtButton.type = "button";
+    controls.append(otherExtButton);
+
+    const nativeFirst = controls.firstElementChild;
+
+    const button = mountYoutubeSubtitlePlayerButton({
+      controls,
+      status: "enabled",
+      onToggle: vi.fn(),
+    });
+
+    // Other extension button should remain in place
+    expect(controls.querySelector(".immersive-translate-button")).toBe(otherExtButton);
+    // Native controls should still come first
+    expect(controls.firstElementChild).toBe(nativeFirst);
+    // Yoyo button should be appended after everything else
+    expect(controls.lastElementChild).toBe(button.element);
   });
 
   it("uses a YouTube-sized control shell with centered logo artwork", () => {
